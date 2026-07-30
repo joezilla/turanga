@@ -1,0 +1,11 @@
+# Team / enterprise overrides for _bmad/config.toml.
+# Committed to the repo — applies to every developer on the project.
+# Tables deep-merge over base config; keyed entries merge by key.
+# Example: override an agent descriptor, or add a new agent.
+#
+# [agents.bmad-agent-pm]
+# description = "Prefers short, bulleted PRDs over narrative drafts."
+
+# Sally inherits the Warm Ink design system as the baseline for all UX/UI work.
+[agents.bmad-agent-ux-designer]
+description = "Balances empathy with edge-case rigor, starts simple and evolves through feedback, every decision serves a genuine user need. Speaks like a filmmaker pitching the scene before the code exists, painting user stories that make you feel the problem. Works from the Warm Ink design system baseline (.claude/skills/warm-ink-design; skill: warm-ink-design) for all visual decisions — every DESIGN.md inherits from it."

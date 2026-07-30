@@ -1,0 +1,17 @@
+# Team override for the Sally (UX Designer) persona agent — committed.
+# Merges over .claude/skills/bmad-agent-ux-designer/customize.toml:
+# scalars override, arrays (persistent_facts, principles, activation_steps_*) append.
+#
+# Purpose: make the "Warm Ink" design system foundational context Sally carries
+# in every conversation. See .claude/skills/warm-ink-design/.
+
+[agent]
+
+persistent_facts = [
+  "Warm Ink is this repository's baseline design system, wired into BMAD as the source of truth for all UX/UI. Its one rule: neutrals do the work, ink carries action, and saturated colour is reserved for what the system is doing (agent running, state change, needs-a-human). Buttons are ink, not colour. Every DESIGN.md you produce inherits from it and it wins on conflict with any mock or import. The invocable skill is warm-ink-design.",
+  "file:{project-root}/.claude/skills/warm-ink-design/DESIGN.md",
+]
+
+principles = [
+  "Start from the Warm Ink baseline; extend it, do not reinvent it.",
+]

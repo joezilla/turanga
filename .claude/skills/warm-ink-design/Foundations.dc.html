@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="stylesheet" href="./styles.css">
+<style>
+  body { margin: 0; background: var(--bg-canvas); }
+  a { color: var(--text-link); text-decoration: none; }
+  a:hover { color: var(--signal-500); text-decoration: underline; }
+  @keyframes om-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+</style>
+</helmet>
+<div style="font-family: var(--font-sans); background: var(--bg-canvas); color: var(--text-primary); -webkit-font-smoothing: antialiased; min-height: 100vh; padding: 56px 56px 88px; box-sizing: border-box">
+
+  <div style="max-width: 1080px; margin: 0 auto; display: flex; flex-direction: column; gap: 56px">
+
+    <header style="display: flex; align-items: flex-end; justify-content: space-between; gap: 32px; padding-bottom: 28px; border-bottom: 1px solid var(--border-subtle)">
+      <div style="display: flex; flex-direction: column; gap: 12px">
+        <div style="font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.075em; text-transform: uppercase; color: var(--text-tertiary)">Foundations · v0.1 · warm ink</div>
+        <div style="font-size: 38px; line-height: 46px; letter-spacing: -0.022em; font-weight: 500; max-width: 20ch">A palette built for machines that keep working</div>
+        <div style="font-size: 15px; line-height: 24px; color: var(--text-secondary); max-width: 62ch; text-wrap: pretty">Neutrals do the work; colour is a status signal, not decoration. Primary actions are ink, so the only saturated pixels on a screen mean an agent is doing something, learned something, or needs you.</div>
+      </div>
+      <div style="display: flex; gap: 6px; padding: 3px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--surface-inset)">
+        <button type="button" onClick="{{ setLight }}" style="{{ lightBtn }}">Light</button>
+        <button type="button" onClick="{{ setDark }}" style="{{ darkBtn }}">Dark</button>
+      </div>
+    </header>
+
+    <section style="display: flex; flex-direction: column; gap: 20px">
+      <div style="display: flex; align-items: baseline; gap: 14px">
+        <h2 style="margin: 0; font-size: 20px; line-height: 28px; letter-spacing: -0.012em; font-weight: 500">Warm ink</h2>
+        <span style="font-size: 13px; color: var(--text-tertiary)">Every neutral carries 0.004–0.010 chroma at hue 50–80. Paper and graphite, not screen grey.</span>
+      </div>
+      <div style="display: flex; gap: 8px">
+        <sc-for list="{{ inkRamp }}" as="s" hint-placeholder-count="11">
+          <div style="flex: 1; display: flex; flex-direction: column; gap: 8px">
+            <div style="height: 76px; border-radius: var(--radius-sm); border: 1px solid var(--border-hairline); background: {{ s.css }}"></div>
+            <div style="font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary)">{{ s.name }}</div>
+          </div>
+        </sc-for>
+      </div>
+    </section>
+
+    <section style="display: grid; grid-template-columns: 1.15fr 1fr; gap: 40px">
+      <div style="display: flex; flex-direction: column; gap: 20px">
+        <div style="display: flex; align-items: baseline; gap: 14px">
+          <h2 style="margin: 0; font-size: 20px; line-height: 28px; letter-spacing: -0.012em; font-weight: 500">Signal</h2>
+          <span style="font-size: 13px; color: var(--text-tertiary)">One cold hue against warm ink.</span>
+        </div>
+        <div style="display: flex; gap: 8px">
+          <sc-for list="{{ signalRamp }}" as="s" hint-placeholder-count="7">
+            <div style="flex: 1; display: flex; flex-direction: column; gap: 8px">
+              <div style="height: 60px; border-radius: var(--radius-sm); border: 1px solid var(--border-hairline); background: {{ s.css }}"></div>
+              <div style="font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary)">{{ s.short }}</div>
+            </div>
+          </sc-for>
+        </div>
+        <div style="font-size: 13px; line-height: 20px; color: var(--text-secondary); text-wrap: pretty">Used for focus rings, links, running agents and selected states. Never for a whole button surface.</div>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 20px">
+        <div style="display: flex; align-items: baseline; gap: 14px">
+          <h2 style="margin: 0; font-size: 20px; line-height: 28px; letter-spacing: -0.012em; font-weight: 500">Semantic</h2>
+          <span style="font-size: 13px; color: var(--text-tertiary)">Matched L/C; hue is the only variable.</span>
+        </div>
+        <div style="display: flex; gap: 8px">
+          <sc-for list="{{ semantic }}" as="s" hint-placeholder-count="5">
+            <div style="flex: 1; display: flex; flex-direction: column; gap: 6px">
+              <div style="height: 40px; border-radius: var(--radius-sm) var(--radius-sm) 0 0; background: {{ s.solid }}"></div>
+              <div style="height: 20px; border-radius: 0 0 var(--radius-sm) var(--radius-sm); background: {{ s.tint }}"></div>
+              <div style="font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary)">{{ s.label }}</div>
+            </div>
+          </sc-for>
+        </div>
+        <div style="font-size: 13px; line-height: 20px; color: var(--text-secondary); text-wrap: pretty">Solid for icons and dots, tint for row backgrounds. Text on tint is always ink, never the hue.</div>
+      </div>
+    </section>
+
+    <section style="display: flex; flex-direction: column; gap: 20px">
+      <div style="display: flex; align-items: baseline; gap: 14px">
+        <h2 style="margin: 0; font-size: 20px; line-height: 28px; letter-spacing: -0.012em; font-weight: 500">Agent lifecycle</h2>
+        <span style="font-size: 13px; color: var(--text-tertiary)">The most-repeated vocabulary in the product: one dot, one word.</span>
+      </div>
+      <div style="display: flex; flex-wrap: wrap; gap: 10px">
+        <sc-for list="{{ states }}" as="s" hint-placeholder-count="5">
+          <div style="display: flex; align-items: center; gap: 8px; padding: 5px 11px 5px 9px; border: 1px solid var(--border-subtle); border-radius: var(--radius-full); background: var(--surface-card); font-size: 13px; color: var(--text-secondary); letter-spacing: 0.005em">
+            <span style="width: 7px; height: 7px; border-radius: 999px; background: {{ s.color }}; animation: {{ s.anim }}"></span>{{ s.label }}
+          </div>
+        </sc-for>
+      </div>
+    </section>
+
+    <section style="display: grid; grid-template-columns: 1fr 1fr; gap: 40px">
+      <div style="display: flex; flex-direction: column; gap: 20px">
+        <div style="display: flex; align-items: baseline; gap: 14px">
+          <h2 style="margin: 0; font-size: 20px; line-height: 28px; letter-spacing: -0.012em; font-weight: 500">Type</h2>
+          <span style="font-size: 13px; color: var(--text-tertiary)">Instrument Sans · IBM Plex Mono</span>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 14px">
+          <div style="font-size: 38px; line-height: 42px; letter-spacing: -0.022em; font-weight: 500">Agent operations</div>
+          <div style="font-size: 24px; line-height: 32px; letter-spacing: -0.018em; font-weight: 500">Self-learning workflows</div>
+          <div style="font-size: 15px; line-height: 24px; color: var(--text-secondary); max-width: 46ch; text-wrap: pretty">Body copy sits at 14–15px with generous leading. Long-form explanation is capped near 62 characters so operators can scan a run log and read a policy in the same view.</div>
+          <div style="display: flex; gap: 26px; font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 14px; color: var(--text-primary)">
+            <span>1,284,905</span><span>428 ms</span><span>$0.0413</span>
+          </div>
+          <div style="display: flex; gap: 22px; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.075em; text-transform: uppercase; color: var(--text-tertiary)">
+            <span>section label</span><span>last run</span><span>owner</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 20px">
+        <div style="display: flex; align-items: baseline; gap: 14px">
+          <h2 style="margin: 0; font-size: 20px; line-height: 28px; letter-spacing: -0.012em; font-weight: 500">Shape</h2>
+          <span style="font-size: 13px; color: var(--text-tertiary)">4px default corner, hairline separation</span>
+        </div>
+        <div style="display: flex; gap: 10px">
+          <sc-for list="{{ radii }}" as="r" hint-placeholder-count="6">
+            <div style="flex: 1; display: flex; flex-direction: column; gap: 8px; align-items: center">
+              <div style="width: 100%; height: 46px; background: var(--surface-card); border: 1px solid var(--border-strong); border-radius: {{ r.value }}"></div>
+              <div style="font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary)">{{ r.label }}</div>
+            </div>
+          </sc-for>
+        </div>
+        <div style="display: flex; gap: 12px; padding-top: 4px">
+          <sc-for list="{{ shadows }}" as="s" hint-placeholder-count="4">
+            <div style="flex: 1; display: flex; flex-direction: column; gap: 8px; align-items: center">
+              <div style="width: 100%; height: 46px; background: var(--surface-card); border: 1px solid var(--border-hairline); border-radius: var(--radius-lg); box-shadow: {{ s.value }}"></div>
+              <div style="font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary)">{{ s.label }}</div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </section>
+
+    <section style="display: flex; flex-direction: column; gap: 20px">
+      <div style="display: flex; align-items: baseline; gap: 14px">
+        <h2 style="margin: 0; font-size: 20px; line-height: 28px; letter-spacing: -0.012em; font-weight: 500">In place</h2>
+        <span style="font-size: 13px; color: var(--text-tertiary)">The same tokens carrying a real surface.</span>
+      </div>
+      <div style="background: var(--surface-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); overflow: hidden">
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; border-bottom: 1px solid var(--border-hairline)">
+          <div style="display: flex; align-items: center; gap: 10px">
+            <span style="font-size: 15px; font-weight: 500; letter-spacing: -0.012em">Inbound triage</span>
+            <span style="font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary)">agt_7f3c91de</span>
+          </div>
+          <div style="display: flex; gap: 8px">
+            <button type="button" style="height: 32px; padding: 0 12px; font-family: var(--font-sans); font-size: 13px; font-weight: 500; color: var(--action-secondary-fg); background: var(--action-secondary-bg); border: 1px solid var(--border-strong); border-radius: var(--radius-md); cursor: pointer" style-hover="background: var(--surface-hover)">View log</button>
+            <button type="button" style="height: 32px; padding: 0 12px; font-family: var(--font-sans); font-size: 13px; font-weight: 500; color: var(--action-primary-fg); background: var(--action-primary-bg); border: 1px solid transparent; border-radius: var(--radius-md); cursor: pointer" style-hover="background: var(--action-primary-bg-hover)">Deploy</button>
+          </div>
+        </div>
+        <div style="display: grid; grid-template-columns: 1.6fr 1fr 0.9fr 0.9fr; gap: 12px; padding: 0 16px; height: 34px; align-items: center; background: var(--surface-inset); border-bottom: 1px solid var(--border-hairline); font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.075em; text-transform: uppercase; color: var(--text-tertiary)">
+          <span>step</span><span>status</span><span>latency</span><span>cost</span>
+        </div>
+        <sc-for list="{{ rows }}" as="r" hint-placeholder-count="4">
+          <div style="display: grid; grid-template-columns: 1.6fr 1fr 0.9fr 0.9fr; gap: 12px; padding: 0 16px; height: 40px; align-items: center; border-bottom: 1px solid var(--border-hairline); font-size: 13px; color: var(--text-secondary)">
+            <span style="color: var(--text-primary)">{{ r.step }}</span>
+            <span style="display: flex; align-items: center; gap: 8px"><span style="width: 6px; height: 6px; border-radius: 999px; background: {{ r.color }}"></span>{{ r.status }}</span>
+            <span style="font-family: var(--font-mono); font-variant-numeric: tabular-nums">{{ r.latency }}</span>
+            <span style="font-family: var(--font-mono); font-variant-numeric: tabular-nums">{{ r.cost }}</span>
+          </div>
+        </sc-for>
+        <div style="display: flex; align-items: center; gap: 10px; padding: 12px 16px; background: var(--signal-100); font-size: 13px; color: var(--text-secondary)">
+          <span style="width: 6px; height: 6px; border-radius: 999px; background: var(--signal-500)"></span>
+          Learned a new escalation rule from 42 resolved tickets. <a href="#review">Review</a>
+        </div>
+      </div>
+    </section>
+
+    <section style="display: flex; flex-direction: column; gap: 14px; padding-top: 12px; border-top: 1px solid var(--border-subtle)">
+      <div style="font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.075em; text-transform: uppercase; color: var(--text-tertiary)">Rules that keep it out of default-template territory</div>
+      <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px">
+        <sc-for list="{{ rules }}" as="r" hint-placeholder-count="6">
+          <div style="display: flex; flex-direction: column; gap: 5px">
+            <div style="font-size: 14px; font-weight: 500; letter-spacing: -0.006em">{{ r.title }}</div>
+            <div style="font-size: 13px; line-height: 20px; color: var(--text-secondary); text-wrap: pretty">{{ r.body }}</div>
+          </div>
+        </sc-for>
+      </div>
+    </section>
+
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;theme&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;light&quot;,&quot;dark&quot;],&quot;default&quot;:&quot;light&quot;,&quot;tsType&quot;:&quot;'light' | 'dark'&quot;,&quot;section&quot;:&quot;Theme&quot;},&quot;signalHue&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:195,&quot;min&quot;:150,&quot;max&quot;:300,&quot;step&quot;:5,&quot;unit&quot;:&quot;°&quot;,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Palette&quot;},&quot;radius&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:4,&quot;min&quot;:0,&quot;max&quot;:12,&quot;step&quot;:1,&quot;unit&quot;:&quot;px&quot;,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Shape&quot;}}">
+class Component extends DCLogic {
+  state = { theme: null };
+
+  get theme() { return this.state.theme || this.props.theme || 'light'; }
+
+  apply() {
+    const el = document.documentElement;
+    el.setAttribute('data-theme', this.theme === 'dark' ? 'dark' : 'light');
+    const hue = this.props.signalHue ?? 195;
+    const dark = this.theme === 'dark';
+    const sig = [[100, 0.955, 0.018], [200, 0.900, 0.032], [300, 0.790, 0.055],
+                 [400, 0.640, 0.070], [500, 0.500, 0.075], [600, 0.420, 0.068], [700, 0.330, 0.055]];
+    sig.forEach(([k, l, c]) => el.style.setProperty(`--signal-${k}`, `oklch(${l} ${c} ${hue})`));
+    if (dark) {
+      el.style.setProperty('--signal-500', `oklch(0.660 0.075 ${hue})`);
+      el.style.setProperty('--signal-100', `oklch(0.290 0.035 ${hue})`);
+    }
+    el.style.setProperty('--radius-md', (this.props.radius ?? 4) + 'px');
+    el.style.setProperty('--radius-lg', ((this.props.radius ?? 4) + 2) + 'px');
+    el.style.setProperty('--radius-sm', Math.max(1, (this.props.radius ?? 4) - 1) + 'px');
+  }
+  componentDidMount() { this.apply(); }
+  componentDidUpdate() { this.apply(); }
+
+  renderVals() {
+    const theme = this.theme;
+    const btn = (on) => `height:26px;padding:0 12px;font-family:var(--font-sans);font-size:12px;font-weight:500;letter-spacing:0.005em;border:1px solid ${on ? 'var(--border-subtle)' : 'transparent'};border-radius:3px;cursor:pointer;background:${on ? 'var(--surface-card)' : 'transparent'};color:${on ? 'var(--text-primary)' : 'var(--text-tertiary)'};box-shadow:${on ? 'var(--shadow-xs)' : 'none'}`;
+
+    const inkNames = ['25', '100', '200', '300', '400', '500', '600', '700', '800', '900', '1000'];
+    const semanticDefs = [['Positive', 'positive'], ['Caution', 'caution'], ['Critical', 'critical'], ['Info', 'info'], ['Signal', 'signal']];
+    const stateDefs = [['Idle', 'idle', 'none'], ['Running', 'running', 'om-pulse var(--duration-pulse) var(--ease-standard) infinite'],
+                       ['Succeeded', 'succeeded', 'none'], ['Needs review', 'review', 'none'], ['Failed', 'failed', 'none']];
+
+    return {
+      lightBtn: btn(theme !== 'dark'),
+      darkBtn: btn(theme === 'dark'),
+      setLight: () => this.setState({ theme: 'light' }),
+      setDark: () => this.setState({ theme: 'dark' }),
+      inkRamp: inkNames.map(n => ({ name: n, css: `var(--ink-${n})` })),
+      signalRamp: [100, 200, 300, 400, 500, 600, 700].map(n => ({ short: String(n), css: `var(--signal-${n})` })),
+      semantic: semanticDefs.map(([label, k]) => ({ label, solid: `var(--${k}-500)`, tint: `var(--${k}-100)` })),
+      states: stateDefs.map(([label, k, anim]) => ({ label, color: `var(--state-${k})`, anim })),
+      radii: [['2', 'var(--radius-xs)'], ['3', 'var(--radius-sm)'], ['4', 'var(--radius-md)'], ['6', 'var(--radius-lg)'], ['8', 'var(--radius-xl)'], ['12', 'var(--radius-2xl)']]
+        .map(([label, value]) => ({ label, value })),
+      shadows: ['xs', 'sm', 'md', 'lg'].map(k => ({ label: k, value: `var(--shadow-${k})` })),
+      rows: [
+        { step: 'Classify intent', status: 'Succeeded', color: 'var(--state-succeeded)', latency: '312 ms', cost: '$0.0021' },
+        { step: 'Retrieve account history', status: 'Succeeded', color: 'var(--state-succeeded)', latency: '884 ms', cost: '$0.0004' },
+        { step: 'Draft resolution', status: 'Running', color: 'var(--state-running)', latency: '—', cost: '$0.0388' },
+        { step: 'Refund above threshold', status: 'Needs review', color: 'var(--state-review)', latency: '—', cost: '—' }
+      ],
+      rules: [
+        { title: 'Ink is the primary action', body: 'No saturated button fills. A teal button on every screen is what makes generated apps look generated.' },
+        { title: 'Colour means state', body: 'If a colour is not reporting what the system is doing, it should not be on the screen.' },
+        { title: 'Hairlines before shadows', body: 'Structure comes from 10% alpha rules. Shadow is reserved for things that genuinely float.' },
+        { title: 'Warmth in the neutrals', body: 'Every grey carries a little chroma at hue 50–80, so screens read as paper rather than as default #f5f5f5.' },
+        { title: 'Mono for machine facts', body: 'IDs, latency, cost and timestamps are always tabular mono — the product looks measured because it is.' },
+        { title: 'Small radii, one exception', body: '4px everywhere; the pill is reserved for live status so it stays meaningful.' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+# BMAD personal, per-developer install answers (installer-regenerated).
+# Team config (config.toml, custom/*.toml) is committed; personal *.user.* is not.
+**/*.user.toml
+**/*.user.yaml
+
+# OS / editor cruft
+.DS_Store

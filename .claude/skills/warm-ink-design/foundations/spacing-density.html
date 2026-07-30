@@ -1,0 +1,29 @@
+<!-- @dsCard group="Spacing" viewport="700x170" name="Density in use" subtitle="8px inside controls, 12–16px inside cards, 24–32px between regions" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  body { margin:0; font-family:var(--font-sans); background:var(--bg-canvas); color:var(--text-primary);
+         -webkit-font-smoothing:antialiased; padding:20px 24px; }
+  .lbl { font-family:var(--font-mono); font-size:10px; letter-spacing:var(--tracking-micro);
+         text-transform:uppercase; color:var(--text-tertiary); }
+  .row { display:flex; gap:var(--space-3); align-items:flex-start; }
+</style>
+</head>
+<body>
+<div style="background:var(--surface-card);border:1px solid var(--border-hairline);border-radius:var(--radius-lg);box-shadow:var(--shadow-sm);overflow:hidden">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:var(--space-3) var(--space-4);border-bottom:1px solid var(--border-hairline)">
+      <span style="font-size:var(--text-sm);font-weight:var(--weight-medium)">Triage agent</span>
+      <span class="lbl">40px rows</span>
+    </div>
+    <div style="height:var(--row-h);display:flex;align-items:center;gap:10px;padding:0 var(--space-4);border-bottom:1px solid var(--border-hairline);font-size:var(--text-sm);color:var(--text-secondary)">
+      <span style="width:6px;height:6px;border-radius:var(--radius-full);background:var(--state-running)"></span>Inbound classification</div>
+    <div style="height:var(--row-h);display:flex;align-items:center;gap:10px;padding:0 var(--space-4);border-bottom:1px solid var(--border-hairline);font-size:var(--text-sm);color:var(--text-secondary)">
+      <span style="width:6px;height:6px;border-radius:var(--radius-full);background:var(--state-running)"></span>Escalation policy</div>
+    <div style="height:var(--row-h);display:flex;align-items:center;gap:10px;padding:0 var(--space-4);border-bottom:1px solid var(--border-hairline);font-size:var(--text-sm);color:var(--text-secondary)">
+      <span style="width:6px;height:6px;border-radius:var(--radius-full);background:var(--state-running)"></span>Self-learning review</div>
+  </div>
+</body>
+</html>

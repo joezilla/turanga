@@ -1,0 +1,35 @@
+<!-- @dsCard group="Shape" viewport="700x150" name="Elevation" subtitle="Warm-tinted shadows, hairlines do most separation; md+ is for overlays only" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  body { margin:0; font-family:var(--font-sans); background:var(--bg-canvas); color:var(--text-primary);
+         -webkit-font-smoothing:antialiased; padding:20px 24px; }
+  .lbl { font-family:var(--font-mono); font-size:10px; letter-spacing:var(--tracking-micro);
+         text-transform:uppercase; color:var(--text-tertiary); }
+  .row { display:flex; gap:var(--space-3); align-items:flex-start; }
+</style>
+</head>
+<body>
+<div class="row" style="gap:var(--space-4);padding:6px 0">
+    <div style="flex:1;display:flex;flex-direction:column;gap:8px;align-items:center">
+      <div style="width:100%;height:60px;border-radius:var(--radius-lg);background:var(--surface-card);border:1px solid var(--border-hairline);box-shadow:var(--shadow-xs)"></div>
+      <div class="lbl">shadow-xs</div>
+    </div>
+    <div style="flex:1;display:flex;flex-direction:column;gap:8px;align-items:center">
+      <div style="width:100%;height:60px;border-radius:var(--radius-lg);background:var(--surface-card);border:1px solid var(--border-hairline);box-shadow:var(--shadow-sm)"></div>
+      <div class="lbl">shadow-sm</div>
+    </div>
+    <div style="flex:1;display:flex;flex-direction:column;gap:8px;align-items:center">
+      <div style="width:100%;height:60px;border-radius:var(--radius-lg);background:var(--surface-card);border:1px solid var(--border-hairline);box-shadow:var(--shadow-md)"></div>
+      <div class="lbl">shadow-md</div>
+    </div>
+    <div style="flex:1;display:flex;flex-direction:column;gap:8px;align-items:center">
+      <div style="width:100%;height:60px;border-radius:var(--radius-lg);background:var(--surface-card);border:1px solid var(--border-hairline);box-shadow:var(--shadow-lg)"></div>
+      <div class="lbl">shadow-lg</div>
+    </div>
+  </div>
+</body>
+</html>

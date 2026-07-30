@@ -1,0 +1,27 @@
+# Team override for the bmad-ux skill — committed, applies to every developer.
+# Merges over .claude/skills/bmad-ux/customize.toml: scalars override, arrays append.
+#
+# Purpose: make the "Warm Ink" design system the canonical baseline the UX agent
+# (Sally) inherits from on every run. See .claude/skills/warm-ink-design/.
+
+[workflow]
+
+# Always load the Warm Ink design system as foundational context at activation,
+# so every UX session starts from the established brand rather than a blank slate.
+persistent_facts = [
+  "Warm Ink is this repository's baseline design system. All UX/UI decisions inherit from it. The one rule: neutrals do the work, ink carries action, and saturated colour is reserved for what the system is doing (agent running, state change, needs-a-human). Buttons are ink, not colour. Both DESIGN.md and readme.md win on conflict with any mock or import.",
+  "file:{project-root}/.claude/skills/warm-ink-design/DESIGN.md",
+  "file:{project-root}/.claude/skills/warm-ink-design/readme.md",
+]
+
+# Anchor every DESIGN.md the distillation subagent produces on the Warm Ink
+# baseline (Google Labs design.md spec-compliant), not just the generic examples.
+design_md_examples = [
+  "file:{project-root}/.claude/skills/warm-ink-design/DESIGN.md",
+]
+
+# Consult the Warm Ink skill when researching component patterns, tokens, or
+# visual specs, in preference to generic web research.
+external_sources = [
+  "When researching component patterns, colour/type/space/shape/motion tokens, or visual specs, consult skill:warm-ink-design (the project's baseline design system) before generic web research.",
+]

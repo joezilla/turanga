@@ -1,0 +1,157 @@
+/* ── Palette primitives ─────────────────────────────────────────────
+   Warm ink. Every neutral carries 0.004–0.010 chroma at hue 50–80, so
+   greys read as paper and graphite rather than as screen grey. Chroma
+   tapers toward the ends of the ramp to keep the extremes from muddying.
+   Chromatic hues all sit at one lightness band per mode, so no accent
+   ever out-shouts another.
+   ------------------------------------------------------------------ */
+:root {
+  --ink-0:    oklch(1     0     0);
+  --ink-25:   oklch(0.990 0.003 80);
+  --ink-50:   oklch(0.977 0.004 78);
+  --ink-100:  oklch(0.959 0.005 76);
+  --ink-150:  oklch(0.938 0.006 74);
+  --ink-200:  oklch(0.915 0.006 72);
+  --ink-300:  oklch(0.862 0.007 70);
+  --ink-400:  oklch(0.742 0.008 66);
+  --ink-500:  oklch(0.622 0.009 62);
+  --ink-600:  oklch(0.512 0.010 60);
+  --ink-700:  oklch(0.412 0.010 58);
+  --ink-800:  oklch(0.318 0.009 56);
+  --ink-900:  oklch(0.242 0.008 54);
+  --ink-950:  oklch(0.182 0.007 52);
+  --ink-1000: oklch(0.138 0.006 50);
+
+  /* Signal — the single chromatic brand hue. Cold teal against warm ink:
+     the only colour a user reads as "the system is doing something". */
+  --signal-100: oklch(0.955 0.018 195);
+  --signal-200: oklch(0.900 0.032 195);
+  --signal-300: oklch(0.790 0.055 195);
+  --signal-400: oklch(0.640 0.070 195);
+  --signal-500: oklch(0.500 0.075 195);
+  --signal-600: oklch(0.420 0.068 195);
+  --signal-700: oklch(0.330 0.055 195);
+
+  /* Semantic hues — matched L/C bands, hue is the only variable. */
+  --positive-100: oklch(0.960 0.020 152);
+  --positive-500: oklch(0.520 0.095 152);
+  --positive-600: oklch(0.440 0.085 152);
+  --caution-100:  oklch(0.965 0.028 72);
+  --caution-500:  oklch(0.680 0.115 72);
+  --caution-600:  oklch(0.560 0.105 72);
+  --critical-100: oklch(0.960 0.024 27);
+  --critical-500: oklch(0.530 0.145 27);
+  --critical-600: oklch(0.455 0.135 27);
+  --info-100:     oklch(0.958 0.020 245);
+  --info-500:     oklch(0.520 0.085 245);
+  --info-600:     oklch(0.445 0.080 245);
+
+  /* Data viz — one lightness, one chroma, six hues. Safe to shuffle. */
+  --viz-1: oklch(0.550 0.090 195);
+  --viz-2: oklch(0.550 0.090 245);
+  --viz-3: oklch(0.550 0.090 288);
+  --viz-4: oklch(0.550 0.090 25);
+  --viz-5: oklch(0.600 0.090 72);
+  --viz-6: oklch(0.550 0.090 152);
+}
+
+/* ── Semantic aliases — light (default) ───────────────────────────── */
+:root {
+  color-scheme: light;
+
+  --bg-canvas:      var(--ink-50);
+  --bg-sunken:      var(--ink-100);
+  --surface-card:   var(--ink-0);
+  --surface-raised: var(--ink-0);
+  --surface-inset:  var(--ink-100);
+  --surface-hover:  var(--ink-100);
+  --surface-active: var(--ink-150);
+  --surface-selected: var(--ink-150);
+
+  --text-primary:   var(--ink-900);
+  --text-secondary: var(--ink-700);
+  --text-tertiary:  var(--ink-500);
+  --text-disabled:  var(--ink-400);
+  --text-inverse:   var(--ink-25);
+  --text-link:      var(--signal-600);
+
+  --border-hairline: oklch(0.242 0.008 54 / 0.10);
+  --border-subtle:   oklch(0.242 0.008 54 / 0.14);
+  --border-strong:   oklch(0.242 0.008 54 / 0.26);
+  --border-focus:    var(--signal-500);
+
+  /* Primary action is ink, not colour. Colour is reserved for state. */
+  --action-primary-bg:       var(--ink-900);
+  --action-primary-bg-hover: var(--ink-1000);
+  --action-primary-fg:       var(--ink-25);
+  --action-secondary-bg:     var(--ink-0);
+  --action-secondary-fg:     var(--ink-900);
+  --action-ghost-fg:         var(--ink-700);
+
+  --focus-ring: 0 0 0 2px var(--bg-canvas), 0 0 0 4px oklch(0.500 0.075 195 / 0.55);
+
+  /* Agent lifecycle — the product's most-repeated status vocabulary. */
+  --state-idle:      var(--ink-400);
+  --state-running:   var(--signal-500);
+  --state-succeeded: var(--positive-500);
+  --state-review:    var(--caution-500);
+  --state-failed:    var(--critical-500);
+}
+
+/* ── Semantic aliases — dark ──────────────────────────────────────── */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg-canvas:      oklch(0.155 0.006 55);
+  --bg-sunken:      oklch(0.130 0.005 55);
+  --surface-card:   oklch(0.190 0.007 56);
+  --surface-raised: oklch(0.215 0.007 57);
+  --surface-inset:  oklch(0.170 0.006 55);
+  --surface-hover:  oklch(0.235 0.008 57);
+  --surface-active: oklch(0.260 0.008 57);
+  --surface-selected: oklch(0.260 0.008 57);
+
+  --text-primary:   oklch(0.955 0.004 80);
+  --text-secondary: oklch(0.800 0.006 72);
+  --text-tertiary:  oklch(0.650 0.008 66);
+  --text-disabled:  oklch(0.500 0.008 60);
+  --text-inverse:   var(--ink-950);
+  --text-link:      var(--signal-300);
+
+  --border-hairline: oklch(0.900 0.006 74 / 0.10);
+  --border-subtle:   oklch(0.900 0.006 74 / 0.16);
+  --border-strong:   oklch(0.900 0.006 74 / 0.30);
+
+  --action-primary-bg:       var(--ink-25);
+  --action-primary-bg-hover: var(--ink-0);
+  --action-primary-fg:       var(--ink-950);
+  --action-secondary-bg:     oklch(0.215 0.007 57);
+  --action-secondary-fg:     oklch(0.955 0.004 80);
+  --action-ghost-fg:         oklch(0.800 0.006 72);
+
+  --focus-ring: 0 0 0 2px var(--bg-canvas), 0 0 0 4px oklch(0.640 0.070 195 / 0.60);
+
+  --positive-500: oklch(0.700 0.100 152);
+  --caution-500:  oklch(0.790 0.110 72);
+  --critical-500: oklch(0.680 0.135 27);
+  --info-500:     oklch(0.690 0.085 245);
+  --signal-500:   oklch(0.660 0.075 195);
+  --positive-100: oklch(0.300 0.045 152);
+  --caution-100:  oklch(0.320 0.050 72);
+  --critical-100: oklch(0.300 0.055 27);
+  --info-100:     oklch(0.300 0.040 245);
+  --signal-100:   oklch(0.290 0.035 195);
+
+  --state-idle:      oklch(0.560 0.008 62);
+  --state-running:   var(--signal-500);
+  --state-succeeded: var(--positive-500);
+  --state-review:    var(--caution-500);
+  --state-failed:    var(--critical-500);
+
+  --viz-1: oklch(0.680 0.090 195);
+  --viz-2: oklch(0.680 0.090 245);
+  --viz-3: oklch(0.680 0.090 288);
+  --viz-4: oklch(0.680 0.090 25);
+  --viz-5: oklch(0.720 0.090 72);
+  --viz-6: oklch(0.680 0.090 152);
+}

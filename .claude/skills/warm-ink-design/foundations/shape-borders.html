@@ -1,0 +1,35 @@
+<!-- @dsCard group="Shape" viewport="700x140" name="Borders + focus" subtitle="Three alpha-based border weights; focus is a 2px offset teal ring" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  body { margin:0; font-family:var(--font-sans); background:var(--bg-canvas); color:var(--text-primary);
+         -webkit-font-smoothing:antialiased; padding:20px 24px; }
+  .lbl { font-family:var(--font-mono); font-size:10px; letter-spacing:var(--tracking-micro);
+         text-transform:uppercase; color:var(--text-tertiary); }
+  .row { display:flex; gap:var(--space-3); align-items:flex-start; }
+</style>
+</head>
+<body>
+<div class="row" style="gap:var(--space-4);align-items:center">
+    <div style="flex:1;display:flex;flex-direction:column;gap:6px">
+      <div style="height:44px;border-radius:var(--radius-md);border:1px solid var(--border-hairline);background:var(--surface-card)"></div>
+      <div class="lbl">hairline · tables, rows</div>
+    </div>
+    <div style="flex:1;display:flex;flex-direction:column;gap:6px">
+      <div style="height:44px;border-radius:var(--radius-md);border:1px solid var(--border-subtle);background:var(--surface-card)"></div>
+      <div class="lbl">subtle · cards</div>
+    </div>
+    <div style="flex:1;display:flex;flex-direction:column;gap:6px">
+      <div style="height:44px;border-radius:var(--radius-md);border:1px solid var(--border-strong);background:var(--surface-card)"></div>
+      <div class="lbl">strong · inputs</div>
+    </div>
+    <div style="flex:1;display:flex;flex-direction:column;gap:6px">
+      <div style="height:44px;border-radius:var(--radius-md);border:1px solid var(--border-strong);background:var(--surface-card);box-shadow:var(--focus-ring)"></div>
+      <div class="lbl">focus ring</div>
+    </div>
+  </div>
+</body>
+</html>

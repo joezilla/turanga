@@ -1,0 +1,25 @@
+<!-- @dsCard group="Type" viewport="700x150" name="Weights + micro-caps" subtitle="Three weights only; 0.075em tracked caps carry all labelling" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  body { margin:0; font-family:var(--font-sans); background:var(--bg-canvas); color:var(--text-primary);
+         -webkit-font-smoothing:antialiased; padding:20px 24px; }
+  .lbl { font-family:var(--font-mono); font-size:10px; letter-spacing:var(--tracking-micro);
+         text-transform:uppercase; color:var(--text-tertiary); }
+  .row { display:flex; gap:var(--space-3); align-items:flex-start; }
+</style>
+</head>
+<body>
+<div style="display:flex;flex-direction:column;gap:12px">
+    <div style="display:flex;gap:24px;font-size:var(--text-lg)">
+      <span style="font-weight:400">Regular 400</span><span style="font-weight:500">Medium 500</span><span style="font-weight:600">Semibold 600</span>
+    </div>
+    <div style="display:flex;gap:24px">
+      <span class="lbl">section label</span><span class="lbl">last run</span><span class="lbl">owner</span>
+    </div>
+  </div>
+</body>
+</html>

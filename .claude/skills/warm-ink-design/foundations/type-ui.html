@@ -1,0 +1,47 @@
+<!-- @dsCard group="Type" viewport="700x190" name="UI + body scale" subtitle="14px base, 13px for dense tables, 11px micro-caps for column labels" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  body { margin:0; font-family:var(--font-sans); background:var(--bg-canvas); color:var(--text-primary);
+         -webkit-font-smoothing:antialiased; padding:20px 24px; }
+  .lbl { font-family:var(--font-mono); font-size:10px; letter-spacing:var(--tracking-micro);
+         text-transform:uppercase; color:var(--text-tertiary); }
+  .row { display:flex; gap:var(--space-3); align-items:flex-start; }
+</style>
+</head>
+<body>
+<div style="display:flex;flex-direction:column;gap:8px">
+    <div style="display:flex;align-items:baseline;gap:16px">
+      <span class="lbl" style="width:56px">20px</span>
+      <span style="font-size:var(--text-xl);line-height:var(--lh-xl);letter-spacing:var(--tracking-heading)">Workflow ran 1,284 steps without escalation</span>
+    </div>
+    <div style="display:flex;align-items:baseline;gap:16px">
+      <span class="lbl" style="width:56px">17px</span>
+      <span style="font-size:var(--text-lg);line-height:var(--lh-lg);letter-spacing:var(--tracking-heading)">Workflow ran 1,284 steps without escalation</span>
+    </div>
+    <div style="display:flex;align-items:baseline;gap:16px">
+      <span class="lbl" style="width:56px">15px</span>
+      <span style="font-size:var(--text-md);line-height:var(--lh-md);letter-spacing:var(--tracking-heading)">Workflow ran 1,284 steps without escalation</span>
+    </div>
+    <div style="display:flex;align-items:baseline;gap:16px">
+      <span class="lbl" style="width:56px">14px</span>
+      <span style="font-size:var(--text-base);line-height:var(--lh-base);letter-spacing:var(--tracking-heading)">Workflow ran 1,284 steps without escalation</span>
+    </div>
+    <div style="display:flex;align-items:baseline;gap:16px">
+      <span class="lbl" style="width:56px">13px</span>
+      <span style="font-size:var(--text-sm);line-height:var(--lh-sm);letter-spacing:var(--tracking-heading)">Workflow ran 1,284 steps without escalation</span>
+    </div>
+    <div style="display:flex;align-items:baseline;gap:16px">
+      <span class="lbl" style="width:56px">12px</span>
+      <span style="font-size:var(--text-xs);line-height:var(--lh-xs);letter-spacing:var(--tracking-heading)">Workflow ran 1,284 steps without escalation</span>
+    </div>
+    <div style="display:flex;align-items:baseline;gap:16px">
+      <span class="lbl" style="width:56px">11px</span>
+      <span style="font-size:var(--text-2xs);line-height:var(--lh-2xs);letter-spacing:var(--tracking-heading)">Workflow ran 1,284 steps without escalation</span>
+    </div>
+  </div>
+</body>
+</html>

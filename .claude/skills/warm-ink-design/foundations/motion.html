@@ -1,0 +1,48 @@
+<!-- @dsCard group="Motion" viewport="700x150" name="Duration + easing" subtitle="90–320ms, near-linear. Nothing bounces; only agent activity loops" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  body { margin:0; font-family:var(--font-sans); background:var(--bg-canvas); color:var(--text-primary);
+         -webkit-font-smoothing:antialiased; padding:20px 24px; }
+  .lbl { font-family:var(--font-mono); font-size:10px; letter-spacing:var(--tracking-micro);
+         text-transform:uppercase; color:var(--text-tertiary); }
+  .row { display:flex; gap:var(--space-3); align-items:flex-start; }
+</style>
+</head>
+<body>
+<div style="display:flex;flex-direction:column;gap:10px">
+    <div style="display:flex;align-items:center;gap:14px">
+      <span class="lbl" style="width:120px">instant · 90ms</span>
+      <div style="flex:1;height:3px;background:var(--surface-inset);border-radius:2px;position:relative">
+        <div style="position:absolute;inset:0 auto 0 0;width:38%;background:var(--signal-500);border-radius:2px"></div>
+      </div>
+      <span style="font-size:var(--text-xs);color:var(--text-tertiary);width:150px">hover, press</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:14px">
+      <span class="lbl" style="width:120px">fast · 140ms</span>
+      <div style="flex:1;height:3px;background:var(--surface-inset);border-radius:2px;position:relative">
+        <div style="position:absolute;inset:0 auto 0 0;width:48%;background:var(--signal-500);border-radius:2px"></div>
+      </div>
+      <span style="font-size:var(--text-xs);color:var(--text-tertiary);width:150px">tooltips, chips</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:14px">
+      <span class="lbl" style="width:120px">normal · 200ms</span>
+      <div style="flex:1;height:3px;background:var(--surface-inset);border-radius:2px;position:relative">
+        <div style="position:absolute;inset:0 auto 0 0;width:60%;background:var(--signal-500);border-radius:2px"></div>
+      </div>
+      <span style="font-size:var(--text-xs);color:var(--text-tertiary);width:150px">panels, popovers</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:14px">
+      <span class="lbl" style="width:120px">slow · 320ms</span>
+      <div style="flex:1;height:3px;background:var(--surface-inset);border-radius:2px;position:relative">
+        <div style="position:absolute;inset:0 auto 0 0;width:84%;background:var(--signal-500);border-radius:2px"></div>
+      </div>
+      <span style="font-size:var(--text-xs);color:var(--text-tertiary);width:150px">drawers, route change</span>
+    </div>
+    <div class="lbl">ease-out cubic-bezier(0.2, 0, 0, 1)</div>
+  </div>
+</body>
+</html>

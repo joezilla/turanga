@@ -1,0 +1,39 @@
+<!-- @dsCard group="Colors" viewport="700x140" name="Surfaces — light" subtitle="Canvas is off-white paper; cards step up to pure white" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  body { margin:0; font-family:var(--font-sans); background:var(--bg-canvas); color:var(--text-primary);
+         -webkit-font-smoothing:antialiased; padding:20px 24px; }
+  .lbl { font-family:var(--font-mono); font-size:10px; letter-spacing:var(--tracking-micro);
+         text-transform:uppercase; color:var(--text-tertiary); }
+  .row { display:flex; gap:var(--space-3); align-items:flex-start; }
+</style>
+</head>
+<body>
+<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:var(--space-3)">
+    <div style="background:var(--bg-canvas);border:1px solid var(--border-hairline);border-radius:var(--radius-md);padding:12px;height:74px;box-sizing:border-box">
+      <div style="font-size:var(--text-sm);font-weight:var(--weight-medium)">Canvas</div>
+      <div style="font-size:var(--text-xs);color:var(--text-tertiary);margin-top:2px">Secondary text</div>
+      <div class="lbl" style="margin-top:8px">--bg-canvas</div>
+    </div>
+    <div style="background:var(--surface-card);border:1px solid var(--border-hairline);border-radius:var(--radius-md);padding:12px;height:74px;box-sizing:border-box">
+      <div style="font-size:var(--text-sm);font-weight:var(--weight-medium)">Card</div>
+      <div style="font-size:var(--text-xs);color:var(--text-tertiary);margin-top:2px">Secondary text</div>
+      <div class="lbl" style="margin-top:8px">--surface-card</div>
+    </div>
+    <div style="background:var(--surface-raised);border:1px solid var(--border-hairline);border-radius:var(--radius-md);padding:12px;height:74px;box-sizing:border-box">
+      <div style="font-size:var(--text-sm);font-weight:var(--weight-medium)">Raised</div>
+      <div style="font-size:var(--text-xs);color:var(--text-tertiary);margin-top:2px">Secondary text</div>
+      <div class="lbl" style="margin-top:8px">--surface-raised</div>
+    </div>
+    <div style="background:var(--surface-inset);border:1px solid var(--border-hairline);border-radius:var(--radius-md);padding:12px;height:74px;box-sizing:border-box">
+      <div style="font-size:var(--text-sm);font-weight:var(--weight-medium)">Inset</div>
+      <div style="font-size:var(--text-xs);color:var(--text-tertiary);margin-top:2px">Secondary text</div>
+      <div class="lbl" style="margin-top:8px">--surface-inset</div>
+    </div>
+  </div>
+</body>
+</html>

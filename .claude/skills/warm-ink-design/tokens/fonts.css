@@ -1,0 +1,5 @@
+/* Webfonts — loaded from Google Fonts CDN.
+   SUBSTITUTION FLAG: no brand font files were provided. Instrument Sans is the
+   geometric-sans stand-in; IBM Plex Mono covers numerals, IDs and code.
+   Swap the @import for local @font-face rules when real files arrive. */
+@import url("https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&family=IBM+Plex+Mono:wght@400;500;600&display=swap");

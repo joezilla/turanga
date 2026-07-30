@@ -1,0 +1,44 @@
+<!-- @dsCard group="Colors" viewport="700x150" name="Semantic hues" subtitle="Matched lightness and chroma — hue is the only variable, so nothing out-shouts anything" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  body { margin:0; font-family:var(--font-sans); background:var(--bg-canvas); color:var(--text-primary);
+         -webkit-font-smoothing:antialiased; padding:20px 24px; }
+  .lbl { font-family:var(--font-mono); font-size:10px; letter-spacing:var(--tracking-micro);
+         text-transform:uppercase; color:var(--text-tertiary); }
+  .row { display:flex; gap:var(--space-3); align-items:flex-start; }
+</style>
+</head>
+<body>
+<div class="row">
+    <div style="flex:1;display:flex;flex-direction:column;gap:6px">
+      <div style="height:44px;background:var(--positive-500);border-radius:var(--radius-sm)"></div>
+      <div style="height:22px;background:var(--positive-100);border-radius:var(--radius-sm)"></div>
+      <div class="lbl">Positive</div>
+    </div>
+    <div style="flex:1;display:flex;flex-direction:column;gap:6px">
+      <div style="height:44px;background:var(--caution-500);border-radius:var(--radius-sm)"></div>
+      <div style="height:22px;background:var(--caution-100);border-radius:var(--radius-sm)"></div>
+      <div class="lbl">Caution</div>
+    </div>
+    <div style="flex:1;display:flex;flex-direction:column;gap:6px">
+      <div style="height:44px;background:var(--critical-500);border-radius:var(--radius-sm)"></div>
+      <div style="height:22px;background:var(--critical-100);border-radius:var(--radius-sm)"></div>
+      <div class="lbl">Critical</div>
+    </div>
+    <div style="flex:1;display:flex;flex-direction:column;gap:6px">
+      <div style="height:44px;background:var(--info-500);border-radius:var(--radius-sm)"></div>
+      <div style="height:22px;background:var(--info-100);border-radius:var(--radius-sm)"></div>
+      <div class="lbl">Info</div>
+    </div>
+    <div style="flex:1;display:flex;flex-direction:column;gap:6px">
+      <div style="height:44px;background:var(--signal-500);border-radius:var(--radius-sm)"></div>
+      <div style="height:22px;background:var(--signal-100);border-radius:var(--radius-sm)"></div>
+      <div class="lbl">Signal</div>
+    </div>
+  </div>
+</body>
+</html>

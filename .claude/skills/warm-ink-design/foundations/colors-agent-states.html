@@ -1,0 +1,39 @@
+<!-- @dsCard group="Colors" viewport="700x120" name="Agent lifecycle states" subtitle="The product’s most-repeated vocabulary: one dot, one word, no badges" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  body { margin:0; font-family:var(--font-sans); background:var(--bg-canvas); color:var(--text-primary);
+         -webkit-font-smoothing:antialiased; padding:20px 24px; }
+  .lbl { font-family:var(--font-mono); font-size:10px; letter-spacing:var(--tracking-micro);
+         text-transform:uppercase; color:var(--text-tertiary); }
+  .row { display:flex; gap:var(--space-3); align-items:flex-start; }
+</style>
+</head>
+<body>
+<div style="display:flex;gap:var(--space-6);align-items:center;flex-wrap:wrap">
+    <div style="display:flex;align-items:center;gap:8px">
+      <span style="width:7px;height:7px;border-radius:var(--radius-full);background:var(--state-idle)"></span>
+      <span style="font-size:var(--text-sm);color:var(--text-secondary);letter-spacing:var(--tracking-label)">Idle</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <span style="width:7px;height:7px;border-radius:var(--radius-full);background:var(--state-running)"></span>
+      <span style="font-size:var(--text-sm);color:var(--text-secondary);letter-spacing:var(--tracking-label)">Running</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <span style="width:7px;height:7px;border-radius:var(--radius-full);background:var(--state-succeeded)"></span>
+      <span style="font-size:var(--text-sm);color:var(--text-secondary);letter-spacing:var(--tracking-label)">Succeeded</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <span style="width:7px;height:7px;border-radius:var(--radius-full);background:var(--state-review)"></span>
+      <span style="font-size:var(--text-sm);color:var(--text-secondary);letter-spacing:var(--tracking-label)">Needs review</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <span style="width:7px;height:7px;border-radius:var(--radius-full);background:var(--state-failed)"></span>
+      <span style="font-size:var(--text-sm);color:var(--text-secondary);letter-spacing:var(--tracking-label)">Failed</span>
+    </div>
+  </div>
+</body>
+</html>

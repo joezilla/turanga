@@ -1,0 +1,30 @@
+/* 4px grid with 2px and 6px half-steps — balanced density: 8px inside
+   controls, 12–16px inside cards, 24–32px between regions. */
+:root {
+  --space-0:    0px;
+  --space-px:   1px;
+  --space-0-5:  2px;
+  --space-1:    4px;
+  --space-1-5:  6px;
+  --space-2:    8px;
+  --space-2-5:  10px;
+  --space-3:    12px;
+  --space-4:    16px;
+  --space-5:    20px;
+  --space-6:    24px;
+  --space-8:    32px;
+  --space-10:   40px;
+  --space-12:   48px;
+  --space-16:   64px;
+  --space-20:   80px;
+  --space-24:   96px;
+
+  --control-h-sm: 26px;
+  --control-h-md: 32px;
+  --control-h-lg: 38px;
+  --control-pad-x: 10px;
+  --row-h: 40px;
+  --sidebar-w: 248px;
+  --topbar-h: 48px;
+  --content-max: 1240px;
+}
