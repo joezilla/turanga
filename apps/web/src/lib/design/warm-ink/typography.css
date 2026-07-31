@@ -1,0 +1,35 @@
+/* Vendored from the Warm Ink design system (baseline wins on conflict).
+   Re-sync from .claude/skills/warm-ink-design/tokens/typography.css if the baseline changes.
+   Fonts are self-hosted via @fontsource (see +layout.svelte), not the CDN. */
+/* Geometric sans for everything human, mono for everything machine:
+   IDs, run counts, latency, token spend, timestamps, diffs. Numerals in
+   tables are always mono + tabular so columns never dance. */
+:root {
+  --font-sans: "Instrument Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  --text-2xs: 11px;  --lh-2xs: 16px;
+  --text-xs:  12px;  --lh-xs:  18px;
+  --text-sm:  13px;  --lh-sm:  20px;
+  --text-base:14px;  --lh-base:22px;
+  --text-md:  15px;  --lh-md:  24px;
+  --text-lg:  17px;  --lh-lg:  26px;
+  --text-xl:  20px;  --lh-xl:  28px;
+  --text-2xl: 24px;  --lh-2xl: 32px;
+  --text-3xl: 30px;  --lh-3xl: 38px;
+  --text-4xl: 38px;  --lh-4xl: 46px;
+  --text-5xl: 48px;  --lh-5xl: 54px;
+
+  --weight-regular: 400;
+  --weight-medium:  500;
+  --weight-semibold:600;
+
+  /* Optical tracking: tighten as size grows, open up for micro-caps. */
+  --tracking-display: -0.022em;
+  --tracking-heading: -0.012em;
+  --tracking-body:     0em;
+  --tracking-label:    0.005em;
+  --tracking-micro:    0.075em;
+
+  --numeric-tabular: tabular-nums;
+}

@@ -1,0 +1,31 @@
+/* Base layer. Consumes Warm Ink semantic tokens only (no raw hex). */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+body {
+  background: var(--bg-canvas);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--lh-base);
+  -webkit-font-smoothing: antialiased;
+  transition: background-color var(--duration-normal) var(--ease-standard);
+}
+/* Mono/tabular numerals for metrics, IDs, costs (NFR-6, UX-DR). */
+.mono-num {
+  font-family: var(--font-mono);
+  font-variant-numeric: var(--numeric-tabular);
+}
+/* Always-visible focus ring (accessibility floor). */
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-sm);
+}

@@ -1,0 +1,20 @@
+/* Vendored from the Warm Ink design system (baseline wins on conflict).
+   Re-sync from .claude/skills/warm-ink-design/tokens/motion.css if the baseline changes.
+   Fonts are self-hosted via @fontsource (see +layout.svelte), not the CDN. */
+/* Short and near-linear. Nothing bounces; nothing overshoots. Agent
+   activity is the only continuous motion in the product. */
+:root {
+  --duration-instant: 90ms;
+  --duration-fast:    140ms;
+  --duration-normal:  200ms;
+  --duration-slow:    320ms;
+  --duration-pulse:   1600ms;
+
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-out:      cubic-bezier(0.2, 0, 0, 1);
+  --ease-in:       cubic-bezier(0.4, 0, 1, 1);
+
+  --transition-control: background-color var(--duration-fast) var(--ease-standard),
+                        border-color var(--duration-fast) var(--ease-standard),
+                        color var(--duration-fast) var(--ease-standard);
+}
