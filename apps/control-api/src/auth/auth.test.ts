@@ -50,6 +50,13 @@ describe("auth routes", () => {
     expect(((await res.json()) as { error: string }).error).toBe("Email or password is incorrect.");
   });
 
+  it("normalizes email case/whitespace on login", async () => {
+    const app = await appWithUser();
+    const res = await app.request("/auth/login", jsonPost({ email: "  ADMIN@Turanga.Local ", password: PW }));
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { email: string }).email).toBe(EMAIL);
+  });
+
   it("logs in with correct credentials and sets a session cookie", async () => {
     const app = await appWithUser();
     const res = await app.request("/auth/login", jsonPost({ email: EMAIL, password: PW }));

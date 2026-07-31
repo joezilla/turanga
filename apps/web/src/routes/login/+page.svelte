@@ -11,10 +11,12 @@
     e.preventDefault();
     busy = true;
     error = "";
-    const ok = await login(email, password);
+    const result = await login(email, password);
     busy = false;
-    if (ok) {
+    if (result === "ok") {
       await goto("/agents");
+    } else if (result === "error") {
+      error = "Can't reach the control plane. Check it's running and try again.";
     } else {
       error = "Email or password is incorrect.";
     }
@@ -41,8 +43,8 @@
 
     <button type="submit" class="signin" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button>
 
-    <div class="sso-slot" aria-hidden="true">
-      <span>Single sign-on coming later</span>
+    <div class="sso-slot">
+      <button type="button" class="sso-btn" disabled aria-disabled="true">Single sign-on (coming later)</button>
     </div>
   </form>
 </main>
@@ -114,7 +116,15 @@
     border-top: 1px solid var(--border-hairline);
     padding-top: var(--space-4);
     text-align: center;
-    color: var(--text-tertiary);
-    font-size: var(--text-2xs);
+  }
+  .sso-btn {
+    width: 100%;
+    height: var(--control-h-md);
+    background: transparent;
+    color: var(--text-disabled);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    font-size: var(--text-xs);
+    cursor: not-allowed;
   }
 </style>

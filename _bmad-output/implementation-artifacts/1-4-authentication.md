@@ -3,7 +3,7 @@ baseline_commit: 0948b66c5093fdd2ae97a47107d264511c9802a6
 ---
 # Story 1.4: Single-user email + password authentication
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -133,3 +133,36 @@ claude-opus-4-8 (Amelia / dev-story)
 ### Change Log
 
 - 2026-07-31 — Single-user email+password auth. control-api: Drizzle DB layer (users/sessions) + migrations, argon2id hashing (`@node-rs/argon2`), DB-backed opaque session cookie (`httpOnly; SameSite=Lax`), `/auth/login|me|logout`, credentialed CORS, env-seeded initial user; own `control` database (AD-7, separated from LiteLLM). web: login-card (outside the shell), `(app)` client-side guard → `/login` on 401, account-menu Log out. Verified via 8 control-api unit tests + 6 Playwright e2e against the live stack. Status → review.
+
+## Review Findings (Epic 1 code review — 2026-07-31)
+
+Adversarial review (Blind Hunter + Edge Case Hunter + Acceptance Auditor). No AC violations found; all four stories' ACs verified. Severities set for the current consumer (single-user, single-machine tool); several deploy-hardening items rise in severity once turanga is networked/multi-user.
+
+### Decision needed
+- [x] [Review][Decision→Patch, applied] Auth hardening scope for MVP — added per-IP rate limit + body/input-size caps on /auth/login. — no rate-limit/lockout on `/auth/login` (online brute-force) AND an unauthenticated argon2 memory/CPU DoS (each attempt allocates 19 MiB). [apps/control-api/src/auth/routes.ts]
+
+### Patch (unambiguous fixes)
+- [x] [Review][Patch][med] Login timing side-channel: no argon2 verify on unknown email defeats the no-enumeration guarantee (auth.test asserts it) — add a constant dummy-hash verify when user is null [apps/control-api/src/auth/routes.ts:21]
+- [x] [Review][Patch][med] `pg` Pool has no `'error'` handler → an idle-connection drop (Postgres restart) crashes control-api — add `pool.on('error', …)` [apps/control-api/src/db/client.ts]
+- [x] [Review][Patch][med] Transient outage handling: `me()` maps outage→null so a blip logs the user out; `login()` has no try/catch so an outage shows "incorrect password" + unhandled rejection — distinguish network/5xx from 401 [apps/web/src/lib/auth.ts, src/routes/(app)/+layout.svelte, src/routes/login/+page.svelte]
+- [x] [Review][Patch][med] `(app)` guard reads `localStorage.getItem` unguarded before `me()` → storage-blocked browsers get a permanently blank app — try/catch it like theme.ts [apps/web/src/routes/(app)/+layout.svelte:17]
+- [x] [Review][Patch][med] Email not normalized (case/trim) on seed + lookup; case-sensitive unique → legit login can fail — trim+lowercase on create and lookup [apps/control-api/src/auth/routes.ts, src/server.ts]
+- [x] [Review][Patch][med] `Secure` cookie unreachable (NODE_ENV never set in compose) → session token in cleartext once deployed over TLS — drive off explicit COOKIE_SECURE/WEB_ORIGIN scheme [apps/control-api/src/server.ts, deploy/compose.yaml]
+- [x] [Review][Patch][med] Default admin password `changeme-dev` baked into compose + auto-seeded → known creds if exposed — remove the default; warn/refuse to seed when unset [deploy/compose.yaml, apps/control-api/src/server.ts]
+- [x] [Review][Patch][med] Pre-existing `pgdata` volume never gets the `control` DB (init is first-boot-only) → crash-loop on upgrade — control-api should ensure the DB exists (or fail clearly) [apps/control-api/src/server.ts, deploy/postgres-init]
+- [x] [Review][Patch][low] Misleading comment "control-api enforces auth on every endpoint" — no such middleware exists yet; fix comment and/or add a requireSession stub for Epic 2 [apps/web/src/routes/(app)/+layout.svelte]
+- [x] [Review][Patch][low] `seedInitialUser` check-then-insert not atomic → duplicate seed crashes on unique violation — `INSERT … ON CONFLICT (email) DO NOTHING` [apps/control-api/src/server.ts]
+- [x] [Review][Patch][low] Partial `INITIAL_ADMIN_*` boots with no user and no diagnostic — warn when one is set without the other [apps/control-api/src/server.ts]
+- [x] [Review][Patch][low] ULID `rand()===1.0` → index 32 → `undefined` in id — clamp the index [packages/domain/src/index.ts]
+- [x] [Review][Patch][low] `egress-guard` missing `depends_on` datastores (Story 1.1 Task 2 literal) [deploy/compose.yaml]
+- [x] [Review][Patch][low] Login SSO slot `aria-hidden` hides the reserved slot from assistive tech — use a real disabled/aria-disabled control [apps/web/src/routes/login/+page.svelte]
+- [x] [Review][Patch][low] Expired sessions never reaped → `sessions` grows unbounded — periodic `DELETE … WHERE expires_at <= now()` [apps/control-api/src/auth/repo.ts, src/server.ts]
+
+### Deferred (real; roadmap / deploy-config)
+- [x] [Review][Defer] SameSite=Lax breaks a future multi-domain deploy (web+api different sites) — deferred, arch is single-machine now
+- [x] [Review][Defer] WEB_ORIGIN single exact origin — deferred, deploy-config concern
+- [x] [Review][Defer] CSRF relies on SameSite=Lax alone — deferred, fine while endpoints are JSON+POST; revisit for state-changing GET/form routes
+- [x] [Review][Defer] ULID non-monotonic within a millisecond — deferred, no ordering dependency yet
+
+### Dismissed (noise / scope-correct)
+- Login error uses `--critical-500` (no error alias exists in tokens) · raw px 56/200 (no token exists) · five vs six token files (local-first fonts intent met) · Agents empty-state fact-only (action deferred to Story 3.1)

@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { eq, sql, lte } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { users, sessions } from "../db/schema.js";
 
@@ -14,6 +14,10 @@ export interface NewSession {
   expiresAt: Date;
 }
 
+export function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
 export interface AuthRepo {
   findUserByEmail(email: string): Promise<UserRow | null>;
   userCount(): Promise<number>;
@@ -22,6 +26,7 @@ export interface AuthRepo {
   /** Returns the session's user email if the session exists and is not expired. */
   findSessionUser(tokenHash: string, now: Date): Promise<{ email: string } | null>;
   deleteSession(tokenHash: string): Promise<void>;
+  deleteExpiredSessions(now: Date): Promise<void>;
 }
 
 export function drizzleAuthRepo(db: Db): AuthRepo {
@@ -36,7 +41,7 @@ export function drizzleAuthRepo(db: Db): AuthRepo {
       return rows[0]?.c ?? 0;
     },
     async createUser(u) {
-      await db.insert(users).values({ id: u.id, email: u.email, passwordHash: u.passwordHash });
+      await db.insert(users).values({ id: u.id, email: u.email, passwordHash: u.passwordHash }).onConflictDoNothing();
     },
     async createSession(s) {
       await db.insert(sessions).values(s);
@@ -54,6 +59,9 @@ export function drizzleAuthRepo(db: Db): AuthRepo {
     },
     async deleteSession(tokenHash) {
       await db.delete(sessions).where(eq(sessions.tokenHash, tokenHash));
+    },
+    async deleteExpiredSessions(now) {
+      await db.delete(sessions).where(lte(sessions.expiresAt, now));
     },
   };
 }
@@ -84,6 +92,9 @@ export function memoryAuthRepo(): AuthRepo {
     },
     async deleteSession(tokenHash) {
       sess.delete(tokenHash);
+    },
+    async deleteExpiredSessions(now) {
+      for (const [k, v] of sess) if (v.expiresAt.getTime() <= now.getTime()) sess.delete(k);
     },
   };
 }

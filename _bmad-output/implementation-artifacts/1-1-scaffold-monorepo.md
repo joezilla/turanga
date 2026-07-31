@@ -3,7 +3,7 @@ baseline_commit: 3380a804743c34d04bedfae31653ee80c4b6a8a5
 ---
 # Story 1.1: Scaffold the all-TypeScript monorepo and service skeleton
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 

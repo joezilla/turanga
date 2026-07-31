@@ -64,6 +64,6 @@ export function ulid(nowMs: number, rand: () => number = Math.random): Ulid {
     ts = Math.floor(ts / 32);
   }
   let rnd = "";
-  for (let i = 0; i < 16; i++) rnd += CROCKFORD[Math.floor(rand() * 32)];
+  for (let i = 0; i < 16; i++) rnd += CROCKFORD[Math.min(31, Math.floor(rand() * 32))];
   return time + rnd;
 }

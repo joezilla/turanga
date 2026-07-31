@@ -11,3 +11,11 @@ export function hashPassword(password: string): Promise<string> {
 export function verifyPassword(hash: string, password: string): Promise<boolean> {
   return argonVerify(hash, password); // params read from the encoded hash
 }
+
+// A stable decoy hash so an unknown-email login still runs one argon2 verify —
+// equalizes response time and prevents user enumeration by timing.
+let decoy: string | null = null;
+export async function decoyHash(): Promise<string> {
+  if (!decoy) decoy = await hashPassword("unused-decoy-password-for-constant-time");
+  return decoy;
+}

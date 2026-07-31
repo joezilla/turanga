@@ -62,8 +62,12 @@ services:
       PORT: "8080"
       WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:5173}
       DATABASE_URL: postgresql://turanga:${POSTGRES_PASSWORD:-turanga}@postgres:5432/control
-      INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL:-admin@turanga.local}
-      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-changeme-dev}
+      # No baked-in default password — set these in deploy/.env (see .env.example).
+      # If unset, control-api boots without seeding a user (and logs why).
+      INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL:-}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-}
+      # Set COOKIE_SECURE=true when serving over HTTPS (prod). Off for local http.
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
     ports:
       - "8080:8080"
     healthcheck:
@@ -76,6 +80,9 @@ services:
     build:
       context: ..
       dockerfile: apps/egress-guard/Dockerfile
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
     environment:
       PORT: "8081"
     healthcheck:

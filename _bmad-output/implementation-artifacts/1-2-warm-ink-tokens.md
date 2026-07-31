@@ -3,7 +3,7 @@ baseline_commit: 7308136292fc54e6aa712d21f0c928eb734cad41
 ---
 # Story 1.2: Adopt the Warm Ink design system as the foundation layer
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 

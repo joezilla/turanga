@@ -3,7 +3,7 @@ baseline_commit: 138c61327a01b443235b94340f44b44b4a3c6dbe
 ---
 # Story 1.3: App shell — sidebar, topbar, content, theme toggle
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
