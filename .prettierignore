@@ -1,0 +1,6 @@
+_bmad/
+_bmad-output/
+**/dist/
+**/build/
+**/.svelte-kit/
+pnpm-lock.yaml

@@ -1,0 +1,5 @@
+# Minimal LiteLLM proxy config. Providers/models are added in Epic 2 (Connections).
+# Virtual keys with per-key budgets (Epic 4) use the DB + Redis wired via env.
+model_list: []
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY

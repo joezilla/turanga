@@ -125,12 +125,14 @@ graph TD
 
 | Name | Version |
 | --- | --- |
-| TypeScript / Node | current LTS |
-| Next.js **or** SvelteKit (frontend — pick one) | Next.js 16.x / SvelteKit current |
-| LiteLLM (model gateway sidecar) | 1.94.x |
+| TypeScript / Node | Node 22 LTS |
+| SvelteKit (frontend) *(bound at build start; Svelte 5 runes)* | @sveltejs/kit 2.69.x |
+| Hono (control-api, egress-guard services) | 4.12.x |
+| pnpm workspaces (monorepo; add Turborepo only if build times hurt) | pnpm 11.18.x |
+| LiteLLM (model gateway sidecar; image `litellm/litellm-database`, pin immutable tag) | v1.94.1 |
 | Docker + gVisor (`runsc`) | current |
-| PostgreSQL | 16.x |
-| Redis | 7.x |
+| PostgreSQL | 17.x |
+| Redis | 8.x |
 
 ## Structural Seed
 
@@ -198,7 +200,7 @@ turanga/
 
 ## Deferred
 
-- **Frontend framework** — Next.js vs SvelteKit; no ripple into the security architecture, so bind it at build start.
+- **Frontend framework** — ~~Next.js vs SvelteKit~~ **bound to SvelteKit** (Svelte 5 runes) at build start, 2026-07-31; no ripple into the security architecture.
 - **Adversarial egress monitor** — MVP is default-deny allowlist + filter hook; the injection-resistant reference monitor (the roadmap moat) drops in at the filter hook without rework (AD-5).
 - **Reserve-then-reconcile cost hardening** (NFR-3) — MVP trusts LiteLLM budgets; own-accounting overlay is roadmap given solo/low-concurrency (AD-6).
 - **Mid-run `review` / human-in-the-loop** — needs Run continuation across ephemeral containers; roadmap (AD-8).

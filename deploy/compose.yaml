@@ -1,0 +1,83 @@
+# turanga — LONG-LIVED services only (AD-4).
+#
+# Per-run agent sandboxes are intentionally NOT declared here. They are created
+# dynamically by the run-orchestrator via the Docker API with `--runtime=runsc`
+# (gVisor) and `--network=none`, and reaped on completion (AD-1, AD-4, Epic 4).
+name: turanga
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: turanga
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-turanga}
+      POSTGRES_DB: turanga
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U turanga -d turanga"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:8
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Model gateway sidecar (AD-2/AD-6). Pinned immutable tag — never :latest.
+  litellm:
+    image: litellm/litellm-database:v1.94.1
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    environment:
+      DATABASE_URL: postgresql://turanga:${POSTGRES_PASSWORD:-turanga}@postgres:5432/turanga
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-turanga-dev}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    volumes:
+      - ./litellm-config.yaml:/app/config.yaml:ro
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  control-api:
+    build:
+      context: ..
+      dockerfile: apps/control-api/Dockerfile
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    environment:
+      PORT: "8080"
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:5173}
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  egress-guard:
+    build:
+      context: ..
+      dockerfile: apps/egress-guard/Dockerfile
+    environment:
+      PORT: "8081"
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:8081/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  pgdata:

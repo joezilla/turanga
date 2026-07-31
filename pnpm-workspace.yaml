@@ -1,0 +1,10 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+allowBuilds:
+  esbuild: true
+
+# esbuild ships a postinstall that fetches its native binary; vite/SvelteKit need it.
+onlyBuiltDependencies:
+  - esbuild

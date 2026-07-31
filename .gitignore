@@ -9,3 +9,19 @@
 # Editor swap files
 *.swp
 *.swo
+
+# Node / monorepo
+node_modules/
+dist/
+build/
+.svelte-kit/
+*.tsbuildinfo
+
+# Secrets / local env (AD-10 — never commit)
+deploy/.env
+**/.env
+!**/.env.example
+
+# Playwright
+test-results/
+playwright-report/
