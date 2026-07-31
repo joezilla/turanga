@@ -19,6 +19,8 @@ services:
       retries: 20
     volumes:
       - pgdata:/var/lib/postgresql/data
+      # Creates a separate `control` database for control-api (AD-7) on first init.
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
 
   redis:
     image: redis:8
@@ -59,6 +61,9 @@ services:
     environment:
       PORT: "8080"
       WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:5173}
+      DATABASE_URL: postgresql://turanga:${POSTGRES_PASSWORD:-turanga}@postgres:5432/control
+      INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL:-admin@turanga.local}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-changeme-dev}
     ports:
       - "8080:8080"
     healthcheck:

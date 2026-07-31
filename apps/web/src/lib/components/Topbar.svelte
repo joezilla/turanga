@@ -1,10 +1,15 @@
 <script lang="ts">
   import { Sun, Moon, User, Circle } from "@lucide/svelte";
   import { toggleTheme, getTheme, type Theme } from "$lib/theme";
+  import { logout } from "$lib/auth";
+  import { goto } from "$app/navigation";
+
+  let { email = "" }: { email?: string } = $props();
 
   type Status = "checking" | "connected" | "unreachable";
   let status = $state<Status>("checking");
   let theme = $state<Theme>("light");
+  let menuOpen = $state(false);
 
   const base = import.meta.env.VITE_CONTROL_API_URL ?? "http://localhost:8080";
 
@@ -28,6 +33,12 @@
     toggleTheme();
     theme = getTheme();
   }
+
+  async function onLogout() {
+    menuOpen = false;
+    await logout();
+    await goto("/login");
+  }
 </script>
 
 <header class="topbar">
@@ -40,9 +51,17 @@
     <button class="icon-btn" onclick={onToggleTheme} aria-label="Toggle theme">
       {#if theme === "dark"}<Sun size={16} color="currentColor" />{:else}<Moon size={16} color="currentColor" />{/if}
     </button>
-    <button class="icon-btn" aria-label="Account menu">
-      <User size={16} color="currentColor" />
-    </button>
+    <div class="account">
+      <button class="icon-btn" onclick={() => (menuOpen = !menuOpen)} aria-label="Account menu" aria-expanded={menuOpen}>
+        <User size={16} color="currentColor" />
+      </button>
+      {#if menuOpen}
+        <div class="menu" role="menu">
+          <span class="menu-email">{email}</span>
+          <button class="menu-item" role="menuitem" onclick={onLogout}>Log out</button>
+        </div>
+      {/if}
+    </div>
   </div>
 </header>
 
@@ -89,6 +108,44 @@
     transition: var(--transition-control);
   }
   .icon-btn:hover {
+    background: var(--surface-hover);
+  }
+  .account {
+    position: relative;
+  }
+  .menu {
+    position: absolute;
+    top: calc(100% + var(--space-1));
+    right: 0;
+    min-width: 200px;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    padding: var(--space-2);
+    background: var(--surface-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-md);
+    z-index: 10;
+  }
+  .menu-email {
+    padding: var(--space-1) var(--space-2);
+    font-size: var(--text-xs);
+    color: var(--text-tertiary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .menu-item {
+    text-align: left;
+    padding: var(--space-2);
+    font-size: var(--text-sm);
+    color: var(--text-primary);
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+  }
+  .menu-item:hover {
     background: var(--surface-hover);
   }
 </style>

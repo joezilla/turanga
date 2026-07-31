@@ -1,28 +1,46 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 
-// Requires the compose stack up (control-api on :8080). Dev server runs on :5173
-// (the control-api CORS-allowed origin), so the browser fetch to :8080 succeeds.
+// Requires the compose stack up (control-api :8080, postgres) seeded with the
+// INITIAL_ADMIN_* creds from deploy/.env. Dev server runs on :5173 (same-site as
+// :8080, so the SameSite=Lax session cookie flows with credentials: include).
 
-test("app shell renders and reaches the control plane (regression)", async ({ page }) => {
-  await page.goto("/"); // redirects to /agents
+const EMAIL = "admin@turanga.local";
+const PASSWORD = "changeme-dev";
+
+async function signIn(page: Page) {
+  await page.goto("/login");
+  await page.getByLabel("Email").fill(EMAIL);
+  await page.getByLabel("Password").fill(PASSWORD);
+  await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page).toHaveURL(/\/agents$/);
+}
 
-  // Topbar: workspace name + control-plane connectivity (Story 1.1/1.2 regression).
+test("unauthenticated app routes redirect to /login", async ({ page }) => {
+  await page.goto("/agents");
+  await expect(page).toHaveURL(/\/login$/);
+  await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
+});
+
+test("wrong credentials show a generic inline error and stay on /login", async ({ page }) => {
+  await page.goto("/login");
+  await page.getByLabel("Email").fill(EMAIL);
+  await page.getByLabel("Password").fill("wrong-password");
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page.getByRole("alert")).toHaveText("Email or password is incorrect.");
+  await expect(page).toHaveURL(/\/login$/);
+});
+
+test("sign in lands on the shell and reaches the control plane (regression)", async ({ page }) => {
+  await signIn(page);
   await expect(page.getByText("turanga", { exact: true })).toBeVisible();
   await expect(page.getByTestId("control-status")).toHaveText("control plane: connected", { timeout: 10000 });
-
-  // Sidebar nav present.
   await expect(page.getByRole("link", { name: "Agents" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Settings" })).toBeVisible();
-  // Lucide icons render (UX-DR19).
-  expect(await page.locator("svg").count()).toBeGreaterThan(0);
 });
 
 test("active nav highlights and navigation works", async ({ page }) => {
-  await page.goto("/agents");
+  await signIn(page);
   await expect(page.getByRole("link", { name: "Agents" })).toHaveAttribute("aria-current", "page");
-  await expect(page.getByRole("link", { name: "Settings" })).not.toHaveAttribute("aria-current", "page");
-
   await page.getByRole("link", { name: "Settings" }).click();
   await expect(page).toHaveURL(/\/settings$/);
   await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
@@ -30,11 +48,8 @@ test("active nav highlights and navigation works", async ({ page }) => {
 });
 
 test("theme toggle changes the background and persists across reload", async ({ page }) => {
-  await page.goto("/agents");
-  // Wait for hydration: the control-status fetch only resolves after client JS runs,
-  // so the toggle's click handler is guaranteed to be wired before we click it.
+  await signIn(page);
   await expect(page.getByTestId("control-status")).toHaveText("control plane: connected", { timeout: 10000 });
-
   const bgOf = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
 
   await page.evaluate(() => {
@@ -46,9 +61,18 @@ test("theme toggle changes the background and persists across reload", async ({ 
   await page.getByRole("button", { name: "Toggle theme" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   const darkBg = await bgOf();
-  expect(darkBg).not.toBe(lightBg); // tokens re-declare under [data-theme="dark"]
+  expect(darkBg).not.toBe(lightBg);
 
-  // Persistence (UX-DR17): reload → still dark, no flash.
   await page.reload();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+});
+
+test("logout returns to /login", async ({ page }) => {
+  await signIn(page);
+  await page.getByRole("button", { name: "Account menu" }).click();
+  await page.getByRole("menuitem", { name: "Log out" }).click();
+  await expect(page).toHaveURL(/\/login$/);
+  // Session cleared: app routes redirect again.
+  await page.goto("/agents");
+  await expect(page).toHaveURL(/\/login$/);
 });

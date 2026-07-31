@@ -129,6 +129,8 @@ graph TD
 | SvelteKit (frontend) *(bound at build start; Svelte 5 runes)* | @sveltejs/kit 2.69.x |
 | Hono (control-api, egress-guard services) | 4.12.x |
 | pnpm workspaces (monorepo; add Turborepo only if build times hurt) | pnpm 11.18.x |
+| Drizzle ORM + drizzle-kit (control-api DB layer + migrations; over node-postgres `pg`) *(bound at build start, Story 1.4)* | drizzle-orm 0.45.x |
+| @node-rs/argon2 (password hashing, argon2id — prebuilt, no node-gyp) | 2.x |
 | LiteLLM (model gateway sidecar; image `litellm/litellm-database`, pin immutable tag) | v1.94.1 |
 | Docker + gVisor (`runsc`) | current |
 | PostgreSQL | 17.x |
