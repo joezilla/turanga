@@ -14,12 +14,14 @@ async function seeded(repo: AuthRepo) {
   await repo.createUser({ id: ulid(1), email: EMAIL, passwordHash: await hashPassword(PW) });
 }
 
+// Distinct client IP per session so many logins in one run don't trip the login rate limiter.
+let clientSeq = 0;
 async function appWithSession(gateway = fakeModelGateway({ verifyOk: true })) {
   const authRepo = memoryAuthRepo();
   await seeded(authRepo);
   const connectionsRepo = memoryConnectionsRepo();
   const app = createApp({ authRepo, connectionsRepo, modelGateway: gateway });
-  const login = await app.request("/auth/login", jsonPost({ email: EMAIL, password: PW }));
+  const login = await app.request("/auth/login", { ...jsonPost({ email: EMAIL, password: PW }), headers: { "content-type": "application/json", "x-forwarded-for": `10.1.0.${clientSeq++}` } });
   const cookie = (login.headers.get("set-cookie") ?? "").split(";")[0];
   return { app, cookie, gateway, connectionsRepo };
 }
@@ -86,5 +88,49 @@ describe("connect a model provider", () => {
     expect(gateway.unregistered.length).toBeGreaterThan(0);
     const list = (await (await app.request("/connections/providers", { headers: { cookie } })).json()) as { providers: unknown[] };
     expect(list.providers).toEqual([]);
+  });
+});
+
+describe("provider dependents (GET /connections/providers/:id/dependents, Story 3.6)", () => {
+  const jsonPatch = (body: unknown) => ({ method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+
+  async function connectProvider(app: any, cookie: string, provider: string) {
+    const r = (await (await app.request("/connections/providers", { ...jsonPost({ provider, apiKey: `sk-${provider}-1234` }), headers: { "content-type": "application/json", cookie } })).json()) as { provider: { id: string; provider: string } };
+    return r.provider;
+  }
+  async function agentWithModel(app: any, cookie: string, name: string, model: string) {
+    const created = (await (await app.request("/agents", { ...jsonPost({ name }), headers: { "content-type": "application/json", cookie } })).json()) as { agent: { id: string } };
+    await app.request(`/agents/${created.agent.id}`, { ...jsonPatch({ model }), headers: { "content-type": "application/json", cookie } });
+    return created.agent.id;
+  }
+
+  it("returns agents whose model matches the provider kind, excluding others", async () => {
+    const { app, cookie } = await appWithSession();
+    const openai = await connectProvider(app, cookie, "openai");
+    await agentWithModel(app, cookie, "Portfolio", "openai/gpt-4o");
+    await agentWithModel(app, cookie, "Inbox", "openai/gpt-4o-mini");
+    await agentWithModel(app, cookie, "Other", "anthropic/claude-sonnet-5"); // different kind → excluded
+    const res = await app.request(`/connections/providers/${openai.id}/dependents`, { headers: { cookie } });
+    expect(res.status).toBe(200);
+    const names = ((await res.json()) as { agents: { name: string }[] }).agents.map((a) => a.name).sort();
+    expect(names).toEqual(["Inbox", "Portfolio"]);
+  });
+
+  it("returns [] when no agent references the provider", async () => {
+    const { app, cookie } = await appWithSession();
+    const anthropic = await connectProvider(app, cookie, "anthropic");
+    await agentWithModel(app, cookie, "Portfolio", "openai/gpt-4o");
+    const res = await app.request(`/connections/providers/${anthropic.id}/dependents`, { headers: { cookie } });
+    expect(((await res.json()) as { agents: unknown[] }).agents).toEqual([]);
+  });
+
+  it("404 for an unknown provider id", async () => {
+    const { app, cookie } = await appWithSession();
+    expect((await app.request("/connections/providers/nope/dependents", { headers: { cookie } })).status).toBe(404);
+  });
+
+  it("401 without a session", async () => {
+    const { app } = await appWithSession();
+    expect((await app.request("/connections/providers/x/dependents")).status).toBe(401);
   });
 });

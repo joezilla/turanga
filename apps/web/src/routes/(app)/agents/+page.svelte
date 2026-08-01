@@ -2,7 +2,13 @@
   // Agents surface (Story 3.1): create + list + Draft state. Rows are display-only here;
   // the agent-definition surface and navigation to /agents/:id are Story 3.2.
   import { listAgents, createAgent, type Agent } from "$lib/agents";
+  import { formatMinor } from "$lib/money";
   import StatusDot from "$lib/components/StatusDot.svelte";
+
+  // Cost-meter denominator for an Active agent's row (Story 3.6). Live spend ($0.00) is Epic 4.
+  function meterCap(agent: Agent): string {
+    return agent.costCap.perDay ? `$${formatMinor(agent.costCap.perDay.minor)}` : "—";
+  }
 
   let agents = $state<Agent[]>([]);
   let loading = $state(true);
@@ -91,7 +97,12 @@
       <li>
         <a class="agent" href="/agents/{agent.id}">
           <span class="name">{agent.name}</span>
-          <StatusDot status={agent.state} />
+          <span class="meta">
+            {#if agent.state === "active"}
+              <span class="meter">today $0.00 / {meterCap(agent)}</span>
+            {/if}
+            <StatusDot status={agent.state} />
+          </span>
         </a>
       </li>
     {/each}
@@ -187,6 +198,18 @@
   .name {
     font-size: var(--text-sm);
     color: var(--text-primary);
+  }
+  .meta {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-3);
+  }
+  /* Per-Active-agent cost meter — mono/tabular; live spend is Epic 4. */
+  .meter {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: var(--text-xs);
+    color: var(--text-tertiary);
   }
   .muted {
     color: var(--text-tertiary);

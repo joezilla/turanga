@@ -62,3 +62,15 @@ export function rotateKey(id: string, apiKey: string): Promise<Result<{ provider
 export function removeProvider(id: string): Promise<Result<{ ok: true }>> {
   return req(`/connections/providers/${id}`, { method: "DELETE" });
 }
+
+export interface DependentAgent {
+  id: string;
+  name: string;
+  state: string;
+}
+
+// Agents that reference this provider (their model is "<kind>/…") — surfaced before removal (3.6).
+export async function providerDependents(id: string): Promise<Result<DependentAgent[]>> {
+  const r = await req<{ agents: DependentAgent[] }>(`/connections/providers/${id}/dependents`);
+  return r.ok ? { ok: true, value: Array.isArray(r.value.agents) ? r.value.agents : [] } : r;
+}

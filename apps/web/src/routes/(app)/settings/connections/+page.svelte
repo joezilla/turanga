@@ -70,6 +70,8 @@
           <p class="dest mono-num">{conn.destinations.join(" · ")}</p>
         {/if}
         <div class="actions">
+          <!-- No dependent-agent guard here yet: agents can't attach a data connection until a
+               later story. Once they can, mirror the providers-page dependents guard (3.6). -->
           {#if confirmRemoveId === conn.id}
             <span class="confirm">Revoke {conn.name}?</span>
             <button type="button" class="danger" onclick={() => onRemove(conn.id)}>Revoke</button>

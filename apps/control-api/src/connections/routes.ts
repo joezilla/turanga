@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { ulid } from "@turanga/domain";
 import type { ConnectionsRepo, ProviderRow } from "./repo.js";
+import type { AgentsRepo } from "../agents/repo.js";
 import type { ModelGateway, ProviderKind, RegisterInput } from "../litellm/gateway.js";
 
 const PROVIDERS: ProviderKind[] = ["openai", "anthropic", "openai-compatible"];
@@ -29,11 +30,23 @@ function parseModels(v: unknown): string[] {
   return [];
 }
 
-export function connectionRoutes(repo: ConnectionsRepo, gateway: ModelGateway) {
+export function connectionRoutes(repo: ConnectionsRepo, gateway: ModelGateway, agentsRepo: AgentsRepo) {
   const app = new Hono();
 
   app.get("/connections/providers", async (c) => {
     return c.json({ providers: (await repo.listProviders()).map(view) });
+  });
+
+  // Agents that reference this provider — those whose selected model is "<kind>/…" (Story 3.6).
+  // Advisory guard: the providers page surfaces these before a removal is confirmed.
+  app.get("/connections/providers/:id/dependents", async (c) => {
+    const provider = await repo.getProvider(c.req.param("id"));
+    if (!provider) return c.json({ error: "Not found." }, 404);
+    const prefix = `${provider.provider}/`;
+    const agents = (await agentsRepo.list())
+      .filter((a) => a.model?.startsWith(prefix))
+      .map((a) => ({ id: a.id, name: a.name, state: a.state }));
+    return c.json({ agents });
   });
 
   app.post("/connections/providers", async (c) => {

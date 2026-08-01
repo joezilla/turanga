@@ -49,15 +49,15 @@ export function createApp(deps: AppDeps = {}) {
   app.use("/oauth/*", requireSession(authRepo));
   app.use("/agents", requireSession(authRepo));
   app.use("/agents/*", requireSession(authRepo));
+  const agentsRepo = deps.agentsRepo ?? memoryAgentsRepo();
   const connectionsRepo = deps.connectionsRepo ?? memoryConnectionsRepo();
   const gateway = deps.modelGateway ?? fakeModelGateway();
-  app.route("/", connectionRoutes(connectionsRepo, gateway));
+  app.route("/", connectionRoutes(connectionsRepo, gateway, agentsRepo)); // agentsRepo → dependents guard (3.6)
 
   const dataConnectionsRepo = deps.dataConnectionsRepo ?? memoryDataConnectionsRepo();
   const google = deps.googleOAuth ?? googleOAuth();
   app.route("/", dataConnectionRoutes(dataConnectionsRepo, google, webOrigin));
 
-  const agentsRepo = deps.agentsRepo ?? memoryAgentsRepo();
   app.route("/", agentRoutes(agentsRepo));
 
   return app;

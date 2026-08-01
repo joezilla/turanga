@@ -163,3 +163,45 @@ test("cost caps: set per-run + per-day, persist, and block an invalid amount", a
   await page.reload();
   await expect(page.getByLabel("Per-run cap")).toHaveValue("0.50"); // unchanged — the bad value wasn't saved
 });
+
+const CONTROL_API = "http://localhost:8080";
+
+test("removing a provider surfaces dependent agents; agents list shows state + no meter for Draft", async ({ page }) => {
+  await signIn(page);
+
+  // Create an agent and set its model to openai/gpt-4o directly (no provider is connectable in
+  // e2e to select from). page.request shares the browser session cookie. [3.6 AC2 setup]
+  await page.getByRole("button", { name: "Create agent" }).first().click();
+  await page.locator("a.agent").first().click();
+  await expect(page).toHaveURL(/\/agents\/[0-9A-Z]{26}$/);
+  const agentId = page.url().split("/").pop();
+  const patch = await page.request.patch(`${CONTROL_API}/agents/${agentId}`, {
+    data: { model: "openai/gpt-4o" },
+    headers: { "content-type": "application/json" },
+  });
+  expect(patch.ok()).toBeTruthy();
+
+  // Agents list: the agent shows its Draft status and NO cost meter (meter is Active-only). [3.6 AC1]
+  await page.goto("/agents");
+  await expect(page.locator("a.agent").first().locator(".status-dot")).toContainText("draft");
+  await expect(page.locator(".meter")).toHaveCount(0);
+
+  // Connect a bogus OpenAI provider (created with error status, still removable).
+  await page.goto("/settings/providers");
+  await page.getByLabel("API key").fill("sk-bogus-key-should-401");
+  await page.getByRole("button", { name: "Connect provider" }).click();
+  const card = page.locator("li.provider");
+  await expect(card).toContainText("OpenAI · error", { timeout: 20000 });
+
+  // Arm Remove → the dependent agent is surfaced before confirming. [3.6 AC2]
+  await card.getByRole("button", { name: "Remove" }).click();
+  await expect(page.getByText(/uses it/)).toBeVisible();
+  await expect(page.getByText(/have no model/)).toBeVisible();
+
+  // Cancel keeps the provider; Remove then deletes it.
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect(card).toBeVisible();
+  await card.getByRole("button", { name: "Remove" }).click(); // arm
+  await card.getByRole("button", { name: "Remove" }).click(); // confirm
+  await expect(page.getByText("No providers connected.")).toBeVisible();
+});

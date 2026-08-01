@@ -5,8 +5,10 @@
     connectProvider,
     rotateKey,
     removeProvider,
+    providerDependents,
     type Provider,
     type ProviderKind,
+    type DependentAgent,
   } from "$lib/connections";
 
   let providers = $state<Provider[]>([]);
@@ -26,6 +28,7 @@
   let rotatingId = $state<string | null>(null);
   let rotateKeyValue = $state("");
   let confirmRemoveId = $state<string | null>(null);
+  let dependents = $state<DependentAgent[]>([]); // agents that use the provider being removed
 
   async function load() {
     loading = true;
@@ -70,8 +73,17 @@
     else loadError = r.error;
   }
 
+  // Arm removal: surface the dependent agents first (so you don't break a running agent).
+  async function armRemove(id: string) {
+    confirmRemoveId = id;
+    dependents = [];
+    const r = await providerDependents(id);
+    if (r.ok && confirmRemoveId === id) dependents = r.value;
+  }
+
   async function onRemove(id: string) {
     confirmRemoveId = null;
+    dependents = [];
     const r = await removeProvider(id);
     if (r.ok) await load();
     else loadError = r.error;
@@ -150,12 +162,18 @@
             <button type="button" onclick={() => onRotate(p.id)}>Save</button>
             <button type="button" class="ghost" onclick={() => (rotatingId = null)}>Cancel</button>
           {:else if confirmRemoveId === p.id}
-            <span class="confirm">Remove {p.name}?</span>
+            <span class="confirm">
+              Remove {p.name}?
+              {#if dependents.length > 0}
+                {dependents.length} agent{dependents.length === 1 ? "" : "s"} use{dependents.length === 1 ? "s" : ""} it
+                ({dependents.map((d) => d.name).join(", ")}) — {dependents.length === 1 ? "it" : "they"}'ll have no model.
+              {/if}
+            </span>
             <button type="button" class="danger" onclick={() => onRemove(p.id)}>Remove</button>
-            <button type="button" class="ghost" onclick={() => (confirmRemoveId = null)}>Cancel</button>
+            <button type="button" class="ghost" onclick={() => { confirmRemoveId = null; dependents = []; }}>Cancel</button>
           {:else}
             <button type="button" class="ghost" onclick={() => { rotatingId = p.id; rotateKeyValue = ""; }}>Update key</button>
-            <button type="button" class="ghost" onclick={() => (confirmRemoveId = p.id)}>Remove</button>
+            <button type="button" class="ghost" onclick={() => armRemove(p.id)}>Remove</button>
           {/if}
         </div>
       </li>
