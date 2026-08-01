@@ -15,12 +15,20 @@ async function createAgent(app: Awaited<ReturnType<typeof appWithSession>>["app"
   return ((await res.json()) as { agent: { id: string } }).agent;
 }
 
+// The login rate-limiter keys on x-forwarded-for (falling back to a shared "local" bucket),
+// so give each test session a distinct client IP — otherwise many logins in one run trip the
+// per-client limit (a real deployment sees distinct clients).
+let clientSeq = 0;
 async function appWithSession() {
   const authRepo: AuthRepo = memoryAuthRepo();
   await authRepo.createUser({ id: ulid(1), email: EMAIL, passwordHash: await hashPassword(PW) });
   const agentsRepo = memoryAgentsRepo();
   const app = createApp({ authRepo, agentsRepo });
-  const login = await app.request("/auth/login", jsonPost({ email: EMAIL, password: PW }));
+  const ip = `10.0.0.${clientSeq++}`;
+  const login = await app.request("/auth/login", {
+    ...jsonPost({ email: EMAIL, password: PW }),
+    headers: { "content-type": "application/json", "x-forwarded-for": ip },
+  });
   const cookie = (login.headers.get("set-cookie") ?? "").split(";")[0];
   return { app, cookie, agentsRepo };
 }
@@ -51,6 +59,8 @@ describe("create an agent", () => {
     expect(a.state).toBe("draft");
     expect(a.name).toBe("Untitled agent");
     expect(a.model).toBeNull(); // no model until selected (Story 3.2)
+    expect(a.instructions).toBe(""); // Story 3.3 defaults
+    expect(a.variables).toEqual([]);
     expect(a.id).toHaveLength(26); // ULID
     expect(a.createdAt).toBeTruthy();
   });
@@ -162,5 +172,61 @@ describe("agent autosave (PATCH /agents/:id)", () => {
   it("404 patching an unknown id", async () => {
     const { app, cookie } = await appWithSession();
     expect((await app.request("/agents/nope", { ...jsonPatch({ model: "openai/gpt-4o" }), headers: { "content-type": "application/json", cookie } })).status).toBe(404);
+  });
+});
+
+describe("agent instructions + variables (PATCH, Story 3.3)", () => {
+  const patchReq = (app: Awaited<ReturnType<typeof appWithSession>>["app"], cookie: string, id: string, body: unknown) =>
+    app.request(`/agents/${id}`, { ...jsonPatch(body), headers: { "content-type": "application/json", cookie } });
+
+  it("persists instructions (empty allowed) and caps at 20000", async () => {
+    const { app, cookie } = await appWithSession();
+    const created = await createAgent(app, cookie);
+    const set = ((await (await patchReq(app, cookie, created.id, { instructions: "Watch {portfolio}." })).json()) as { agent: any }).agent;
+    expect(set.instructions).toBe("Watch {portfolio}.");
+    const cleared = ((await (await patchReq(app, cookie, created.id, { instructions: "" })).json()) as { agent: any }).agent;
+    expect(cleared.instructions).toBe(""); // empty is a valid value
+    const capped = ((await (await patchReq(app, cookie, created.id, { instructions: "x".repeat(50000) })).json()) as { agent: any }).agent;
+    expect(capped.instructions).toHaveLength(20000);
+  });
+
+  it("rejects non-string instructions (400)", async () => {
+    const { app, cookie } = await appWithSession();
+    const created = await createAgent(app, cookie);
+    expect((await patchReq(app, cookie, created.id, { instructions: 42 })).status).toBe(400);
+  });
+
+  it("persists a valid variables array and returns it (durable)", async () => {
+    const { app, cookie } = await appWithSession();
+    const created = await createAgent(app, cookie);
+    const vars = [{ name: "portfolio", value: "AAPL, MSFT" }, { name: "risk_level", value: "low" }];
+    const set = ((await (await patchReq(app, cookie, created.id, { variables: vars })).json()) as { agent: any }).agent;
+    expect(set.variables).toEqual(vars);
+    const got = ((await (await app.request(`/agents/${created.id}`, { headers: { cookie } })).json()) as { agent: any }).agent;
+    expect(got.variables).toEqual(vars);
+  });
+
+  it("rejects a bad name, a duplicate name, an over-cap array, a non-string value, and a non-array (400)", async () => {
+    const { app, cookie } = await appWithSession();
+    const created = await createAgent(app, cookie);
+    expect((await patchReq(app, cookie, created.id, { variables: [{ name: "1bad", value: "x" }] })).status).toBe(400);
+    expect((await patchReq(app, cookie, created.id, { variables: [{ name: "bad-dash", value: "x" }] })).status).toBe(400);
+    expect((await patchReq(app, cookie, created.id, { variables: [{ name: "dup", value: "a" }, { name: "dup", value: "b" }] })).status).toBe(400);
+    expect((await patchReq(app, cookie, created.id, { variables: [{ name: "ok", value: 5 }] })).status).toBe(400);
+    const many = Array.from({ length: 51 }, (_, i) => ({ name: `v${i}`, value: "x" }));
+    expect((await patchReq(app, cookie, created.id, { variables: many })).status).toBe(400);
+    expect((await patchReq(app, cookie, created.id, { variables: "nope" })).status).toBe(400);
+  });
+
+  it("caps variable values at 2000 chars", async () => {
+    const { app, cookie } = await appWithSession();
+    const created = await createAgent(app, cookie);
+    const set = ((await (await patchReq(app, cookie, created.id, { variables: [{ name: "big", value: "y".repeat(9000) }] })).json()) as { agent: any }).agent;
+    expect(set.variables[0].value).toHaveLength(2000);
+  });
+
+  it("401 without a session", async () => {
+    const { app } = await appWithSession();
+    expect((await app.request("/agents/x", jsonPatch({ instructions: "hi" }))).status).toBe(401);
   });
 });

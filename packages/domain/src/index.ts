@@ -21,11 +21,18 @@ export interface CostCap {
   perDay: Money;
 }
 
+/** A named, reusable parameter referenced from instructions as `{name}` (Story 3.3). */
+export interface AgentVariable {
+  name: string;
+  value: string;
+}
+
 export interface Agent {
   id: Ulid;
   name: string;
   model?: string; // "provider/model-id"
   instructions: string;
+  variables?: AgentVariable[];
   skills: BuiltinSkill[];
   costCap?: CostCap;
   state: LifecycleState;

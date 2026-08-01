@@ -1,14 +1,18 @@
 <script lang="ts">
-  // Agent-definition surface (Story 3.2): two-pane builder (config left / test right),
-  // collapsible Model section, autosave (name + model). Instructions/Skills/Variables/
-  // Cost caps/Allowlist are later stories; the test pane is a scaffold (runs are Epic 4).
+  // Agent-definition surface: two-pane builder (config left / test right), collapsible
+  // sections, autosave. Model (3.2), Instructions + Variables (3.3). Skills/Cost caps are
+  // later stories; the test pane is a scaffold (runs are Epic 4).
   import { page } from "$app/state";
-  import { ArrowLeft } from "@lucide/svelte";
-  import { getAgent, updateAgent, type Agent } from "$lib/agents";
+  import { ArrowLeft, Circle } from "@lucide/svelte";
+  import { getAgent, updateAgent, type Agent, type AgentPatch, type AgentVariable } from "$lib/agents";
   import { listProviders, type Provider } from "$lib/connections";
+  import { undefinedVariables } from "$lib/variables";
   import Section from "$lib/components/Section.svelte";
   import StatusDot from "$lib/components/StatusDot.svelte";
   import ModelSelector from "$lib/components/ModelSelector.svelte";
+  import InstructionsEditor from "$lib/components/InstructionsEditor.svelte";
+
+  const VAR_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_]{0,63}$/;
 
   const id = $derived(page.params.id ?? "");
 
@@ -23,8 +27,18 @@
   let name = $state("");
   let nameTimer: ReturnType<typeof setTimeout> | null = null;
 
+  // Local editable copies of instructions + variables (seeded on load; the server response
+  // is not written back onto them so in-progress typing isn't clobbered).
+  let instructions = $state("");
+  let instrTimer: ReturnType<typeof setTimeout> | null = null;
+  let vars = $state<AgentVariable[]>([]);
+  let varsTimer: ReturnType<typeof setTimeout> | null = null;
+
   // Config UI state
   let showTest = $state(false); // < 1024px: the test pane collapses behind this toggle
+
+  const definedNames = $derived(vars.map((v) => v.name).filter((n) => VAR_NAME_RE.test(n)));
+  const undefinedNames = $derived(undefinedVariables(instructions, definedNames));
 
   async function load() {
     loading = true;
@@ -39,6 +53,8 @@
     }
     agent = a.value;
     name = a.value.name;
+    instructions = a.value.instructions;
+    vars = a.value.variables.map((v) => ({ ...v }));
     providers = p.ok ? p.value : []; // a provider outage shouldn't block editing the agent
   }
   $effect(() => {
@@ -48,7 +64,7 @@
   });
 
   // Server-authoritative autosave (AD-7): PATCH, then trust the returned agent.
-  async function persist(patch: { name?: string; model?: string | null }) {
+  async function persist(patch: AgentPatch) {
     save = "saving";
     const r = await updateAgent(id, patch);
     if (r.ok) {
@@ -69,6 +85,45 @@
 
   function onModelChange(model: string | null) {
     persist({ model }); // discrete change → save immediately
+  }
+
+  function onInstructionsInput(v: string) {
+    instructions = v;
+    if (instrTimer) clearTimeout(instrTimer);
+    instrTimer = setTimeout(() => persist({ instructions }), 400); // debounce text; empty is allowed
+  }
+
+  // Persist only well-formed, unique-named variables — incomplete rows stay visible for editing
+  // but aren't sent (control-api would reject a blank/duplicate name).
+  function validVars(): AgentVariable[] {
+    const seen = new Set<string>();
+    const out: AgentVariable[] = [];
+    for (const v of vars) {
+      if (VAR_NAME_RE.test(v.name) && !seen.has(v.name)) {
+        seen.add(v.name);
+        out.push({ name: v.name, value: v.value });
+      }
+    }
+    return out;
+  }
+  function persistVars() {
+    persist({ variables: validVars() });
+  }
+  function debouncePersistVars() {
+    if (varsTimer) clearTimeout(varsTimer);
+    varsTimer = setTimeout(persistVars, 400);
+  }
+
+  function addVariable() {
+    vars = [...vars, { name: "", value: "" }]; // persisted once it has a valid name
+  }
+  function removeVariable(i: number) {
+    vars = vars.filter((_, idx) => idx !== i);
+    persistVars(); // structural change → save now
+  }
+  function onVarField(i: number, field: "name" | "value", val: string) {
+    vars = vars.map((v, idx) => (idx === i ? { ...v, [field]: val } : v));
+    debouncePersistVars();
   }
 </script>
 
@@ -103,6 +158,55 @@
       <Section label="Model">
         <ModelSelector {providers} value={agent.model} onchange={onModelChange} />
       </Section>
+
+      <Section label="Instructions">
+        <InstructionsEditor value={instructions} variableNames={definedNames} oninput={onInstructionsInput} />
+        {#if undefinedNames.length > 0}
+          <p class="caution">
+            <Circle size={7} fill="var(--caution-500)" color="var(--caution-500)" aria-hidden="true" />
+            <span>
+              caution — {undefinedNames.length} undefined variable{undefinedNames.length === 1 ? "" : "s"}:
+              {#each undefinedNames as n, i}<code>&#123;{n}&#125;</code>{i < undefinedNames.length - 1 ? ", " : ""}{/each}.
+              <a href="#variables-section">Define {undefinedNames.length === 1 ? "it" : "them"} in Variables.</a>
+            </span>
+          </p>
+        {/if}
+      </Section>
+
+      <div id="variables-section">
+        <Section label="Variables">
+          {#if vars.length === 0}
+            <p class="muted">No variables yet.</p>
+          {/if}
+          {#each vars as v, i (i)}
+            <div class="var-row">
+              <label class="var-field">
+                <span class="visually-hidden">Variable name</span>
+                <input
+                  type="text"
+                  class="var-name"
+                  placeholder="name"
+                  aria-label="Variable name"
+                  value={v.name}
+                  oninput={(e) => onVarField(i, "name", (e.currentTarget as HTMLInputElement).value)}
+                />
+              </label>
+              <label class="var-field grow">
+                <span class="visually-hidden">Variable value</span>
+                <input
+                  type="text"
+                  placeholder="value"
+                  aria-label="Variable value"
+                  value={v.value}
+                  oninput={(e) => onVarField(i, "value", (e.currentTarget as HTMLInputElement).value)}
+                />
+              </label>
+              <button type="button" class="ghost" onclick={() => removeVariable(i)}>Remove</button>
+            </div>
+          {/each}
+          <button type="button" class="secondary" onclick={addVariable}>Add variable</button>
+        </Section>
+      </div>
     </div>
     <div class="test-pane">
       <p class="muted">Test runs appear here.</p>
@@ -214,6 +318,69 @@
   .error {
     color: var(--state-failed);
     font-size: var(--text-sm);
+  }
+  .caution {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+    margin: var(--space-2) 0 0;
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+  }
+  .caution code {
+    font-family: var(--font-mono);
+    color: var(--text-primary);
+  }
+  .caution a {
+    color: var(--text-link);
+  }
+  .var-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin-bottom: var(--space-2);
+    max-width: 640px;
+  }
+  .var-field {
+    display: block;
+  }
+  .var-field.grow {
+    flex: 1;
+  }
+  .var-row input {
+    width: 100%;
+    height: var(--control-h-md);
+    padding: 0 var(--space-3);
+    font-size: var(--text-sm);
+    color: var(--text-primary);
+    background: var(--surface-card);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+  }
+  .var-row .var-name {
+    font-family: var(--font-mono);
+    width: 160px;
+  }
+  .secondary,
+  .ghost {
+    height: var(--control-h-md);
+    padding: 0 var(--space-3);
+    font-size: var(--text-sm);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+  }
+  .secondary {
+    background: var(--action-secondary-bg);
+    color: var(--action-secondary-fg);
+    border: 1px solid var(--border-strong);
+  }
+  .ghost {
+    background: none;
+    border: 1px solid transparent;
+    color: var(--text-secondary);
+  }
+  .ghost:hover {
+    color: var(--text-primary);
   }
   .stack {
     display: flex;

@@ -5,17 +5,26 @@ const base = import.meta.env.VITE_CONTROL_API_URL ?? "http://localhost:8080";
 
 export type LifecycleState = "draft" | "active";
 
+export interface AgentVariable {
+  name: string;
+  value: string;
+}
+
 export interface Agent {
   id: string;
   name: string;
   state: LifecycleState;
   model: string | null; // "provider/model-id" (Story 3.2); null until selected
+  instructions: string; // Story 3.3
+  variables: AgentVariable[]; // Story 3.3
   createdAt: string;
 }
 
 export interface AgentPatch {
   name?: string;
   model?: string | null;
+  instructions?: string;
+  variables?: AgentVariable[];
 }
 
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };

@@ -69,3 +69,39 @@ test("open an agent → two-pane surface, disabled model selector, and name auto
   await expect(page).toHaveURL(/\/agents$/);
   await expect(page.getByText("Portfolio agent")).toBeVisible();
 });
+
+test("instructions editor: variable-token, undefined-variable caution, popover, and autosave", async ({ page }) => {
+  await signIn(page);
+
+  // Fresh agent for this flow.
+  await page.getByRole("button", { name: "Create agent" }).first().click();
+  await page.locator("a.agent").first().click();
+  await expect(page).toHaveURL(/\/agents\/[0-9A-Z]{26}$/);
+
+  // Type instructions referencing an undefined variable. [3.3 AC1 + AC2]
+  await page.getByLabel("Instructions").fill("Summarize {portfolio} for me.");
+  await expect(page.locator(".token")).toHaveText("{portfolio}"); // signal-tinted token renders
+  await expect(page.getByText(/undefined variable/)).toBeVisible(); // caution hint
+
+  // Define the variable → the caution clears. [3.3 AC2]
+  await page.getByRole("button", { name: "Add variable" }).click();
+  await page.getByLabel("Variable name").fill("portfolio");
+  await expect(page.getByText(/undefined variable/)).toHaveCount(0);
+
+  // Typing `{` opens the variable-insert popover, now listing `portfolio`. [3.3 AC1]
+  const editor = page.getByLabel("Instructions");
+  await editor.click();
+  await page.keyboard.press("End");
+  await page.keyboard.type("{");
+  const popover = page.getByRole("listbox", { name: "Insert a variable" });
+  await expect(popover).toBeVisible();
+  await expect(popover.getByRole("option", { name: "portfolio" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(popover).toHaveCount(0);
+
+  // Autosave persists instructions + the variable across a reload. [3.3 AC1]
+  await expect(page.getByText("Saved")).toBeVisible({ timeout: 10000 });
+  await page.reload();
+  await expect(page.getByLabel("Instructions")).toHaveValue(/Summarize \{portfolio\} for me\./);
+  await expect(page.getByLabel("Variable name")).toHaveValue("portfolio");
+});

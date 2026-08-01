@@ -1,21 +1,27 @@
 import { desc, eq } from "drizzle-orm";
-import type { LifecycleState } from "@turanga/domain";
+import type { AgentVariable, LifecycleState } from "@turanga/domain";
 import type { Db } from "../db/client.js";
 import { agents } from "../db/schema.js";
+
+export type { AgentVariable };
 
 export interface AgentRow {
   id: string;
   name: string;
   state: LifecycleState;
   model: string | null; // "provider/model-id" (Story 3.2); null until selected
+  instructions: string; // Story 3.3
+  variables: AgentVariable[]; // Story 3.3
   createdAt: string; // UTC ISO-8601
 }
 
-// Writable agent-definition fields. Only name + model in 3.2; instructions/skills/
-// caps land in Stories 3.3–3.5 and extend this shape (control-api is the sole writer, AD-7).
+// Writable agent-definition fields. name+model (3.2) + instructions+variables (3.3);
+// skills/caps land in Stories 3.4–3.5 and extend this shape (control-api is the sole writer, AD-7).
 export interface AgentPatch {
   name?: string;
   model?: string | null;
+  instructions?: string;
+  variables?: AgentVariable[];
 }
 
 export interface AgentsRepo {
@@ -26,7 +32,15 @@ export interface AgentsRepo {
 }
 
 function toRow(r: typeof agents.$inferSelect): AgentRow {
-  return { id: r.id, name: r.name, state: r.state as LifecycleState, model: r.model, createdAt: r.createdAt.toISOString() };
+  return {
+    id: r.id,
+    name: r.name,
+    state: r.state as LifecycleState,
+    model: r.model,
+    instructions: r.instructions,
+    variables: r.variables,
+    createdAt: r.createdAt.toISOString(),
+  };
 }
 
 // Only defined keys are applied — an omitted field is left untouched.
@@ -35,6 +49,8 @@ function applyPatch(row: AgentRow, patch: AgentPatch): AgentRow {
     ...row,
     ...(patch.name !== undefined ? { name: patch.name } : {}),
     ...(patch.model !== undefined ? { model: patch.model } : {}),
+    ...(patch.instructions !== undefined ? { instructions: patch.instructions } : {}),
+    ...(patch.variables !== undefined ? { variables: patch.variables } : {}),
   };
 }
 
@@ -51,12 +67,22 @@ export function drizzleAgentsRepo(db: Db): AgentsRepo {
     async create(row) {
       // Persist the caller's createdAt so the 201 response and later GETs agree
       // (rather than letting the DB default now() drift from the returned value).
-      await db.insert(agents).values({ id: row.id, name: row.name, state: row.state, model: row.model, createdAt: new Date(row.createdAt) });
+      await db.insert(agents).values({
+        id: row.id,
+        name: row.name,
+        state: row.state,
+        model: row.model,
+        instructions: row.instructions,
+        variables: row.variables,
+        createdAt: new Date(row.createdAt),
+      });
     },
     async update(id, patch) {
       const set: Partial<typeof agents.$inferInsert> = {};
       if (patch.name !== undefined) set.name = patch.name;
       if (patch.model !== undefined) set.model = patch.model;
+      if (patch.instructions !== undefined) set.instructions = patch.instructions;
+      if (patch.variables !== undefined) set.variables = patch.variables;
       if (Object.keys(set).length === 0) return this.get(id); // nothing to change
       const rows = await db.update(agents).set(set).where(eq(agents.id, id)).returning();
       return rows[0] ? toRow(rows[0]) : null;

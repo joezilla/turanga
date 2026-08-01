@@ -36,6 +36,13 @@
       "when": 1785607086013,
       "tag": "0004_strong_nekra",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1785608054958,
+      "tag": "0005_fast_stephen_strange",
+      "breakpoints": true
     }
   ]
 }
