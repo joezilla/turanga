@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, jsonb } from "drizzle-orm/pg-core";
 
 // users + sessions — the first control-api tables (AD-7: control-api owns this state).
 export const users = pgTable("users", {
@@ -15,5 +15,22 @@ export const sessions = pgTable("sessions", {
     .notNull()
     .references(() => users.id),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Connections — model providers (Story 2.1) and later data connections (Story 2.2).
+// The real provider API key lives ENCRYPTED in LiteLLM (AD-10), never here; we keep
+// only key_last4 for the masked display.
+export const connections = pgTable("connections", {
+  id: text("id").primaryKey(), // ULID
+  kind: text("kind").notNull(), // 'model-provider' (| 'data' later)
+  provider: text("provider").notNull(), // 'openai' | 'anthropic' | 'openai-compatible'
+  name: text("name").notNull(),
+  baseUrl: text("base_url"),
+  keyLast4: text("key_last4"),
+  status: text("status").notNull(), // 'connected' | 'error' | 'unconfigured'
+  lastError: text("last_error"),
+  models: jsonb("models").$type<string[]>().notNull().default([]),
+  litellmModelIds: jsonb("litellm_model_ids").$type<string[]>().notNull().default([]),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

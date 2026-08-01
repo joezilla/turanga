@@ -6,6 +6,8 @@ import { ensureDatabase } from "./db/ensure.js";
 import { runMigrations } from "./db/migrate.js";
 import { drizzleAuthRepo, normalizeEmail, type AuthRepo } from "./auth/repo.js";
 import { hashPassword } from "./auth/password.js";
+import { drizzleConnectionsRepo } from "./connections/repo.js";
+import { httpModelGateway } from "./litellm/gateway.js";
 
 const port = Number(process.env.PORT ?? 8080);
 const SESSION_SWEEP_MS = 1000 * 60 * 60; // reap expired sessions hourly
@@ -42,7 +44,12 @@ async function main() {
   await sweep();
   setInterval(sweep, SESSION_SWEEP_MS).unref();
 
-  const app = createApp({ authRepo, secureCookie: process.env.COOKIE_SECURE === "true" });
+  const connectionsRepo = drizzleConnectionsRepo(db);
+  const litellmBaseUrl = process.env.LITELLM_BASE_URL ?? "http://litellm:4000";
+  const litellmMasterKey = process.env.LITELLM_MASTER_KEY ?? "sk-turanga-dev";
+  const modelGateway = httpModelGateway(litellmBaseUrl, litellmMasterKey);
+
+  const app = createApp({ authRepo, secureCookie: process.env.COOKIE_SECURE === "true", connectionsRepo, modelGateway });
   serve({ fetch: app.fetch, port }, (info) => {
     console.log(`[control-api] listening on :${info.port}`);
   });

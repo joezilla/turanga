@@ -1,5 +1,6 @@
-# Minimal LiteLLM proxy config. Providers/models are added in Epic 2 (Connections).
-# Virtual keys with per-key budgets (Epic 4) use the DB + Redis wired via env.
+# Minimal LiteLLM proxy config. Providers/models are added at runtime by control-api
+# via POST /model/new (Story 2.1); store_model_in_db persists them across restarts.
 model_list: []
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
+  store_model_in_db: true

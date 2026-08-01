@@ -1,0 +1,134 @@
+import { Hono } from "hono";
+import { ulid } from "@turanga/domain";
+import type { ConnectionsRepo, ProviderRow } from "./repo.js";
+import type { ModelGateway, ProviderKind, RegisterInput } from "../litellm/gateway.js";
+
+const PROVIDERS: ProviderKind[] = ["openai", "anthropic", "openai-compatible"];
+
+function last4(key: string): string {
+  return key.slice(-4);
+}
+
+// The public view — NEVER includes the key (only key_last4) or LiteLLM ids.
+function view(r: ProviderRow) {
+  return {
+    id: r.id,
+    provider: r.provider,
+    name: r.name,
+    baseUrl: r.baseUrl,
+    keyLast4: r.keyLast4,
+    status: r.status,
+    lastError: r.lastError,
+    models: r.models,
+  };
+}
+
+function parseModels(v: unknown): string[] {
+  if (Array.isArray(v)) return v.filter((x): x is string => typeof x === "string");
+  if (typeof v === "string") return v.split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
+  return [];
+}
+
+export function connectionRoutes(repo: ConnectionsRepo, gateway: ModelGateway) {
+  const app = new Hono();
+
+  app.get("/connections/providers", async (c) => {
+    return c.json({ providers: (await repo.listProviders()).map(view) });
+  });
+
+  app.post("/connections/providers", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+    const provider = body.provider;
+    const apiKey = body.apiKey;
+    if (typeof provider !== "string" || !PROVIDERS.includes(provider as ProviderKind) || typeof apiKey !== "string" || !apiKey) {
+      return c.json({ error: "Provider and API key are required." }, 400);
+    }
+    const kind = provider as ProviderKind;
+    const baseUrl = typeof body.baseUrl === "string" && body.baseUrl.trim() ? body.baseUrl.trim() : undefined;
+    const models = parseModels(body.models);
+    const name =
+      typeof body.name === "string" && body.name.trim()
+        ? body.name.trim()
+        : kind === "openai"
+          ? "OpenAI"
+          : kind === "anthropic"
+            ? "Anthropic"
+            : "Custom";
+    if (kind === "openai-compatible" && (!baseUrl || models.length === 0)) {
+      return c.json({ error: "An OpenAI-compatible provider needs a base URL and at least one model." }, 400);
+    }
+
+    const input: RegisterInput = { provider: kind, name, apiKey, baseUrl, models };
+    const id = ulid(Date.now());
+    const base: ProviderRow = {
+      id,
+      provider: kind,
+      name,
+      baseUrl: baseUrl ?? null,
+      keyLast4: last4(apiKey),
+      status: "error",
+      lastError: null,
+      models,
+      litellmModelIds: [],
+    };
+
+    // Verify FIRST — never store a bad key in LiteLLM (AC2).
+    const v = await gateway.verify(input);
+    if (!v.ok) {
+      await repo.createProvider({ ...base, status: "error", lastError: v.error ?? "Verification failed." });
+      return c.json({ provider: view((await repo.getProvider(id))!) }, 201);
+    }
+    let ids: string[] = [];
+    try {
+      ids = await gateway.register(input);
+    } catch {
+      await repo.createProvider({ ...base, status: "error", lastError: "Key verified, but registering the model gateway failed." });
+      return c.json({ provider: view((await repo.getProvider(id))!) }, 201);
+    }
+    await repo.createProvider({ ...base, status: "connected", lastError: null, litellmModelIds: ids });
+    return c.json({ provider: view((await repo.getProvider(id))!) }, 201);
+  });
+
+  app.post("/connections/providers/:id/rotate-key", async (c) => {
+    const id = c.req.param("id");
+    const existing = await repo.getProvider(id);
+    if (!existing) return c.json({ error: "Not found." }, 404);
+    const body = (await c.req.json().catch(() => ({}))) as { apiKey?: unknown };
+    const apiKey = body.apiKey;
+    if (typeof apiKey !== "string" || !apiKey) return c.json({ error: "A new API key is required." }, 400);
+
+    const input: RegisterInput = {
+      provider: existing.provider as ProviderKind,
+      name: existing.name,
+      apiKey,
+      baseUrl: existing.baseUrl ?? undefined,
+      models: existing.models,
+    };
+    const v = await gateway.verify(input);
+    if (!v.ok) {
+      await repo.setStatus(id, "error", v.error ?? "Verification failed.", last4(apiKey));
+      return c.json({ provider: view((await repo.getProvider(id))!) });
+    }
+    // Rotate = drop old LiteLLM registrations, re-register with the new key.
+    await gateway.unregister(existing.litellmModelIds);
+    const ids = await gateway.register(input);
+    await repo.setModelIds(id, ids);
+    await repo.setStatus(id, "connected", null, last4(apiKey));
+    return c.json({ provider: view((await repo.getProvider(id))!) });
+  });
+
+  app.delete("/connections/providers/:id", async (c) => {
+    const id = c.req.param("id");
+    const existing = await repo.getProvider(id);
+    if (!existing) return c.json({ error: "Not found." }, 404);
+    await gateway.unregister(existing.litellmModelIds);
+    await repo.deleteProvider(id);
+    return c.json({ ok: true });
+  });
+
+  app.get("/models", async (c) => {
+    return c.json({ models: await gateway.listModels() });
+  });
+
+  return app;
+}

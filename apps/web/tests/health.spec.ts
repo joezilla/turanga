@@ -42,8 +42,8 @@ test("active nav highlights and navigation works", async ({ page }) => {
   await signIn(page);
   await expect(page.getByRole("link", { name: "Agents" })).toHaveAttribute("aria-current", "page");
   await page.getByRole("link", { name: "Settings" }).click();
-  await expect(page).toHaveURL(/\/settings$/);
-  await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+  await expect(page).toHaveURL(/\/settings\/providers$/); // /settings redirects here (Story 2.1)
+  await expect(page.getByRole("heading", { name: "Model providers" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Settings" })).toHaveAttribute("aria-current", "page");
 });
 

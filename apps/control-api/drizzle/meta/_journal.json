@@ -8,6 +8,13 @@
       "when": 1785530202118,
       "tag": "0000_steady_bucky",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1785543817016,
+      "tag": "0001_chilly_madelyne_pryor",
+      "breakpoints": true
     }
   ]
 }

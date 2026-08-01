@@ -40,6 +40,9 @@ services:
     environment:
       DATABASE_URL: postgresql://turanga:${POSTGRES_PASSWORD:-turanga}@postgres:5432/turanga
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-turanga-dev}
+      STORE_MODEL_IN_DB: "True"
+      # Encrypts stored provider keys. Set once and NEVER rotate (old creds become undecryptable).
+      LITELLM_SALT_KEY: ${LITELLM_SALT_KEY:-sk-turanga-salt-dev}
       REDIS_HOST: redis
       REDIS_PORT: "6379"
     volumes:
@@ -68,6 +71,8 @@ services:
       INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-}
       # Set COOKIE_SECURE=true when serving over HTTPS (prod). Off for local http.
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      LITELLM_BASE_URL: http://litellm:4000
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-turanga-dev}
     ports:
       - "8080:8080"
     healthcheck:
