@@ -66,7 +66,10 @@
 {#if loading}
   <p class="muted">Loading agents…</p>
 {:else if loadError}
-  <p class="error">{loadError}</p>
+  <div class="empty">
+    <p class="error">{loadError}</p>
+    <button class="primary" onclick={load} disabled={creating}>Retry</button>
+  </div>
 {:else if agents.length === 0}
   <div class="empty">
     <p>No agents yet.</p>

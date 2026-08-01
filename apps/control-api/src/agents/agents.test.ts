@@ -48,6 +48,19 @@ describe("create an agent", () => {
     expect(a.createdAt).toBeTruthy();
   });
 
+  it("treats a JSON body of literal null as no name (201, default) — no 500", async () => {
+    const { app, cookie } = await appWithSession();
+    const res = await app.request("/agents", { method: "POST", headers: { "content-type": "application/json", cookie }, body: "null" });
+    expect(res.status).toBe(201);
+    expect(((await res.json()) as { agent: any }).agent.name).toBe("Untitled agent");
+  });
+
+  it("caps an oversized name at 200 chars", async () => {
+    const { app, cookie } = await appWithSession();
+    const res = await app.request("/agents", { ...jsonPost({ name: "x".repeat(5000) }), headers: { "content-type": "application/json", cookie } });
+    expect(((await res.json()) as { agent: any }).agent.name).toHaveLength(200);
+  });
+
   it("trims a provided name and falls back to the default when blank", async () => {
     const { app, cookie } = await appWithSession();
     const named = ((await (await app.request("/agents", { ...jsonPost({ name: "  Portfolio  " }), headers: { "content-type": "application/json", cookie } })).json()) as { agent: any }).agent;

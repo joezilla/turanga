@@ -31,7 +31,9 @@ export function drizzleAgentsRepo(db: Db): AgentsRepo {
       return rows[0] ? toRow(rows[0]) : null;
     },
     async create(row) {
-      await db.insert(agents).values({ id: row.id, name: row.name, state: row.state });
+      // Persist the caller's createdAt so the 201 response and later GETs agree
+      // (rather than letting the DB default now() drift from the returned value).
+      await db.insert(agents).values({ id: row.id, name: row.name, state: row.state, createdAt: new Date(row.createdAt) });
     },
   };
 }

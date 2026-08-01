@@ -26,8 +26,11 @@ async function req<T>(path: string, init?: RequestInit): Promise<Result<T>> {
 }
 
 export async function listAgents(): Promise<Result<Agent[]>> {
-  const r = await req<{ agents: Agent[] }>("/agents");
-  return r.ok ? { ok: true, value: r.value.agents } : r;
+  const r = await req<{ agents?: Agent[] }>("/agents");
+  if (!r.ok) return r;
+  // A 200 with a malformed/empty body must not white-screen the list.
+  if (!Array.isArray(r.value.agents)) return { ok: false, error: "The control plane returned an unexpected response." };
+  return { ok: true, value: r.value.agents };
 }
 
 export async function createAgent(name?: string): Promise<Result<Agent>> {

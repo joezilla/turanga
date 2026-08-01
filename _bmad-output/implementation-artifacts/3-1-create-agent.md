@@ -3,7 +3,7 @@ baseline_commit: bff317bf6871d4277b626be838f86356879c675e
 ---
 # Story 3.1: Create an agent and see the agents list
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -43,6 +43,20 @@ so that I have something to configure and run.
   - [x] Unit (control-api, Vitest, in-memory `AgentsRepo` + a real session via login): `POST /agents` → 201, state `draft`, default name applied when blank; `GET /agents` lists it; both are **401 without a session** (guard) and 200 with. Assert `control-api` is the only writer (repo interface — the web never writes directly).
   - [x] Playwright e2e (live stack): sign in → Agents; empty state "No agents yet." + Create agent visible; click **Create agent** → an agent row appears with a **draft** status (dot + the word "draft"); the filter input is present; pressing `/` focuses it and typing narrows the list.
   - [x] `svelte-check` 0 · `pnpm -r build` · `pnpm lint` · control-api unit tests · e2e (incl. Epic 1/2 regressions) all green.
+
+### Review Findings
+
+_Code review 2026-08-01 (baseline bff317b..HEAD). Blind Hunter + Edge Case Hunter + Acceptance Auditor. 1 decision, 5 patch, 3 deferred, 4 dismissed as noise._
+
+- [x] [Review][Decision] Empty Agents surface does not support `/` to focus a filter (AC-1) — **Resolved (option 1): accept `/` as a graceful no-op when there is nothing to filter.** The interaction primitive matters only on the populated surface; a filter over a zero-row list is meaningless UX. No code change. [apps/web/src/routes/(app)/agents/+page.svelte]
+- [x] [Review][Patch] POST /agents with a JSON body of literal `null` throws a 500 — `c.req.json().catch(()=>({}))` only falls back on a parse error; valid `null` passes through and `typeof body.name` dereferences null. [apps/control-api/src/agents/routes.ts:10]
+- [x] [Review][Patch] `listAgents` can set `agents` to `undefined` and white-screen the page — a 200 with a malformed/empty body yields `r.value.agents === undefined`; the page then evaluates `agents.length`/`agents.filter`. Guard with `Array.isArray`. [apps/web/src/lib/agents.ts:31]
+- [x] [Review][Patch] Load-error strands the user with no Create/retry — on a transient `GET /agents` failure the error branch renders, the empty-state block (which holds the only Create button when the list is empty) is unreachable, and the header Create button requires `agents.length > 0`. Add a retry/create affordance to the error branch. [apps/web/src/routes/(app)/agents/+page.svelte]
+- [x] [Review][Patch] 201 response `createdAt` diverges from the persisted value — the route returns `new Date().toISOString()` but `create()` inserts only `{id,name,state}` and lets Postgres `DEFAULT now()` fill `created_at`. Persist the generated timestamp so POST and GET agree. [apps/control-api/src/agents/routes.ts:13, repo.ts:32]
+- [x] [Review][Patch] No length bound on agent `name` — trimmed but otherwise unbounded `text`; an oversized name is persisted verbatim and echoed into every list payload. Cap length. [apps/control-api/src/agents/routes.ts:10]
+- [x] [Review][Defer] Same-ms list order is not creation-ordered; memory(seq) vs drizzle(id) divergence [apps/control-api/src/agents/repo.ts:26] — deferred. `desc(agents.id)` IS deterministic but, because `ulid()` has a random suffix, does not reflect creation order for same-ms creates; the memory repo uses a true `seq` tiebreak so the "newest-first" unit test doesn't cover the prod path. Cosmetic for MVP; revisit if creation-order display matters.
+- [x] [Review][Defer] `agents.state` has no CHECK constraint and is blind-cast to `LifecycleState`; `StatusDot` renders any non-`active` value as grey "draft" [schema.ts, repo.ts, StatusDot.svelte] — deferred. No non-control-api writer exists yet (AD-7); harden when lifecycle transitions land (Story 5.1).
+- [x] [Review][Defer] The AD-7 "single-writer" unit test is vacuous (asserts only `typeof create === "function"`) [apps/control-api/src/agents/agents.test.ts] — deferred, test-quality only; the invariant is enforced structurally (web has no DB access).
 
 ## Dev Notes
 
