@@ -8,6 +8,12 @@ import { ulid } from "@turanga/domain";
 const EMAIL = "admin@turanga.local";
 const PW = "pw-for-tests-123456";
 const jsonPost = (body: unknown) => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+const jsonPatch = (body: unknown) => ({ method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+
+async function createAgent(app: Awaited<ReturnType<typeof appWithSession>>["app"], cookie: string, name?: string) {
+  const res = await app.request("/agents", { ...jsonPost(name ? { name } : {}), headers: { "content-type": "application/json", cookie } });
+  return ((await res.json()) as { agent: { id: string } }).agent;
+}
 
 async function appWithSession() {
   const authRepo: AuthRepo = memoryAuthRepo();
@@ -37,13 +43,14 @@ describe("agents guard", () => {
 });
 
 describe("create an agent", () => {
-  it("creates a Draft agent with the default name when none is given (201)", async () => {
+  it("creates a Draft agent with the default name and no model (201)", async () => {
     const { app, cookie } = await appWithSession();
     const res = await app.request("/agents", { ...jsonPost({}), headers: { "content-type": "application/json", cookie } });
     expect(res.status).toBe(201);
     const a = ((await res.json()) as { agent: any }).agent;
     expect(a.state).toBe("draft");
     expect(a.name).toBe("Untitled agent");
+    expect(a.model).toBeNull(); // no model until selected (Story 3.2)
     expect(a.id).toHaveLength(26); // ULID
     expect(a.createdAt).toBeTruthy();
   });
@@ -82,5 +89,78 @@ describe("create an agent", () => {
     const { agentsRepo } = await appWithSession();
     expect(typeof agentsRepo.create).toBe("function");
     expect(await agentsRepo.list()).toEqual([]);
+  });
+});
+
+describe("agent detail (GET /agents/:id)", () => {
+  it("401 without a session", async () => {
+    const { app } = await appWithSession();
+    expect((await app.request("/agents/whatever")).status).toBe(401);
+  });
+  it("returns the agent with a session (200)", async () => {
+    const { app, cookie } = await appWithSession();
+    const created = await createAgent(app, cookie, "Portfolio");
+    const res = await app.request(`/agents/${created.id}`, { headers: { cookie } });
+    expect(res.status).toBe(200);
+    const a = ((await res.json()) as { agent: any }).agent;
+    expect(a.id).toBe(created.id);
+    expect(a.name).toBe("Portfolio");
+    expect(a.model).toBeNull();
+  });
+  it("404 for an unknown id", async () => {
+    const { app, cookie } = await appWithSession();
+    expect((await app.request("/agents/nope", { headers: { cookie } })).status).toBe(404);
+  });
+});
+
+describe("agent autosave (PATCH /agents/:id)", () => {
+  it("401 without a session", async () => {
+    const { app } = await appWithSession();
+    expect((await app.request("/agents/x", jsonPatch({ model: "openai/gpt-4o" }))).status).toBe(401);
+  });
+
+  it("persists a selected model and returns the updated agent (200)", async () => {
+    const { app, cookie } = await appWithSession();
+    const created = await createAgent(app, cookie);
+    const res = await app.request(`/agents/${created.id}`, { ...jsonPatch({ model: "openai/gpt-4o" }), headers: { "content-type": "application/json", cookie } });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { agent: any }).agent.model).toBe("openai/gpt-4o");
+    // durable: a follow-up GET reflects it
+    const got = ((await (await app.request(`/agents/${created.id}`, { headers: { cookie } })).json()) as { agent: any }).agent;
+    expect(got.model).toBe("openai/gpt-4o");
+  });
+
+  it("trims and caps the model string; null clears it", async () => {
+    const { app, cookie } = await appWithSession();
+    const created = await createAgent(app, cookie);
+    const trimmed = ((await (await app.request(`/agents/${created.id}`, { ...jsonPatch({ model: "  openai/gpt-4o  " }), headers: { "content-type": "application/json", cookie } })).json()) as { agent: any }).agent;
+    expect(trimmed.model).toBe("openai/gpt-4o");
+    const capped = ((await (await app.request(`/agents/${created.id}`, { ...jsonPatch({ model: "x".repeat(5000) }), headers: { "content-type": "application/json", cookie } })).json()) as { agent: any }).agent;
+    expect(capped.model).toHaveLength(200);
+    const cleared = ((await (await app.request(`/agents/${created.id}`, { ...jsonPatch({ model: null }), headers: { "content-type": "application/json", cookie } })).json()) as { agent: any }).agent;
+    expect(cleared.model).toBeNull();
+  });
+
+  it("renames via autosave; trims and rejects an empty name (400)", async () => {
+    const { app, cookie } = await appWithSession();
+    const created = await createAgent(app, cookie);
+    const renamed = ((await (await app.request(`/agents/${created.id}`, { ...jsonPatch({ name: "  Stocks  " }), headers: { "content-type": "application/json", cookie } })).json()) as { agent: any }).agent;
+    expect(renamed.name).toBe("Stocks");
+    const bad = await app.request(`/agents/${created.id}`, { ...jsonPatch({ name: "   " }), headers: { "content-type": "application/json", cookie } });
+    expect(bad.status).toBe(400);
+  });
+
+  it("leaves omitted fields untouched (name-only patch keeps the model)", async () => {
+    const { app, cookie } = await appWithSession();
+    const created = await createAgent(app, cookie);
+    await app.request(`/agents/${created.id}`, { ...jsonPatch({ model: "anthropic/claude-sonnet-5" }), headers: { "content-type": "application/json", cookie } });
+    const after = ((await (await app.request(`/agents/${created.id}`, { ...jsonPatch({ name: "Renamed" }), headers: { "content-type": "application/json", cookie } })).json()) as { agent: any }).agent;
+    expect(after.name).toBe("Renamed");
+    expect(after.model).toBe("anthropic/claude-sonnet-5"); // untouched
+  });
+
+  it("404 patching an unknown id", async () => {
+    const { app, cookie } = await appWithSession();
+    expect((await app.request("/agents/nope", { ...jsonPatch({ model: "openai/gpt-4o" }), headers: { "content-type": "application/json", cookie } })).status).toBe(404);
   });
 });

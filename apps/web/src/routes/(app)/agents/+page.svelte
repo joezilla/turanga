@@ -88,9 +88,11 @@
   {#if createError}<p class="error">{createError}</p>{/if}
   <ul class="agents">
     {#each shown as agent (agent.id)}
-      <li class="agent">
-        <span class="name">{agent.name}</span>
-        <StatusDot status={agent.state} />
+      <li>
+        <a class="agent" href="/agents/{agent.id}">
+          <span class="name">{agent.name}</span>
+          <StatusDot status={agent.state} />
+        </a>
       </li>
     {/each}
     {#if shown.length === 0}
@@ -171,6 +173,16 @@
     background: var(--surface-card);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-md);
+    text-decoration: none;
+    color: inherit;
+  }
+  .agent:hover {
+    background: var(--surface-raised);
+    border-color: var(--border-strong);
+  }
+  .agent:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
   }
   .name {
     font-size: var(--text-sm);

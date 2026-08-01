@@ -7,17 +7,35 @@ export interface AgentRow {
   id: string;
   name: string;
   state: LifecycleState;
+  model: string | null; // "provider/model-id" (Story 3.2); null until selected
   createdAt: string; // UTC ISO-8601
+}
+
+// Writable agent-definition fields. Only name + model in 3.2; instructions/skills/
+// caps land in Stories 3.3–3.5 and extend this shape (control-api is the sole writer, AD-7).
+export interface AgentPatch {
+  name?: string;
+  model?: string | null;
 }
 
 export interface AgentsRepo {
   list(): Promise<AgentRow[]>; // newest first
   get(id: string): Promise<AgentRow | null>;
   create(row: AgentRow): Promise<void>;
+  update(id: string, patch: AgentPatch): Promise<AgentRow | null>; // null if the id doesn't exist
 }
 
 function toRow(r: typeof agents.$inferSelect): AgentRow {
-  return { id: r.id, name: r.name, state: r.state as LifecycleState, createdAt: r.createdAt.toISOString() };
+  return { id: r.id, name: r.name, state: r.state as LifecycleState, model: r.model, createdAt: r.createdAt.toISOString() };
+}
+
+// Only defined keys are applied — an omitted field is left untouched.
+function applyPatch(row: AgentRow, patch: AgentPatch): AgentRow {
+  return {
+    ...row,
+    ...(patch.name !== undefined ? { name: patch.name } : {}),
+    ...(patch.model !== undefined ? { model: patch.model } : {}),
+  };
 }
 
 export function drizzleAgentsRepo(db: Db): AgentsRepo {
@@ -33,7 +51,15 @@ export function drizzleAgentsRepo(db: Db): AgentsRepo {
     async create(row) {
       // Persist the caller's createdAt so the 201 response and later GETs agree
       // (rather than letting the DB default now() drift from the returned value).
-      await db.insert(agents).values({ id: row.id, name: row.name, state: row.state, createdAt: new Date(row.createdAt) });
+      await db.insert(agents).values({ id: row.id, name: row.name, state: row.state, model: row.model, createdAt: new Date(row.createdAt) });
+    },
+    async update(id, patch) {
+      const set: Partial<typeof agents.$inferInsert> = {};
+      if (patch.name !== undefined) set.name = patch.name;
+      if (patch.model !== undefined) set.model = patch.model;
+      if (Object.keys(set).length === 0) return this.get(id); // nothing to change
+      const rows = await db.update(agents).set(set).where(eq(agents.id, id)).returning();
+      return rows[0] ? toRow(rows[0]) : null;
     },
   };
 }
@@ -53,6 +79,12 @@ export function memoryAgentsRepo(): AgentsRepo {
     },
     async create(row) {
       rows.push({ row: { ...row }, seq: seq++ });
+    },
+    async update(id, patch) {
+      const entry = rows.find((r) => r.row.id === id);
+      if (!entry) return null;
+      entry.row = applyPatch(entry.row, patch);
+      return entry.row;
     },
   };
 }

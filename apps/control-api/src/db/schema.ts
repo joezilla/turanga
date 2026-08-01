@@ -57,5 +57,6 @@ export const agents = pgTable("agents", {
   id: text("id").primaryKey(), // ULID
   name: text("name").notNull(),
   state: text("state").notNull(), // 'draft' | 'active' (LifecycleState)
+  model: text("model"), // "provider/model-id" (Story 3.2); null until a model is selected
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

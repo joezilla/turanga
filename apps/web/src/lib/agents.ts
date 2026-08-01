@@ -9,7 +9,13 @@ export interface Agent {
   id: string;
   name: string;
   state: LifecycleState;
+  model: string | null; // "provider/model-id" (Story 3.2); null until selected
   createdAt: string;
+}
+
+export interface AgentPatch {
+  name?: string;
+  model?: string | null;
 }
 
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -38,6 +44,20 @@ export async function createAgent(name?: string): Promise<Result<Agent>> {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(name ? { name } : {}),
+  });
+  return r.ok ? { ok: true, value: r.value.agent } : r;
+}
+
+export async function getAgent(id: string): Promise<Result<Agent>> {
+  const r = await req<{ agent: Agent }>(`/agents/${encodeURIComponent(id)}`);
+  return r.ok ? { ok: true, value: r.value.agent } : r;
+}
+
+export async function updateAgent(id: string, patch: AgentPatch): Promise<Result<Agent>> {
+  const r = await req<{ agent: Agent }>(`/agents/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(patch),
   });
   return r.ok ? { ok: true, value: r.value.agent } : r;
 }
