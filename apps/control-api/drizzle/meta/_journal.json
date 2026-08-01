@@ -22,6 +22,13 @@
       "when": 1785592035893,
       "tag": "0002_harsh_gateway",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1785599486970,
+      "tag": "0003_perpetual_richard_fisk",
+      "breakpoints": true
     }
   ]
 }

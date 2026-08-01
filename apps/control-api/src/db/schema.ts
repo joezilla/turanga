@@ -50,3 +50,12 @@ export const dataConnections = pgTable("data_connections", {
   encRefreshToken: text("enc_refresh_token"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+// Agents (Story 3.1). Minimal now — create + list + lifecycle state; model/instructions/
+// skills/cost-caps land in Stories 3.2-3.5. control-api is the only writer (AD-7).
+export const agents = pgTable("agents", {
+  id: text("id").primaryKey(), // ULID
+  name: text("name").notNull(),
+  state: text("state").notNull(), // 'draft' | 'active' (LifecycleState)
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});

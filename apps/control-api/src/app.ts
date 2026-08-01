@@ -13,6 +13,8 @@ import { fakeModelGateway, type ModelGateway } from "./litellm/gateway.js";
 import { dataConnectionRoutes } from "./oauth/routes.js";
 import { memoryDataConnectionsRepo, type DataConnectionsRepo } from "./connections/dataRepo.js";
 import { googleOAuth, type GoogleOAuth } from "./oauth/google.js";
+import { agentRoutes } from "./agents/routes.js";
+import { memoryAgentsRepo, type AgentsRepo } from "./agents/repo.js";
 
 export const VERSION = process.env.TURANGA_VERSION ?? "0.0.0";
 export const GIT_SHA = process.env.TURANGA_GIT_SHA ?? "unknown";
@@ -24,6 +26,7 @@ export interface AppDeps {
   modelGateway?: ModelGateway;
   dataConnectionsRepo?: DataConnectionsRepo;
   googleOAuth?: GoogleOAuth;
+  agentsRepo?: AgentsRepo;
 }
 
 export function createApp(deps: AppDeps = {}) {
@@ -44,6 +47,8 @@ export function createApp(deps: AppDeps = {}) {
   app.use("/connections/*", requireSession(authRepo));
   app.use("/models", requireSession(authRepo));
   app.use("/oauth/*", requireSession(authRepo));
+  app.use("/agents", requireSession(authRepo));
+  app.use("/agents/*", requireSession(authRepo));
   const connectionsRepo = deps.connectionsRepo ?? memoryConnectionsRepo();
   const gateway = deps.modelGateway ?? fakeModelGateway();
   app.route("/", connectionRoutes(connectionsRepo, gateway));
@@ -51,6 +56,9 @@ export function createApp(deps: AppDeps = {}) {
   const dataConnectionsRepo = deps.dataConnectionsRepo ?? memoryDataConnectionsRepo();
   const google = deps.googleOAuth ?? googleOAuth();
   app.route("/", dataConnectionRoutes(dataConnectionsRepo, google, webOrigin));
+
+  const agentsRepo = deps.agentsRepo ?? memoryAgentsRepo();
+  app.route("/", agentRoutes(agentsRepo));
 
   return app;
 }

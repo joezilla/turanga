@@ -10,6 +10,7 @@ import { drizzleConnectionsRepo } from "./connections/repo.js";
 import { httpModelGateway } from "./litellm/gateway.js";
 import { drizzleDataConnectionsRepo } from "./connections/dataRepo.js";
 import { googleOAuth } from "./oauth/google.js";
+import { drizzleAgentsRepo } from "./agents/repo.js";
 
 const port = Number(process.env.PORT ?? 8080);
 const SESSION_SWEEP_MS = 1000 * 60 * 60; // reap expired sessions hourly
@@ -52,6 +53,7 @@ async function main() {
   const modelGateway = httpModelGateway(litellmBaseUrl, litellmMasterKey);
   const dataConnectionsRepo = drizzleDataConnectionsRepo(db);
   const google = googleOAuth();
+  const agentsRepo = drizzleAgentsRepo(db);
 
   const app = createApp({
     authRepo,
@@ -60,6 +62,7 @@ async function main() {
     modelGateway,
     dataConnectionsRepo,
     googleOAuth: google,
+    agentsRepo,
   });
   serve({ fetch: app.fetch, port }, (info) => {
     console.log(`[control-api] listening on :${info.port}`);
