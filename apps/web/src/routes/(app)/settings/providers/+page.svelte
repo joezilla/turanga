@@ -29,6 +29,7 @@
   let rotateKeyValue = $state("");
   let confirmRemoveId = $state<string | null>(null);
   let dependents = $state<DependentAgent[]>([]); // agents that use the provider being removed
+  let dependentsUnknown = $state(false); // the dependents check failed — don't imply "safe"
 
   async function load() {
     loading = true;
@@ -77,13 +78,17 @@
   async function armRemove(id: string) {
     confirmRemoveId = id;
     dependents = [];
+    dependentsUnknown = false;
     const r = await providerDependents(id);
-    if (r.ok && confirmRemoveId === id) dependents = r.value;
+    if (confirmRemoveId !== id) return; // armed a different card meanwhile
+    if (r.ok) dependents = r.value;
+    else dependentsUnknown = true; // fail closed in the copy — don't imply it's safe to remove
   }
 
   async function onRemove(id: string) {
     confirmRemoveId = null;
     dependents = [];
+    dependentsUnknown = false;
     const r = await removeProvider(id);
     if (r.ok) await load();
     else loadError = r.error;
@@ -164,13 +169,15 @@
           {:else if confirmRemoveId === p.id}
             <span class="confirm">
               Remove {p.name}?
-              {#if dependents.length > 0}
+              {#if dependentsUnknown}
+                Couldn't check which agents use it — remove anyway?
+              {:else if dependents.length > 0}
                 {dependents.length} agent{dependents.length === 1 ? "" : "s"} use{dependents.length === 1 ? "s" : ""} it
                 ({dependents.map((d) => d.name).join(", ")}) — {dependents.length === 1 ? "it" : "they"}'ll have no model.
               {/if}
             </span>
             <button type="button" class="danger" onclick={() => onRemove(p.id)}>Remove</button>
-            <button type="button" class="ghost" onclick={() => { confirmRemoveId = null; dependents = []; }}>Cancel</button>
+            <button type="button" class="ghost" onclick={() => { confirmRemoveId = null; dependents = []; dependentsUnknown = false; }}>Cancel</button>
           {:else}
             <button type="button" class="ghost" onclick={() => { rotatingId = p.id; rotateKeyValue = ""; }}>Update key</button>
             <button type="button" class="ghost" onclick={() => armRemove(p.id)}>Remove</button>

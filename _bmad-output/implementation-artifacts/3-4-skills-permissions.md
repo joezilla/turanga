@@ -3,7 +3,7 @@ baseline_commit: ef6c5c349abb8c01ba695a10829958fa6d6730f8
 ---
 # Story 3.4: Attach skills with scoped permissions and send-gate config
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -47,6 +47,23 @@ so that my agent has capabilities without over-permission.
   - [x] **Unit (web, Vitest):** `skills.ts` helpers — `isOutbound`, `attachableSkills` (excludes attached), scope/label maps.
   - [x] **Playwright e2e (live stack, serial — append to `tests/agents.spec.ts`):** open an agent → Skills section; **Add skill** opens the picker; attach **read/search** → a rectangular chip appears with a scope select defaulting to **No access** and **no** send control; attach **draft reply** → it shows an **Allow send** control that is **off** by default; widen read/search's scope to **Read**; remove a skill; the indicator shows `Saving… → Saved` and the skills + scopes **persist across reload**.
   - [x] `svelte-check` 0 · `pnpm -r build` · `pnpm lint` · control-api + web unit · e2e incl. **Epic 1/2/3.1–3.3 regressions** all green.
+
+### Review Findings (joint 3.4 + 3.5 + 3.6 code review, 2026-08-01)
+
+_Blind Hunter + Edge Case Hunter + Acceptance Auditor over `ef6c5c3..HEAD`. 7 patch, 5 deferred, 3 dismissed. Auditor confirmed broad AC compliance (rectangular chips, default-deny scope, off-by-default send, mono caps, advisory dependents guard, AD-7, contracts untouched)._
+
+- [x] [Review][Patch][Med] Debounced saves fire against the wrong agent after fast navigation — the section debounce timers (name/instructions/vars/**caps**) aren't cleared on an `id` change, and `persist` uses the current route `id`; edit a cap then open a different agent within ~400ms → the pending timer PATCHes agent B with agent A's cost cap. Clear all pending timers when `id` changes (and/or capture the target id at schedule time). [apps/web/src/routes/(app)/agents/[id]/+page.svelte]
+- [x] [Review][Patch][Med] Cost-cap inline error is not associated with its field nor announced (3.5 AC2 requires "associated + announced") — the input has `aria-invalid` but no `aria-describedby`, and the error has no `id`/`role="alert"`. Add `id` + `aria-describedby` + a polite alert region. [apps/web/src/lib/components/CostCapsEditor.svelte]
+- [x] [Review][Patch][Med] Provider-dependents fetch failure fails open — `armRemove` only sets `dependents` on `r.ok`; on a transient error it shows the plain "Remove {name}?" with no consequence, defeating the guard. Track a fetch-failed state and say so ("Couldn't check which agents use it — remove anyway?") instead of a clean confirm. [apps/web/src/routes/(app)/settings/providers/+page.svelte]
+- [x] [Review][Patch][Med] CostCapsEditor `$effect` re-seeds the *other* field on every keystroke and leaves a stale error — because `onCapsChange` sets `costCap` synchronously, the adopt-external effect runs on each edit, overwriting an in-progress (invalid) entry in the non-focused field and leaving its `*Error` + `aria-invalid` stale. Only adopt when the persisted side actually changed (track last-adopted), and clear that field's error when re-seeding. [apps/web/src/lib/components/CostCapsEditor.svelte]
+- [x] [Review][Patch][Low] `parseMoney` accepts any 3-letter uppercase currency (and mismatched per-run/per-day) despite MVP USD-only; the web always renders `$`, so a non-USD stored cap misrenders. Restrict `currency` to `"USD"` (MVP) with a stated 400. [apps/control-api/src/agents/routes.ts]
+- [x] [Review][Patch][Low] `parseCostCap` accepts an array body (`typeof [] === "object"`) → `{ costCap: [] }` returns 200 and silently clears both caps. Reject non-plain-object / array with 400. [apps/control-api/src/agents/routes.ts]
+- [x] [Review][Patch][Low] Skill picker: `Esc` only closes from the search input, and focus is dropped to `<body>` after attach — move Esc handling to the popover container and restore focus to the "Add skill" button on close/attach. [apps/web/src/lib/components/SkillsEditor.svelte]
+- [x] [Review][Defer][Low] Dependents matched by provider **kind**, not connection id — with two same-kind providers, removing either falsely warns "they'll have no model." Refining needs the agent's `model` to carry a connection id (a design change); deferred (typically one provider per kind at MVP).
+- [x] [Review][Defer][Low] `SkillId` (web) duplicates domain `BuiltinSkill`, and control-api's `BUILTIN_SKILLS` is a third copy — three sources of truth for the four skill ids. Deferred (web is intentionally decoupled from `@turanga/domain`); fold into the shared-type-consolidation cleanup.
+- [x] [Review][Defer][Low] Partial `costCap` PATCH nulls the omitted side (whole-object replace) — fine for the in-app editor (always sends both) but a partial writer loses the other cap silently. Deferred; document costCap as a replace-whole field.
+- [x] [Review][Defer][Low] Dependents string concatenates all agent names unbounded and scans the full agent list per arm — fine at MVP scale; cap/paginate later.
+- [x] [Review][Defer][Low] A `$0.00` (minor 0) cap is accepted and formatted identically to an unset cap — a zero ceiling is a legitimate (if useless) value; revisit when caps are enforced (Epic 4).
 
 ## Dev Notes
 

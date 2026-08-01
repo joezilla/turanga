@@ -17,3 +17,10 @@
 - Domain vs repo/web nullability divergence (`model?`/`variables?` optional vs `string|null`/required) — reconcile the shared Agent type.
 - ModelSelector cosmetics: split full `provider/model-id` (multi-slash), surface unknown provider kinds, disambiguate two same-kind connections.
 - Auth hardening: the login brute-force limiter keys on client-controllable `x-forwarded-for` — revisit keying/So a spoofed IP can't bypass it.
+
+## Deferred from: code review of 3-4 + 3-5 + 3-6 (2026-08-01)
+- Provider dependents are matched by provider KIND, not connection id — two same-kind providers can't be distinguished; refine once an agent's model carries a connection id.
+- Three sources of truth for the built-in skill ids (domain `BuiltinSkill`, web `SkillId`, control-api `BUILTIN_SKILLS`) — consolidate when the shared Agent type is reconciled.
+- `costCap` PATCH is a whole-object replace (a partial writer nulls the omitted side) — document, or switch to per-side merge.
+- Dependents confirm concatenates all agent names unbounded + full agent-list scan per arm — cap/paginate at scale.
+- A `$0.00` cost cap is accepted and indistinguishable from unset — revisit when caps are enforced (Epic 4).

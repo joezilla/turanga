@@ -18,24 +18,24 @@ const OUTBOUND_SKILLS = new Set(["draft-reply"]);
 
 // Cost caps (Story 3.5). Money is integer minor units + currency; MVP is single-currency USD.
 const MAX_CAP_MINOR = 100_000_00; // $100,000
-const CURRENCY_RE = /^[A-Z]{3}$/;
+const CAP_CURRENCY = "USD"; // MVP is single-currency
 
 // One side of a cost cap: null (unset) or a Money { minor, currency }.
 function parseMoney(input: unknown): { ok: true; value: Money | null } | { ok: false; error: string } {
   if (input === null || input === undefined) return { ok: true, value: null }; // an unset cap
-  if (typeof input !== "object") return { ok: false, error: "A cap must be a money amount or null." };
+  if (typeof input !== "object" || Array.isArray(input)) return { ok: false, error: "A cap must be a money amount or null." };
   const m = input as { minor?: unknown; currency?: unknown };
   if (typeof m.minor !== "number" || !Number.isInteger(m.minor) || m.minor < 0 || m.minor > MAX_CAP_MINOR) {
     return { ok: false, error: "A cap amount must be a whole number of minor units within range." };
   }
-  if (typeof m.currency !== "string" || !CURRENCY_RE.test(m.currency)) {
-    return { ok: false, error: "A cap needs a 3-letter currency code." };
+  if (m.currency !== CAP_CURRENCY) {
+    return { ok: false, error: `Caps must be in ${CAP_CURRENCY}.` };
   }
   return { ok: true, value: { minor: m.minor, currency: m.currency } };
 }
 
 function parseCostCap(input: unknown): { ok: true; value: CostCap } | { ok: false; error: string } {
-  if (input === null || typeof input !== "object") return { ok: false, error: "Cost caps must be an object." };
+  if (input === null || typeof input !== "object" || Array.isArray(input)) return { ok: false, error: "Cost caps must be an object." };
   const c = input as { perRun?: unknown; perDay?: unknown };
   const perRun = parseMoney(c.perRun);
   if (!perRun.ok) return perRun;

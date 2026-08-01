@@ -13,6 +13,7 @@
   let pickerOpen = $state(false);
   let query = $state("");
   let searchEl = $state<HTMLInputElement | null>(null);
+  let addBtn = $state<HTMLButtonElement | null>(null);
 
   const candidates = $derived(
     attachableSkills(value).filter((s) => s.label.toLowerCase().includes(query.trim().toLowerCase())),
@@ -25,9 +26,14 @@
     searchEl?.focus();
   }
 
+  function closePicker() {
+    pickerOpen = false;
+    addBtn?.focus(); // restore focus to the trigger (keyboard/AT users don't lose their place)
+  }
+
   function attach(skill: SkillId) {
     onchange([...value, { skill, scope: "none", send: false }]); // default-deny, send off
-    pickerOpen = false;
+    closePicker();
   }
   function remove(skill: SkillId) {
     onchange(value.filter((s) => s.skill !== skill));
@@ -75,26 +81,29 @@
   </ul>
 
   <div class="add">
-    <button type="button" class="add-btn" onclick={openPicker} disabled={attachableSkills(value).length === 0}>
+    <button type="button" class="add-btn" bind:this={addBtn} onclick={openPicker} disabled={attachableSkills(value).length === 0}>
       <Plus size={14} color="currentColor" /> Add skill
     </button>
 
     {#if pickerOpen}
-      <div class="picker" role="dialog" aria-label="Add a skill">
-        <input
-          class="search"
-          type="text"
-          bind:this={searchEl}
-          bind:value={query}
-          placeholder="Search skills"
-          aria-label="Search skills"
-          onkeydown={(e) => {
-            if (e.key === "Escape") {
-              e.stopPropagation();
-              pickerOpen = false;
-            }
-          }}
-        />
+      <!-- Esc closes from anywhere in the popover; focusout closes when focus leaves it entirely. -->
+      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+      <div
+        class="picker"
+        role="dialog"
+        tabindex={-1}
+        aria-label="Add a skill"
+        onkeydown={(e) => {
+          if (e.key === "Escape") {
+            e.stopPropagation();
+            closePicker();
+          }
+        }}
+        onfocusout={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) pickerOpen = false;
+        }}
+      >
+        <input class="search" type="text" bind:this={searchEl} bind:value={query} placeholder="Search skills" aria-label="Search skills" />
         {#if candidates.length === 0}
           <p class="empty">No matching skills.</p>
         {:else}

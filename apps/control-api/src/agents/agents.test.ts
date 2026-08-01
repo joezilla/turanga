@@ -320,6 +320,8 @@ describe("agent cost caps (PATCH, Story 3.5)", () => {
     expect((await patchReq(app, cookie, created.id, { costCap: { perRun: { minor: -1, currency: "USD" }, perDay: null } })).status).toBe(400);
     expect((await patchReq(app, cookie, created.id, { costCap: { perRun: { minor: 99_999_999_999, currency: "USD" }, perDay: null } })).status).toBe(400);
     expect((await patchReq(app, cookie, created.id, { costCap: { perRun: { minor: 50, currency: "usd" }, perDay: null } })).status).toBe(400);
+    expect((await patchReq(app, cookie, created.id, { costCap: { perRun: { minor: 50, currency: "EUR" }, perDay: null } })).status).toBe(400); // MVP: USD only
+    expect((await patchReq(app, cookie, created.id, { costCap: [] })).status).toBe(400); // array is not a valid cost-cap object
     expect((await patchReq(app, cookie, created.id, { costCap: { perRun: 5, perDay: null } })).status).toBe(400);
     expect((await patchReq(app, cookie, created.id, { costCap: { perRun: null } })).status).toBe(200); // perDay missing → treated as null
   });

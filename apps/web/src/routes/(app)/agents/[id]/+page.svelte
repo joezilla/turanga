@@ -57,8 +57,16 @@
     });
   });
 
+  // Drop any debounced saves still pending for the previous agent so they can't PATCH the new
+  // one with the old agent's data (a fast edit-then-navigate would otherwise cross agents).
+  function cancelPendingSaves() {
+    for (const t of [nameTimer, instrTimer, varsTimer, capsTimer]) if (t) clearTimeout(t);
+    nameTimer = instrTimer = varsTimer = capsTimer = null;
+  }
+
   async function load() {
     const target = id; // guard against a fast id change resolving out of order
+    cancelPendingSaves();
     loading = true;
     notFound = false;
     loadError = "";

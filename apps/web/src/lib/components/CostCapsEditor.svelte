@@ -7,20 +7,42 @@
 
   let { value, onchange }: { value: CostCap; onchange: (caps: CostCap) => void } = $props();
 
+  const fmt = (m: { minor: number } | null) => (m ? formatMinor(m.minor) : "");
+
   // Local text state for the two inputs, seeded from the persisted caps then synced by the
-  // $effect below (external load/reload).
+  // $effect below only when the *persisted* side actually changes (external load/reload) — not
+  // on our own keystrokes.
   // svelte-ignore state_referenced_locally
-  let perRunText = $state(value.perRun ? formatMinor(value.perRun.minor) : "");
+  let perRunText = $state(fmt(value.perRun));
   // svelte-ignore state_referenced_locally
-  let perDayText = $state(value.perDay ? formatMinor(value.perDay.minor) : "");
+  let perDayText = $state(fmt(value.perDay));
   let perRunError = $state("");
   let perDayError = $state("");
+  // Last persisted minor units we adopted, so we only re-seed on a genuine external change.
+  // svelte-ignore state_referenced_locally
+  let lastPerRun = $state<number | null>(value.perRun?.minor ?? null);
+  // svelte-ignore state_referenced_locally
+  let lastPerDay = $state<number | null>(value.perDay?.minor ?? null);
 
-  // Adopt external changes (load/reload) when the field isn't being edited.
   $effect(() => {
-    const el = document.activeElement as HTMLElement | null;
-    if (el?.dataset?.cap !== "perRun") perRunText = value.perRun ? formatMinor(value.perRun.minor) : "";
-    if (el?.dataset?.cap !== "perDay") perDayText = value.perDay ? formatMinor(value.perDay.minor) : "";
+    const active = (document.activeElement as HTMLElement | null)?.dataset?.cap;
+    const nextRun = value.perRun?.minor ?? null;
+    if (nextRun !== lastPerRun) {
+      lastPerRun = nextRun;
+      if (active !== "perRun") {
+        // don't reformat the field being typed in
+        perRunText = fmt(value.perRun);
+        perRunError = ""; // a fresh persisted value clears any stale field error
+      }
+    }
+    const nextDay = value.perDay?.minor ?? null;
+    if (nextDay !== lastPerDay) {
+      lastPerDay = nextDay;
+      if (active !== "perDay") {
+        perDayText = fmt(value.perDay);
+        perDayError = "";
+      }
+    }
   });
 
   function edit(which: "perRun" | "perDay", raw: string) {
@@ -57,11 +79,12 @@
         data-cap="perRun"
         aria-label="Per-run cap"
         aria-invalid={perRunError ? "true" : undefined}
+        aria-describedby={perRunError ? "per-run-err" : undefined}
         value={perRunText}
         oninput={(e) => edit("perRun", (e.currentTarget as HTMLInputElement).value)}
       />
     </span>
-    {#if perRunError}<span class="err">{perRunError}</span>{/if}
+    {#if perRunError}<span id="per-run-err" class="err" role="alert">{perRunError}</span>{/if}
   </label>
 
   <label class="cap">
@@ -74,11 +97,12 @@
         data-cap="perDay"
         aria-label="Per-day cap"
         aria-invalid={perDayError ? "true" : undefined}
+        aria-describedby={perDayError ? "per-day-err" : undefined}
         value={perDayText}
         oninput={(e) => edit("perDay", (e.currentTarget as HTMLInputElement).value)}
       />
     </span>
-    {#if perDayError}<span class="err">{perDayError}</span>{/if}
+    {#if perDayError}<span id="per-day-err" class="err" role="alert">{perDayError}</span>{/if}
   </label>
 </div>
 
