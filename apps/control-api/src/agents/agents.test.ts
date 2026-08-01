@@ -62,6 +62,7 @@ describe("create an agent", () => {
     expect(a.instructions).toBe(""); // Story 3.3 defaults
     expect(a.variables).toEqual([]);
     expect(a.skills).toEqual([]); // Story 3.4 default
+    expect(a.costCap).toEqual({ perRun: null, perDay: null }); // Story 3.5 default
     expect(a.id).toHaveLength(26); // ULID
     expect(a.createdAt).toBeTruthy();
   });
@@ -287,5 +288,44 @@ describe("agent skills + permissions (PATCH, Story 3.4)", () => {
   it("401 without a session", async () => {
     const { app } = await appWithSession();
     expect((await app.request("/agents/x", jsonPatch({ skills: [] }))).status).toBe(401);
+  });
+});
+
+describe("agent cost caps (PATCH, Story 3.5)", () => {
+  const patchReq = (app: Awaited<ReturnType<typeof appWithSession>>["app"], cookie: string, id: string, body: unknown) =>
+    app.request(`/agents/${id}`, { ...jsonPatch(body), headers: { "content-type": "application/json", cookie } });
+
+  it("persists a valid per-run + per-day cap (durable)", async () => {
+    const { app, cookie } = await appWithSession();
+    const created = await createAgent(app, cookie);
+    const costCap = { perRun: { minor: 50, currency: "USD" }, perDay: { minor: 500, currency: "USD" } };
+    const set = ((await (await patchReq(app, cookie, created.id, { costCap })).json()) as { agent: any }).agent;
+    expect(set.costCap).toEqual(costCap);
+    const got = ((await (await app.request(`/agents/${created.id}`, { headers: { cookie } })).json()) as { agent: any }).agent;
+    expect(got.costCap).toEqual(costCap);
+  });
+
+  it("accepts a null side (an unset cap)", async () => {
+    const { app, cookie } = await appWithSession();
+    const created = await createAgent(app, cookie);
+    const set = ((await (await patchReq(app, cookie, created.id, { costCap: { perRun: { minor: 100, currency: "USD" }, perDay: null } })).json()) as { agent: any }).agent;
+    expect(set.costCap).toEqual({ perRun: { minor: 100, currency: "USD" }, perDay: null });
+  });
+
+  it("rejects a non-object, non-integer/negative/over-cap minor, and a bad currency (400)", async () => {
+    const { app, cookie } = await appWithSession();
+    const created = await createAgent(app, cookie);
+    expect((await patchReq(app, cookie, created.id, { costCap: "nope" })).status).toBe(400);
+    expect((await patchReq(app, cookie, created.id, { costCap: { perRun: { minor: 1.5, currency: "USD" }, perDay: null } })).status).toBe(400);
+    expect((await patchReq(app, cookie, created.id, { costCap: { perRun: { minor: -1, currency: "USD" }, perDay: null } })).status).toBe(400);
+    expect((await patchReq(app, cookie, created.id, { costCap: { perRun: { minor: 99_999_999_999, currency: "USD" }, perDay: null } })).status).toBe(400);
+    expect((await patchReq(app, cookie, created.id, { costCap: { perRun: { minor: 50, currency: "usd" }, perDay: null } })).status).toBe(400);
+    expect((await patchReq(app, cookie, created.id, { costCap: { perRun: 5, perDay: null } })).status).toBe(400);
+    expect((await patchReq(app, cookie, created.id, { costCap: { perRun: null } })).status).toBe(200); // perDay missing → treated as null
+  });
+
+  it("401 without a session", async () => {
+    const { app } = await appWithSession();
+    expect((await app.request("/agents/x", jsonPatch({ costCap: { perRun: null, perDay: null } }))).status).toBe(401);
   });
 });

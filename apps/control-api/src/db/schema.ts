@@ -61,5 +61,9 @@ export const agents = pgTable("agents", {
   instructions: text("instructions").notNull().default(""), // Story 3.3
   variables: jsonb("variables").$type<{ name: string; value: string }[]>().notNull().default([]), // Story 3.3
   skills: jsonb("skills").$type<{ skill: string; scope: string; send: boolean }[]>().notNull().default([]), // Story 3.4
+  costCap: jsonb("cost_cap")
+    .$type<{ perRun: { minor: number; currency: string } | null; perDay: { minor: number; currency: string } | null }>()
+    .notNull()
+    .default({ perRun: null, perDay: null }), // Story 3.5
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

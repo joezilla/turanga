@@ -18,6 +18,15 @@ export interface AttachedSkill {
   send: boolean;
 }
 
+export interface Money {
+  minor: number; // integer minor units (e.g. cents)
+  currency: string; // ISO-4217, e.g. "USD"
+}
+export interface CostCap {
+  perRun: Money | null;
+  perDay: Money | null;
+}
+
 export interface Agent {
   id: string;
   name: string;
@@ -26,6 +35,7 @@ export interface Agent {
   instructions: string; // Story 3.3
   variables: AgentVariable[]; // Story 3.3
   skills: AttachedSkill[]; // Story 3.4
+  costCap: CostCap; // Story 3.5
   createdAt: string;
 }
 
@@ -35,6 +45,7 @@ export interface AgentPatch {
   instructions?: string;
   variables?: AgentVariable[];
   skills?: AttachedSkill[];
+  costCap?: CostCap;
 }
 
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };

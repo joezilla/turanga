@@ -16,9 +16,11 @@ export type ConnectionKind = "model-provider" | "data";
 export type ConnectionStatus = "connected" | "error" | "unconfigured";
 export type BuiltinSkill = "read-search" | "draft-reply" | "flag-label" | "summarize";
 
+/** Spend ceilings (Story 3.5). Each side is independently settable in Draft; "both required"
+ *  is enforced only at the Activate gate (Story 5.1). Enforcement (LiteLLM 429s) is Epic 4. */
 export interface CostCap {
-  perRun: Money;
-  perDay: Money;
+  perRun: Money | null;
+  perDay: Money | null;
 }
 
 /** A named, reusable parameter referenced from instructions as `{name}` (Story 3.3). */
@@ -46,7 +48,7 @@ export interface Agent {
   instructions: string;
   variables?: AgentVariable[];
   skills: AttachedSkill[];
-  costCap?: CostCap;
+  costCap: CostCap; // Story 3.5 — always present; sides default null until set
   state: LifecycleState;
   createdAt: string; // UTC ISO-8601
 }

@@ -18,6 +18,6 @@ describe("domain", () => {
       state: "draft",
       createdAt: "2026-07-31T00:00:00.000Z",
     };
-    expect(a.costCap?.perDay.minor).toBe(500);
+    expect(a.costCap.perDay?.minor).toBe(500);
   });
 });

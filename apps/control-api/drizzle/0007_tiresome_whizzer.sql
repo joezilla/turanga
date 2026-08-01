@@ -1,0 +1,1 @@
+ALTER TABLE "agents" ADD COLUMN "cost_cap" jsonb DEFAULT '{"perRun":null,"perDay":null}'::jsonb NOT NULL;

@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { ulid } from "@turanga/domain";
-import type { AgentsRepo, AgentRow, AgentPatch, AgentVariable, AttachedSkill } from "./repo.js";
+import type { AgentsRepo, AgentRow, AgentPatch, AgentVariable, AttachedSkill, CostCap, Money } from "./repo.js";
 
 // Bound the display name / model string so one oversized value can't bloat payloads.
 const MAX_NAME_LEN = 200;
@@ -15,6 +15,34 @@ const VAR_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_]{0,63}$/;
 const BUILTIN_SKILLS = new Set(["read-search", "draft-reply", "flag-label", "summarize"]);
 const SKILL_SCOPES = new Set(["none", "read", "read-write"]);
 const OUTBOUND_SKILLS = new Set(["draft-reply"]);
+
+// Cost caps (Story 3.5). Money is integer minor units + currency; MVP is single-currency USD.
+const MAX_CAP_MINOR = 100_000_00; // $100,000
+const CURRENCY_RE = /^[A-Z]{3}$/;
+
+// One side of a cost cap: null (unset) or a Money { minor, currency }.
+function parseMoney(input: unknown): { ok: true; value: Money | null } | { ok: false; error: string } {
+  if (input === null || input === undefined) return { ok: true, value: null }; // an unset cap
+  if (typeof input !== "object") return { ok: false, error: "A cap must be a money amount or null." };
+  const m = input as { minor?: unknown; currency?: unknown };
+  if (typeof m.minor !== "number" || !Number.isInteger(m.minor) || m.minor < 0 || m.minor > MAX_CAP_MINOR) {
+    return { ok: false, error: "A cap amount must be a whole number of minor units within range." };
+  }
+  if (typeof m.currency !== "string" || !CURRENCY_RE.test(m.currency)) {
+    return { ok: false, error: "A cap needs a 3-letter currency code." };
+  }
+  return { ok: true, value: { minor: m.minor, currency: m.currency } };
+}
+
+function parseCostCap(input: unknown): { ok: true; value: CostCap } | { ok: false; error: string } {
+  if (input === null || typeof input !== "object") return { ok: false, error: "Cost caps must be an object." };
+  const c = input as { perRun?: unknown; perDay?: unknown };
+  const perRun = parseMoney(c.perRun);
+  if (!perRun.ok) return perRun;
+  const perDay = parseMoney(c.perDay);
+  if (!perDay.ok) return perDay;
+  return { ok: true, value: { perRun: perRun.value, perDay: perDay.value } };
+}
 
 // Validate `variables` from a PATCH body. Returns the cleaned array, or an error string.
 function parseVariables(input: unknown): { ok: true; value: AgentVariable[] } | { ok: false; error: string } {
@@ -75,7 +103,7 @@ export function agentRoutes(repo: AgentsRepo) {
     const body = ((await c.req.json().catch(() => ({}))) ?? {}) as { name?: unknown };
     const trimmed = typeof body.name === "string" ? body.name.trim() : "";
     const name = (trimmed || "Untitled agent").slice(0, MAX_NAME_LEN);
-    const row: AgentRow = { id: ulid(Date.now()), name, state: "draft", model: null, instructions: "", variables: [], skills: [], createdAt: new Date().toISOString() };
+    const row: AgentRow = { id: ulid(Date.now()), name, state: "draft", model: null, instructions: "", variables: [], skills: [], costCap: { perRun: null, perDay: null }, createdAt: new Date().toISOString() };
     await repo.create(row);
     return c.json({ agent: row }, 201);
   });
@@ -94,6 +122,7 @@ export function agentRoutes(repo: AgentsRepo) {
       instructions?: unknown;
       variables?: unknown;
       skills?: unknown;
+      costCap?: unknown;
     };
     const patch: AgentPatch = {};
 
@@ -127,6 +156,11 @@ export function agentRoutes(repo: AgentsRepo) {
       const parsed = parseSkills(body.skills);
       if (!parsed.ok) return c.json({ error: parsed.error }, 400);
       patch.skills = parsed.value;
+    }
+    if (body.costCap !== undefined) {
+      const parsed = parseCostCap(body.costCap);
+      if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+      patch.costCap = parsed.value;
     }
 
     const agent = await repo.update(c.req.param("id"), patch);

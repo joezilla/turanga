@@ -140,3 +140,26 @@ test("skills: attach via picker, default-deny scope, off-by-default send, persis
   await expect(page.locator("li.chip", { hasText: "read/search" }).getByLabel("Permission scope")).toHaveValue("read");
   await expect(page.locator("li.chip", { hasText: "draft reply" })).toHaveCount(0);
 });
+
+test("cost caps: set per-run + per-day, persist, and block an invalid amount", async ({ page }) => {
+  await signIn(page);
+  await page.getByRole("button", { name: "Create agent" }).first().click();
+  await page.locator("a.agent").first().click();
+  await expect(page).toHaveURL(/\/agents\/[0-9A-Z]{26}$/);
+
+  // Set both caps. [3.5 AC1]
+  await page.getByLabel("Per-run cap").fill("0.50");
+  await page.getByLabel("Per-day cap").fill("5.00");
+  await expect(page.getByText("Saved")).toBeVisible({ timeout: 10000 });
+
+  // Both persist across reload. [3.5 AC1]
+  await page.reload();
+  await expect(page.getByLabel("Per-run cap")).toHaveValue("0.50");
+  await expect(page.getByLabel("Per-day cap")).toHaveValue("5.00");
+
+  // An invalid amount shows an inline error and does not persist. [3.5 AC2]
+  await page.getByLabel("Per-run cap").fill("-1");
+  await expect(page.getByText(/Enter a dollar amount/)).toBeVisible();
+  await page.reload();
+  await expect(page.getByLabel("Per-run cap")).toHaveValue("0.50"); // unchanged — the bad value wasn't saved
+});
