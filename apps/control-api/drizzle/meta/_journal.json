@@ -15,6 +15,13 @@
       "when": 1785543817016,
       "tag": "0001_chilly_madelyne_pryor",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785592035893,
+      "tag": "0002_harsh_gateway",
+      "breakpoints": true
     }
   ]
 }

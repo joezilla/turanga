@@ -10,6 +10,9 @@ import { memoryAuthRepo, type AuthRepo } from "./auth/repo.js";
 import { connectionRoutes } from "./connections/routes.js";
 import { memoryConnectionsRepo, type ConnectionsRepo } from "./connections/repo.js";
 import { fakeModelGateway, type ModelGateway } from "./litellm/gateway.js";
+import { dataConnectionRoutes } from "./oauth/routes.js";
+import { memoryDataConnectionsRepo, type DataConnectionsRepo } from "./connections/dataRepo.js";
+import { googleOAuth, type GoogleOAuth } from "./oauth/google.js";
 
 export const VERSION = process.env.TURANGA_VERSION ?? "0.0.0";
 export const GIT_SHA = process.env.TURANGA_GIT_SHA ?? "unknown";
@@ -19,6 +22,8 @@ export interface AppDeps {
   secureCookie?: boolean; // true in production (HTTPS)
   connectionsRepo?: ConnectionsRepo;
   modelGateway?: ModelGateway;
+  dataConnectionsRepo?: DataConnectionsRepo;
+  googleOAuth?: GoogleOAuth;
 }
 
 export function createApp(deps: AppDeps = {}) {
@@ -38,9 +43,14 @@ export function createApp(deps: AppDeps = {}) {
   // Protected surface — server-side session enforcement.
   app.use("/connections/*", requireSession(authRepo));
   app.use("/models", requireSession(authRepo));
+  app.use("/oauth/*", requireSession(authRepo));
   const connectionsRepo = deps.connectionsRepo ?? memoryConnectionsRepo();
   const gateway = deps.modelGateway ?? fakeModelGateway();
   app.route("/", connectionRoutes(connectionsRepo, gateway));
+
+  const dataConnectionsRepo = deps.dataConnectionsRepo ?? memoryDataConnectionsRepo();
+  const google = deps.googleOAuth ?? googleOAuth();
+  app.route("/", dataConnectionRoutes(dataConnectionsRepo, google, webOrigin));
 
   return app;
 }

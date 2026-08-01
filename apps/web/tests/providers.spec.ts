@@ -39,3 +39,11 @@ test("connecting with a bad key shows an error card, and Remove clears it", asyn
   await page.getByRole("button", { name: "Remove" }).click(); // confirm
   await expect(page.getByText("No providers connected.")).toBeVisible();
 });
+
+test("Data connections shows the not-configured state when no Google client is set", async ({ page }) => {
+  await signIn(page);
+  await page.goto("/settings/connections");
+  await expect(page.getByRole("heading", { name: "Data connections" })).toBeVisible();
+  await expect(page.getByText(/Google OAuth isn't configured/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Connect with Google" })).toHaveCount(0);
+});

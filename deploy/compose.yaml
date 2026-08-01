@@ -73,6 +73,12 @@ services:
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       LITELLM_BASE_URL: http://litellm:4000
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-turanga-dev}
+      # Encrypts data-connection OAuth tokens at rest. Set once; changing it strands stored tokens.
+      TOKEN_ENC_KEY: ${TOKEN_ENC_KEY:-dev-token-enc-key-change-me}
+      # Google OAuth (Gmail data connection). Empty = "not configured" in the UI. See README.
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
+      GOOGLE_OAUTH_REDIRECT_URI: ${GOOGLE_OAUTH_REDIRECT_URI:-http://localhost:8080/oauth/google/callback}
     ports:
       - "8080:8080"
     healthcheck:

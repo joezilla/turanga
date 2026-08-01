@@ -34,3 +34,19 @@ export const connections = pgTable("connections", {
   litellmModelIds: jsonb("litellm_model_ids").$type<string[]>().notNull().default([]),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+// Data connections (Story 2.2). The OAuth refresh token is stored ENCRYPTED at rest
+// (enc_refresh_token, AES-256-GCM) — never returned to the browser; the egress-guard
+// reads+decrypts it for credential injection in Epic 4 (AD-10 realization).
+export const dataConnections = pgTable("data_connections", {
+  id: text("id").primaryKey(), // ULID
+  provider: text("provider").notNull(), // 'gmail'
+  name: text("name").notNull(),
+  accountEmail: text("account_email"),
+  scopes: jsonb("scopes").$type<string[]>().notNull().default([]),
+  destinations: jsonb("destinations").$type<string[]>().notNull().default([]),
+  status: text("status").notNull(), // 'connected' | 'error' | 'unconfigured'
+  lastError: text("last_error"),
+  encRefreshToken: text("enc_refresh_token"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
