@@ -40,11 +40,25 @@
   const definedNames = $derived(vars.map((v) => v.name).filter((n) => VAR_NAME_RE.test(n)));
   const undefinedNames = $derived(undefinedVariables(instructions, definedNames));
 
+  // Per-row "why this variable isn't saved" cue (blank / malformed / duplicate name).
+  const varIssues = $derived.by(() => {
+    const seen = new Set<string>();
+    return vars.map((v) => {
+      if (!v.name.trim()) return "name required";
+      if (!VAR_NAME_RE.test(v.name)) return "use letters, numbers, or _ (start with a letter)";
+      if (seen.has(v.name)) return "duplicate name";
+      seen.add(v.name);
+      return "";
+    });
+  });
+
   async function load() {
+    const target = id; // guard against a fast id change resolving out of order
     loading = true;
     notFound = false;
     loadError = "";
-    const [a, p] = await Promise.all([getAgent(id), listProviders()]);
+    const [a, p] = await Promise.all([getAgent(target), listProviders()]);
+    if (target !== id) return; // navigated away before this resolved — drop it
     loading = false;
     if (!a.ok) {
       if (a.error.includes("doesn't exist")) notFound = true;
@@ -63,10 +77,14 @@
     load();
   });
 
-  // Server-authoritative autosave (AD-7): PATCH, then trust the returned agent.
+  // Server-authoritative autosave (AD-7): PATCH, then trust the returned agent. A monotonic
+  // seq coalesces overlapping saves so an out-of-order response can't overwrite newer state.
+  let saveSeq = 0;
   async function persist(patch: AgentPatch) {
+    const mine = ++saveSeq;
     save = "saving";
     const r = await updateAgent(id, patch);
+    if (mine !== saveSeq) return; // a newer save superseded this one
     if (r.ok) {
       agent = r.value;
       save = "saved";
@@ -118,6 +136,7 @@
     vars = [...vars, { name: "", value: "" }]; // persisted once it has a valid name
   }
   function removeVariable(i: number) {
+    if (varsTimer) clearTimeout(varsTimer); // drop any pending value-edit save for the old rows
     vars = vars.filter((_, idx) => idx !== i);
     persistVars(); // structural change → save now
   }
@@ -144,7 +163,7 @@
     <a class="back" href="/agents" aria-label="Back to Agents"><ArrowLeft size={16} color="currentColor" /></a>
     <label class="name-field">
       <span class="visually-hidden">Agent name</span>
-      <input type="text" value={name} oninput={onNameInput} aria-label="Agent name" />
+      <input type="text" maxlength="200" value={name} oninput={onNameInput} aria-label="Agent name" />
     </label>
     <StatusDot status={agent.state} />
     <span class="save" aria-live="polite">
@@ -195,6 +214,7 @@
                 <span class="visually-hidden">Variable value</span>
                 <input
                   type="text"
+                  maxlength="2000"
                   placeholder="value"
                   aria-label="Variable value"
                   value={v.value}
@@ -202,6 +222,7 @@
                 />
               </label>
               <button type="button" class="ghost" onclick={() => removeVariable(i)}>Remove</button>
+              {#if varIssues[i]}<span class="var-issue">{varIssues[i]} — not saved</span>{/if}
             </div>
           {/each}
           <button type="button" class="secondary" onclick={addVariable}>Add variable</button>
@@ -336,10 +357,16 @@
   }
   .var-row {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: var(--space-2);
     margin-bottom: var(--space-2);
     max-width: 640px;
+  }
+  .var-issue {
+    flex-basis: 100%;
+    font-size: var(--text-xs);
+    color: var(--caution-600);
   }
   .var-field {
     display: block;

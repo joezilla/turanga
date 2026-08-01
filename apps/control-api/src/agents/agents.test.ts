@@ -216,6 +216,8 @@ describe("agent instructions + variables (PATCH, Story 3.3)", () => {
     const many = Array.from({ length: 51 }, (_, i) => ({ name: `v${i}`, value: "x" }));
     expect((await patchReq(app, cookie, created.id, { variables: many })).status).toBe(400);
     expect((await patchReq(app, cookie, created.id, { variables: "nope" })).status).toBe(400);
+    expect((await patchReq(app, cookie, created.id, { variables: [null] })).status).toBe(400); // no 500
+    expect((await patchReq(app, cookie, created.id, { variables: ["notobj"] })).status).toBe(400);
   });
 
   it("caps variable values at 2000 chars", async () => {

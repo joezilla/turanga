@@ -3,7 +3,7 @@ baseline_commit: 6770576e22496fb2b7c16415d6a948deb198ff63
 ---
 # Story 3.2: Agent-definition surface and model selection
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -58,6 +58,25 @@ so that I can open an agent and start configuring it.
   - [x] **Unit (control-api, Vitest, in-memory repo + real session):** `GET /agents/:id` → 200 with the agent (incl. `model: null` initially), 404 unknown, **401 without a session**; `PATCH /agents/:id` sets `model` (200, persisted, returned) and `name` (trim + cap), unknown id → 404, empty-after-trim name rejected, **401 without a session**. Assert `update` is the only mutation surface (AD-7).
   - [x] **Playwright e2e (live stack, serial):** from Agents, click a created agent's row → lands on `/agents/:id` with the **two-pane** surface and a **Model** section; with no provider connected the selector shows the **disabled / `Connect in Settings`** state; edit the **name** → the indicator shows `Saving…` then `Saved`, and the new name **persists across reload** and appears back in the agents list. (Model-happy-path selection needs a real provider key, so it's covered at unit level via providers data, not e2e — document this.)
   - [x] `svelte-check` 0 · `pnpm -r build` · `pnpm lint` · control-api unit tests · e2e incl. **Epic 1/2/3.1 regressions** all green.
+
+### Review Findings (joint 3.2 + 3.3 code review, 2026-08-01)
+
+_Blind Hunter + Edge Case Hunter + Acceptance Auditor over `6770576..HEAD`. 1 high, 5 med, 3 low → patch; 5 deferred. XSS in the editor mirror was checked and is NOT present (Svelte text interpolation escapes). No noise dismissed._
+
+- [x] [Review][Patch][High] `parseVariables` 500s (not 400) on a null/non-object array item — `PATCH /agents/:id` with `{"variables":[null]}` passes `Array.isArray`, then `v.name` dereferences null → uncaught TypeError → 500. Guard `item === null || typeof item !== "object"` before dereferencing. [apps/control-api/src/agents/routes.ts]
+- [x] [Review][Patch][Med] Autosave has no in-flight/ordering guard (Task 6 "coalesce in-flight saves") — overlapping PATCHes (immediate model + debounced name/instructions/vars) can resolve out of order; a stale response overwrites `agent` (model/state flip back) and the shared `save` indicator races. Add a monotonic request seq; ignore responses older than the latest issued. [apps/web/src/routes/(app)/agents/[id]/+page.svelte persist()]
+- [x] [Review][Patch][Med] `load()` has no id-guard — navigating `/agents/A`→`/agents/B` fast (the `[id]` page re-runs `$effect` without unmount) can let `load(A)` resolve after `load(B)`, seeding A's name/instructions/vars while the route is B; a subsequent edit saves A's data onto B. Capture `id` at call start; bail if `page.params.id` changed before applying. [apps/web/.../[id]/+page.svelte load()]
+- [x] [Review][Patch][Med] Variable-insert popover is mouse-only, not keyboard-navigable (3.3 AC1) — the textarea's `onblur` closes the popover before Tab can reach an option; no arrow/Enter handling; `role="listbox"` with `<button role="option">` is malformed ARIA. Keep it open while focus is within it, add arrow+Enter selection, fix the ARIA. [apps/web/src/lib/components/InstructionsEditor.svelte]
+- [x] [Review][Patch][Med] Popover correctness bugs — (a) the empty-state "add one in Variables" `<a>` lacks `onmousedown preventDefault`, so the blur unmounts it before the click lands (dead link); (b) `insertVariable` inserts `name}` blindly at the caret even if the caret moved off the `{` (stray `}`); (c) typing `{{` leaves the popover open. [InstructionsEditor.svelte]
+- [x] [Review][Patch][Med] Silent truncation → data loss on reload — server caps instructions at 20000, variable value at 2000, name at 200, returns the truncated agent, but the local editor state isn't reconciled; over-cap content shows locally, is stored truncated, and vanishes on reload. Apply matching client-side `maxlength` (or reconcile from the response) so local == persisted. [apps/web/.../[id]/+page.svelte + InstructionsEditor.svelte]
+- [x] [Review][Patch][Low] Editor mirror/textarea desync when the textarea shows a scrollbar or is user-resized — the textarea's wrap width shrinks by the scrollbar; the `overflow:hidden` mirror keeps full width, so tokens/caret drift. Add `scrollbar-gutter: stable` to both boxes (or `resize:none`). [InstructionsEditor.svelte]
+- [x] [Review][Patch][Low] `removeVariable` doesn't clear the pending value-edit debounce (`varsTimer`) — a prior debounced `persistVars` fires ~400ms later, issuing a duplicate `{variables}` PATCH. Clear the timer on remove. [apps/web/.../[id]/+page.svelte]
+- [x] [Review][Patch][Low] Blank/duplicate variable name silently drops the row's value with a misleading "Saved" — `validVars()` sends only well-formed unique rows; an unnamed/duplicate row looks saved but is discarded on reload. Add a per-row cue (e.g. "name required" / "duplicate") so the unsaved state is visible. [apps/web/.../[id]/+page.svelte]
+- [x] [Review][Defer][Low] Autosave indicator never returns to idle, is one shared field for all edits, and `aria-live="polite"` re-announces on every debounced keystroke — deferred (cosmetic/polish; distinct per-field status + idle-fade is a nicer-to-have).
+- [x] [Review][Defer][Low] Save-failure "retry" is inert copy, not a button — deferred; the next keystroke re-saves, so there is a recovery path (a real Retry affordance is polish).
+- [x] [Review][Defer][Low] Domain vs repo/web nullability divergence (`model?`/`variables?` optional in domain vs `string|null`/required in repo+web) — deferred, type-hygiene only; no runtime bridge exists yet.
+- [x] [Review][Defer][Low] ModelSelector cosmetics — `orphanValue.replace("/", " / ")` splits only the first slash; unknown provider kinds are dropped; two same-kind connections merge ambiguously — deferred (only the 3 known kinds exist today; multi-slash model ids are uncommon).
+- [x] [Review][Defer][Low] Login limiter keys on client-controllable `x-forwarded-for` (surfaced by the test's per-session IP) — deferred, pre-existing (not this diff); add to deferred-work for an auth-hardening pass.
 
 ## Dev Notes
 

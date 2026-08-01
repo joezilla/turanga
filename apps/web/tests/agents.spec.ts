@@ -96,12 +96,14 @@ test("instructions editor: variable-token, undefined-variable caution, popover, 
   const popover = page.getByRole("listbox", { name: "Insert a variable" });
   await expect(popover).toBeVisible();
   await expect(popover.getByRole("option", { name: "portfolio" })).toBeVisible();
-  await page.keyboard.press("Escape");
+  // Keyboard-select the highlighted option → inserts `{portfolio}` and closes the popover. [3.3 AC1 keyboard-navigable]
+  await page.keyboard.press("Enter");
   await expect(popover).toHaveCount(0);
+  await expect(editor).toHaveValue(/\{portfolio\}.*\{portfolio\}$/);
 
   // Autosave persists instructions + the variable across a reload. [3.3 AC1]
   await expect(page.getByText("Saved")).toBeVisible({ timeout: 10000 });
   await page.reload();
-  await expect(page.getByLabel("Instructions")).toHaveValue(/Summarize \{portfolio\} for me\./);
+  await expect(page.getByLabel("Instructions")).toHaveValue(/Summarize \{portfolio\} for me\.\{portfolio\}/);
   await expect(page.getByLabel("Variable name")).toHaveValue("portfolio");
 });

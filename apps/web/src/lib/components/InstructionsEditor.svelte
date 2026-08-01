@@ -9,12 +9,15 @@
 
   let { value, variableNames, oninput }: { value: string; variableNames: string[]; oninput: (v: string) => void } = $props();
 
+  const MAX_LEN = 20000; // matches control-api's instructions cap — keep local == persisted
+
   let ta = $state<HTMLTextAreaElement | null>(null);
   let mirror = $state<HTMLDivElement | null>(null);
   // Seeded from `value`, then kept in sync by the $effect below (external load/reload).
   // svelte-ignore state_referenced_locally
   let internal = $state(value);
   let popoverOpen = $state(false);
+  let activeIndex = $state(0); // highlighted popover option (keyboard nav)
   let scrollTop = $state(0);
   let scrollLeft = $state(0);
 
@@ -47,12 +50,18 @@
     if (!ta) return;
     internal = ta.value;
     emit();
-    // Open the popover right after a lone `{` (not `{{`).
+    // Open the popover right after a lone `{`; close it on `{{` or once the caret leaves the `{`.
     const caret = ta.selectionStart;
     const prev = internal[caret - 1];
     const prev2 = internal[caret - 2];
-    if (prev === "{" && prev2 !== "{") popoverOpen = true;
-    else if (popoverOpen && prev !== "{") popoverOpen = false;
+    if (prev === "{" && prev2 !== "{") {
+      popoverOpen = true;
+      activeIndex = 0;
+    } else if (prev === "{" && prev2 === "{") {
+      popoverOpen = false; // `{{` is an escape, not a trigger
+    } else if (popoverOpen && prev !== "{") {
+      popoverOpen = false;
+    }
   }
 
   function onScroll() {
@@ -62,20 +71,37 @@
   }
 
   function onKeydown(e: KeyboardEvent) {
-    if (e.key === "Escape" && popoverOpen) {
+    if (!popoverOpen) return;
+    if (e.key === "Escape") {
       e.stopPropagation();
       popoverOpen = false;
+      return;
+    }
+    if (variableNames.length === 0) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      activeIndex = (activeIndex + 1) % variableNames.length;
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      activeIndex = (activeIndex - 1 + variableNames.length) % variableNames.length;
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      insertVariable(variableNames[Math.min(activeIndex, variableNames.length - 1)]);
     }
   }
 
   async function insertVariable(name: string) {
     if (!ta) return;
-    const caret = ta.selectionStart; // caret sits just after the `{`
-    internal = internal.slice(0, caret) + name + "}" + internal.slice(caret);
+    const caret = ta.selectionStart;
+    // If the caret still sits just after the triggering `{`, complete it; otherwise insert a
+    // whole `{name}` (the caret may have moved after the popover opened).
+    const onBrace = internal[caret - 1] === "{";
+    const insertText = (onBrace ? "" : "{") + name + "}";
+    internal = (internal.slice(0, caret) + insertText + internal.slice(caret)).slice(0, MAX_LEN);
     emit();
     popoverOpen = false;
     await tick();
-    const pos = caret + name.length + 1;
+    const pos = Math.min(caret + insertText.length, internal.length);
     ta.focus();
     ta.setSelectionRange(pos, pos);
   }
@@ -90,6 +116,11 @@
     bind:value={internal}
     aria-label="Instructions"
     spellcheck="false"
+    maxlength={MAX_LEN}
+    role="combobox"
+    aria-expanded={popoverOpen}
+    aria-controls="var-insert-popover"
+    aria-activedescendant={popoverOpen && variableNames.length ? `var-opt-${Math.min(activeIndex, variableNames.length - 1)}` : undefined}
     oninput={onInput}
     onscroll={onScroll}
     onkeydown={onKeydown}
@@ -97,14 +128,26 @@
   ></textarea>
 
   {#if popoverOpen}
-    <div class="popover" role="listbox" aria-label="Insert a variable">
+    <div id="var-insert-popover" class="popover" role="listbox" aria-label="Insert a variable">
       {#if variableNames.length === 0}
-        <p class="empty">No variables yet — <a href="#variables-section">add one in Variables</a>.</p>
+        <p class="empty">No variables yet — <a href="#variables-section" onmousedown={(e) => e.preventDefault()}>add one in Variables</a>.</p>
       {:else}
-        {#each variableNames as name}
-          <button type="button" role="option" aria-selected="false" onmousedown={(e) => e.preventDefault()} onclick={() => insertVariable(name)}>
+        {#each variableNames as name, i}
+          <!-- Keyboard selection is handled on the combobox textarea (arrow keys + Enter via
+               aria-activedescendant); the option itself is mouse-activated. -->
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <div
+            id="var-opt-{i}"
+            role="option"
+            tabindex={-1}
+            aria-selected={i === activeIndex}
+            class="option"
+            class:active={i === activeIndex}
+            onmousedown={(e) => e.preventDefault()}
+            onclick={() => insertVariable(name)}
+          >
             {name}
-          </button>
+          </div>
         {/each}
       {/if}
     </div>
@@ -130,6 +173,9 @@
     overflow-wrap: break-word;
     box-sizing: border-box;
     min-height: 160px;
+    /* Reserve the scrollbar gutter on BOTH boxes so the textarea's wrap width can't drift
+       from the mirror's when the textarea scrolls or is resized. */
+    scrollbar-gutter: stable;
   }
   .mirror {
     position: absolute;
@@ -174,18 +220,17 @@
     display: flex;
     flex-direction: column;
   }
-  .popover button {
+  .popover .option {
     text-align: left;
     padding: var(--space-2) var(--space-3);
-    background: none;
-    border: none;
     border-radius: var(--radius-sm);
     font-family: var(--font-mono);
     font-size: var(--text-sm);
     color: var(--text-primary);
     cursor: pointer;
   }
-  .popover button:hover {
+  .popover .option:hover,
+  .popover .option.active {
     background: var(--surface-raised);
   }
   .popover .empty {

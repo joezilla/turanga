@@ -17,6 +17,9 @@ function parseVariables(input: unknown): { ok: true; value: AgentVariable[] } | 
   const seen = new Set<string>();
   const out: AgentVariable[] = [];
   for (const item of input) {
+    if (item === null || typeof item !== "object") {
+      return { ok: false, error: "Each variable must be an object with a name and value." };
+    }
     const v = item as { name?: unknown; value?: unknown };
     if (typeof v.name !== "string" || !VAR_NAME_RE.test(v.name)) {
       return { ok: false, error: "Each variable needs a name that starts with a letter and uses only letters, numbers, or underscores." };
