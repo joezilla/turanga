@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { ulid } from "@turanga/domain";
-import type { AgentsRepo, AgentRow, AgentPatch, AgentVariable } from "./repo.js";
+import type { AgentsRepo, AgentRow, AgentPatch, AgentVariable, AttachedSkill } from "./repo.js";
 
 // Bound the display name / model string so one oversized value can't bloat payloads.
 const MAX_NAME_LEN = 200;
@@ -9,6 +9,12 @@ const MAX_INSTRUCTIONS_LEN = 20000; // Story 3.3
 const MAX_VAR_VALUE_LEN = 2000;
 const MAX_VARIABLES = 50;
 const VAR_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_]{0,63}$/;
+
+// Skills (Story 3.4). Only the 4 built-ins; scope is default-deny; send is off-by-default and
+// only meaningful for outbound skills (draft-reply). Enforcement lands in Epic 4 (the Guard).
+const BUILTIN_SKILLS = new Set(["read-search", "draft-reply", "flag-label", "summarize"]);
+const SKILL_SCOPES = new Set(["none", "read", "read-write"]);
+const OUTBOUND_SKILLS = new Set(["draft-reply"]);
 
 // Validate `variables` from a PATCH body. Returns the cleaned array, or an error string.
 function parseVariables(input: unknown): { ok: true; value: AgentVariable[] } | { ok: false; error: string } {
@@ -32,6 +38,33 @@ function parseVariables(input: unknown): { ok: true; value: AgentVariable[] } | 
   return { ok: true, value: out };
 }
 
+// Validate `skills` from a PATCH body. `send` is forced off for non-outbound skills so a
+// non-outbound skill can never carry a send grant (FR-18). Returns the cleaned array or an error.
+function parseSkills(input: unknown): { ok: true; value: AttachedSkill[] } | { ok: false; error: string } {
+  if (!Array.isArray(input)) return { ok: false, error: "Skills must be a list." };
+  if (input.length > BUILTIN_SKILLS.size) return { ok: false, error: "Too many skills." };
+  const seen = new Set<string>();
+  const out: AttachedSkill[] = [];
+  for (const item of input) {
+    if (item === null || typeof item !== "object") {
+      return { ok: false, error: "Each skill must be an object." };
+    }
+    const s = item as { skill?: unknown; scope?: unknown; send?: unknown };
+    if (typeof s.skill !== "string" || !BUILTIN_SKILLS.has(s.skill)) {
+      return { ok: false, error: "Unknown skill." };
+    }
+    if (typeof s.scope !== "string" || !SKILL_SCOPES.has(s.scope)) {
+      return { ok: false, error: "Unknown permission scope." };
+    }
+    if (typeof s.send !== "boolean") return { ok: false, error: "A skill's send grant must be true or false." };
+    if (seen.has(s.skill)) return { ok: false, error: `Skill "${s.skill}" is attached more than once.` };
+    seen.add(s.skill);
+    // Only outbound skills may carry a send grant.
+    out.push({ skill: s.skill as AttachedSkill["skill"], scope: s.scope as AttachedSkill["scope"], send: OUTBOUND_SKILLS.has(s.skill) ? s.send : false });
+  }
+  return { ok: true, value: out };
+}
+
 export function agentRoutes(repo: AgentsRepo) {
   const app = new Hono();
 
@@ -42,7 +75,7 @@ export function agentRoutes(repo: AgentsRepo) {
     const body = ((await c.req.json().catch(() => ({}))) ?? {}) as { name?: unknown };
     const trimmed = typeof body.name === "string" ? body.name.trim() : "";
     const name = (trimmed || "Untitled agent").slice(0, MAX_NAME_LEN);
-    const row: AgentRow = { id: ulid(Date.now()), name, state: "draft", model: null, instructions: "", variables: [], createdAt: new Date().toISOString() };
+    const row: AgentRow = { id: ulid(Date.now()), name, state: "draft", model: null, instructions: "", variables: [], skills: [], createdAt: new Date().toISOString() };
     await repo.create(row);
     return c.json({ agent: row }, 201);
   });
@@ -60,6 +93,7 @@ export function agentRoutes(repo: AgentsRepo) {
       model?: unknown;
       instructions?: unknown;
       variables?: unknown;
+      skills?: unknown;
     };
     const patch: AgentPatch = {};
 
@@ -88,6 +122,11 @@ export function agentRoutes(repo: AgentsRepo) {
       const parsed = parseVariables(body.variables);
       if (!parsed.ok) return c.json({ error: parsed.error }, 400);
       patch.variables = parsed.value;
+    }
+    if (body.skills !== undefined) {
+      const parsed = parseSkills(body.skills);
+      if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+      patch.skills = parsed.value;
     }
 
     const agent = await repo.update(c.req.param("id"), patch);

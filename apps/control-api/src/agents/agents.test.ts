@@ -61,6 +61,7 @@ describe("create an agent", () => {
     expect(a.model).toBeNull(); // no model until selected (Story 3.2)
     expect(a.instructions).toBe(""); // Story 3.3 defaults
     expect(a.variables).toEqual([]);
+    expect(a.skills).toEqual([]); // Story 3.4 default
     expect(a.id).toHaveLength(26); // ULID
     expect(a.createdAt).toBeTruthy();
   });
@@ -230,5 +231,61 @@ describe("agent instructions + variables (PATCH, Story 3.3)", () => {
   it("401 without a session", async () => {
     const { app } = await appWithSession();
     expect((await app.request("/agents/x", jsonPatch({ instructions: "hi" }))).status).toBe(401);
+  });
+});
+
+describe("agent skills + permissions (PATCH, Story 3.4)", () => {
+  const patchReq = (app: Awaited<ReturnType<typeof appWithSession>>["app"], cookie: string, id: string, body: unknown) =>
+    app.request(`/agents/${id}`, { ...jsonPatch(body), headers: { "content-type": "application/json", cookie } });
+
+  it("persists a valid skills array (durable)", async () => {
+    const { app, cookie } = await appWithSession();
+    const created = await createAgent(app, cookie);
+    const skills = [
+      { skill: "read-search", scope: "read", send: false },
+      { skill: "draft-reply", scope: "read-write", send: true },
+    ];
+    const set = ((await (await patchReq(app, cookie, created.id, { skills })).json()) as { agent: any }).agent;
+    expect(set.skills).toEqual(skills);
+    const got = ((await (await app.request(`/agents/${created.id}`, { headers: { cookie } })).json()) as { agent: any }).agent;
+    expect(got.skills).toEqual(skills);
+  });
+
+  it("defaults new agents to no skills", async () => {
+    const { app, cookie } = await appWithSession();
+    const created = await createAgent(app, cookie);
+    const got = ((await (await app.request(`/agents/${created.id}`, { headers: { cookie } })).json()) as { agent: any }).agent;
+    expect(got.skills).toEqual([]);
+  });
+
+  it("forces send off for a non-outbound skill, allows it on draft-reply", async () => {
+    const { app, cookie } = await appWithSession();
+    const created = await createAgent(app, cookie);
+    const set = ((await (await patchReq(app, cookie, created.id, {
+      skills: [
+        { skill: "read-search", scope: "read", send: true }, // send requested on a non-outbound skill
+        { skill: "draft-reply", scope: "none", send: true },
+      ],
+    })).json()) as { agent: any }).agent;
+    expect(set.skills.find((s: any) => s.skill === "read-search").send).toBe(false); // normalized off
+    expect(set.skills.find((s: any) => s.skill === "draft-reply").send).toBe(true); // outbound may send
+  });
+
+  it("rejects unknown skill / unknown scope / non-boolean send / duplicate / over-cap / non-array (400)", async () => {
+    const { app, cookie } = await appWithSession();
+    const created = await createAgent(app, cookie);
+    expect((await patchReq(app, cookie, created.id, { skills: [{ skill: "nope", scope: "read", send: false }] })).status).toBe(400);
+    expect((await patchReq(app, cookie, created.id, { skills: [{ skill: "read-search", scope: "admin", send: false }] })).status).toBe(400);
+    expect((await patchReq(app, cookie, created.id, { skills: [{ skill: "read-search", scope: "read", send: "yes" }] })).status).toBe(400);
+    expect((await patchReq(app, cookie, created.id, { skills: [{ skill: "read-search", scope: "read", send: false }, { skill: "read-search", scope: "none", send: false }] })).status).toBe(400);
+    const many = ["read-search", "draft-reply", "flag-label", "summarize", "read-search"].map((skill) => ({ skill, scope: "none", send: false }));
+    expect((await patchReq(app, cookie, created.id, { skills: many })).status).toBe(400);
+    expect((await patchReq(app, cookie, created.id, { skills: [null] })).status).toBe(400);
+    expect((await patchReq(app, cookie, created.id, { skills: "nope" })).status).toBe(400);
+  });
+
+  it("401 without a session", async () => {
+    const { app } = await appWithSession();
+    expect((await app.request("/agents/x", jsonPatch({ skills: [] }))).status).toBe(401);
   });
 });

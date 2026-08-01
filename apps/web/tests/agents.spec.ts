@@ -107,3 +107,36 @@ test("instructions editor: variable-token, undefined-variable caution, popover, 
   await expect(page.getByLabel("Instructions")).toHaveValue(/Summarize \{portfolio\} for me\.\{portfolio\}/);
   await expect(page.getByLabel("Variable name")).toHaveValue("portfolio");
 });
+
+test("skills: attach via picker, default-deny scope, off-by-default send, persist", async ({ page }) => {
+  await signIn(page);
+  await page.getByRole("button", { name: "Create agent" }).first().click();
+  await page.locator("a.agent").first().click();
+  await expect(page).toHaveURL(/\/agents\/[0-9A-Z]{26}$/);
+
+  // Attach read/search via the searchable picker → a rectangular chip. [3.4 AC1]
+  await page.getByRole("button", { name: "Add skill" }).click();
+  await page.getByRole("button", { name: "read/search" }).click();
+  const readChip = page.locator("li.chip", { hasText: "read/search" });
+  await expect(readChip).toBeVisible();
+  // Scope defaults to No access (deny) and there's no send control for a non-outbound skill. [3.4 AC2/AC3]
+  await expect(readChip.getByLabel("Permission scope")).toHaveValue("none");
+  await expect(readChip.getByText("Allow send")).toHaveCount(0);
+
+  // Attach draft reply → it carries an Allow-send control that is OFF by default. [3.4 AC3]
+  await page.getByRole("button", { name: "Add skill" }).click();
+  await page.getByRole("button", { name: "draft reply" }).click();
+  const draftChip = page.locator("li.chip", { hasText: "draft reply" });
+  await expect(draftChip.getByLabel("Allow send")).not.toBeChecked();
+
+  // Widen read/search to Read; remove draft reply. [3.4 AC2]
+  await readChip.getByLabel("Permission scope").selectOption("read");
+  await draftChip.getByRole("button", { name: "Remove draft reply" }).click();
+  await expect(page.locator("li.chip", { hasText: "draft reply" })).toHaveCount(0);
+
+  // Autosave persists the attached skill + widened scope across reload. [3.4 AC1]
+  await expect(page.getByText("Saved")).toBeVisible({ timeout: 10000 });
+  await page.reload();
+  await expect(page.locator("li.chip", { hasText: "read/search" }).getByLabel("Permission scope")).toHaveValue("read");
+  await expect(page.locator("li.chip", { hasText: "draft reply" })).toHaveCount(0);
+});

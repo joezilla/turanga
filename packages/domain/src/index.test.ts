@@ -13,7 +13,7 @@ describe("domain", () => {
       id: ulid(1_700_000_000_000),
       name: "inbox",
       instructions: "",
-      skills: ["read-search"],
+      skills: [{ skill: "read-search", scope: "read", send: false }],
       costCap: { perRun: { minor: 50, currency: "USD" }, perDay: { minor: 500, currency: "USD" } },
       state: "draft",
       createdAt: "2026-07-31T00:00:00.000Z",

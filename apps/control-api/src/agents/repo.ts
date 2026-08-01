@@ -1,9 +1,9 @@
 import { desc, eq } from "drizzle-orm";
-import type { AgentVariable, LifecycleState } from "@turanga/domain";
+import type { AgentVariable, AttachedSkill, LifecycleState } from "@turanga/domain";
 import type { Db } from "../db/client.js";
 import { agents } from "../db/schema.js";
 
-export type { AgentVariable };
+export type { AgentVariable, AttachedSkill };
 
 export interface AgentRow {
   id: string;
@@ -12,16 +12,18 @@ export interface AgentRow {
   model: string | null; // "provider/model-id" (Story 3.2); null until selected
   instructions: string; // Story 3.3
   variables: AgentVariable[]; // Story 3.3
+  skills: AttachedSkill[]; // Story 3.4
   createdAt: string; // UTC ISO-8601
 }
 
-// Writable agent-definition fields. name+model (3.2) + instructions+variables (3.3);
-// skills/caps land in Stories 3.4–3.5 and extend this shape (control-api is the sole writer, AD-7).
+// Writable agent-definition fields. name+model (3.2) + instructions+variables (3.3) +
+// skills (3.4); caps land in Story 3.5 and extend this shape (control-api is the sole writer, AD-7).
 export interface AgentPatch {
   name?: string;
   model?: string | null;
   instructions?: string;
   variables?: AgentVariable[];
+  skills?: AttachedSkill[];
 }
 
 export interface AgentsRepo {
@@ -39,6 +41,7 @@ function toRow(r: typeof agents.$inferSelect): AgentRow {
     model: r.model,
     instructions: r.instructions,
     variables: r.variables,
+    skills: r.skills as AttachedSkill[],
     createdAt: r.createdAt.toISOString(),
   };
 }
@@ -51,6 +54,7 @@ function applyPatch(row: AgentRow, patch: AgentPatch): AgentRow {
     ...(patch.model !== undefined ? { model: patch.model } : {}),
     ...(patch.instructions !== undefined ? { instructions: patch.instructions } : {}),
     ...(patch.variables !== undefined ? { variables: patch.variables } : {}),
+    ...(patch.skills !== undefined ? { skills: patch.skills } : {}),
   };
 }
 
@@ -74,6 +78,7 @@ export function drizzleAgentsRepo(db: Db): AgentsRepo {
         model: row.model,
         instructions: row.instructions,
         variables: row.variables,
+        skills: row.skills,
         createdAt: new Date(row.createdAt),
       });
     },
@@ -83,6 +88,7 @@ export function drizzleAgentsRepo(db: Db): AgentsRepo {
       if (patch.model !== undefined) set.model = patch.model;
       if (patch.instructions !== undefined) set.instructions = patch.instructions;
       if (patch.variables !== undefined) set.variables = patch.variables;
+      if (patch.skills !== undefined) set.skills = patch.skills;
       if (Object.keys(set).length === 0) return this.get(id); // nothing to change
       const rows = await db.update(agents).set(set).where(eq(agents.id, id)).returning();
       return rows[0] ? toRow(rows[0]) : null;

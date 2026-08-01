@@ -27,13 +27,25 @@ export interface AgentVariable {
   value: string;
 }
 
+/** Per-skill permission scope (Story 3.4). Default-deny (`none`); widened explicitly (FR-3).
+ *  Concrete per-skill semantics + enforcement land in Epic 4 (the Guard / harness). */
+export type SkillScope = "none" | "read" | "read-write";
+
+/** A built-in skill attached to an agent with its permission scope + send-gate (Story 3.4).
+ *  `send` is a distinct, off-by-default grant (FR-18), meaningful only for outbound skills. */
+export interface AttachedSkill {
+  skill: BuiltinSkill;
+  scope: SkillScope;
+  send: boolean;
+}
+
 export interface Agent {
   id: Ulid;
   name: string;
   model?: string; // "provider/model-id"
   instructions: string;
   variables?: AgentVariable[];
-  skills: BuiltinSkill[];
+  skills: AttachedSkill[];
   costCap?: CostCap;
   state: LifecycleState;
   createdAt: string; // UTC ISO-8601

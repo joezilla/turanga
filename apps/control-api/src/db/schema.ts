@@ -60,5 +60,6 @@ export const agents = pgTable("agents", {
   model: text("model"), // "provider/model-id" (Story 3.2); null until a model is selected
   instructions: text("instructions").notNull().default(""), // Story 3.3
   variables: jsonb("variables").$type<{ name: string; value: string }[]>().notNull().default([]), // Story 3.3
+  skills: jsonb("skills").$type<{ skill: string; scope: string; send: boolean }[]>().notNull().default([]), // Story 3.4
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

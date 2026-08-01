@@ -10,6 +10,14 @@ export interface AgentVariable {
   value: string;
 }
 
+export type SkillId = "read-search" | "draft-reply" | "flag-label" | "summarize";
+export type SkillScope = "none" | "read" | "read-write";
+export interface AttachedSkill {
+  skill: SkillId;
+  scope: SkillScope;
+  send: boolean;
+}
+
 export interface Agent {
   id: string;
   name: string;
@@ -17,6 +25,7 @@ export interface Agent {
   model: string | null; // "provider/model-id" (Story 3.2); null until selected
   instructions: string; // Story 3.3
   variables: AgentVariable[]; // Story 3.3
+  skills: AttachedSkill[]; // Story 3.4
   createdAt: string;
 }
 
@@ -25,6 +34,7 @@ export interface AgentPatch {
   model?: string | null;
   instructions?: string;
   variables?: AgentVariable[];
+  skills?: AttachedSkill[];
 }
 
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };

@@ -4,13 +4,14 @@
   // later stories; the test pane is a scaffold (runs are Epic 4).
   import { page } from "$app/state";
   import { ArrowLeft, Circle } from "@lucide/svelte";
-  import { getAgent, updateAgent, type Agent, type AgentPatch, type AgentVariable } from "$lib/agents";
+  import { getAgent, updateAgent, type Agent, type AgentPatch, type AgentVariable, type AttachedSkill } from "$lib/agents";
   import { listProviders, type Provider } from "$lib/connections";
   import { undefinedVariables } from "$lib/variables";
   import Section from "$lib/components/Section.svelte";
   import StatusDot from "$lib/components/StatusDot.svelte";
   import ModelSelector from "$lib/components/ModelSelector.svelte";
   import InstructionsEditor from "$lib/components/InstructionsEditor.svelte";
+  import SkillsEditor from "$lib/components/SkillsEditor.svelte";
 
   const VAR_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_]{0,63}$/;
 
@@ -33,6 +34,7 @@
   let instrTimer: ReturnType<typeof setTimeout> | null = null;
   let vars = $state<AgentVariable[]>([]);
   let varsTimer: ReturnType<typeof setTimeout> | null = null;
+  let skills = $state<AttachedSkill[]>([]);
 
   // Config UI state
   let showTest = $state(false); // < 1024px: the test pane collapses behind this toggle
@@ -69,6 +71,7 @@
     name = a.value.name;
     instructions = a.value.instructions;
     vars = a.value.variables.map((v) => ({ ...v }));
+    skills = a.value.skills.map((s) => ({ ...s }));
     providers = p.ok ? p.value : []; // a provider outage shouldn't block editing the agent
   }
   $effect(() => {
@@ -103,6 +106,11 @@
 
   function onModelChange(model: string | null) {
     persist({ model }); // discrete change → save immediately
+  }
+
+  function onSkillsChange(next: AttachedSkill[]) {
+    skills = next;
+    persist({ skills: next }); // discrete change → save immediately
   }
 
   function onInstructionsInput(v: string) {
@@ -190,6 +198,10 @@
             </span>
           </p>
         {/if}
+      </Section>
+
+      <Section label="Skills">
+        <SkillsEditor value={skills} onchange={onSkillsChange} />
       </Section>
 
       <div id="variables-section">
