@@ -1,8 +1,0 @@
-// vite.config.ts
-import { sveltekit } from "file:///Users/mreppot/src/turanga/node_modules/.pnpm/@sveltejs+kit@2.70.2_@sveltejs+vite-plugin-svelte@4.0.4_svelte@5.56.8_@typescript-eslin_f7ab793ecb99323457f3b42867425383/node_modules/@sveltejs/kit/src/exports/vite/index.js";
-import { defineConfig } from "file:///Users/mreppot/src/turanga/node_modules/.pnpm/vite@5.4.21_@types+node@22.20.1/node_modules/vite/dist/node/index.js";
-var vite_config_default = defineConfig({ plugins: [sveltekit()] });
-export {
-  vite_config_default as default
-};
-//# sourceMappingURL=data:application/json;base64,ewogICJ2ZXJzaW9uIjogMywKICAic291cmNlcyI6IFsidml0ZS5jb25maWcudHMiXSwKICAic291cmNlc0NvbnRlbnQiOiBbImNvbnN0IF9fdml0ZV9pbmplY3RlZF9vcmlnaW5hbF9kaXJuYW1lID0gXCIvVXNlcnMvbXJlcHBvdC9zcmMvdHVyYW5nYS9hcHBzL3dlYlwiO2NvbnN0IF9fdml0ZV9pbmplY3RlZF9vcmlnaW5hbF9maWxlbmFtZSA9IFwiL1VzZXJzL21yZXBwb3Qvc3JjL3R1cmFuZ2EvYXBwcy93ZWIvdml0ZS5jb25maWcudHNcIjtjb25zdCBfX3ZpdGVfaW5qZWN0ZWRfb3JpZ2luYWxfaW1wb3J0X21ldGFfdXJsID0gXCJmaWxlOi8vL1VzZXJzL21yZXBwb3Qvc3JjL3R1cmFuZ2EvYXBwcy93ZWIvdml0ZS5jb25maWcudHNcIjtpbXBvcnQgeyBzdmVsdGVraXQgfSBmcm9tIFwiQHN2ZWx0ZWpzL2tpdC92aXRlXCI7XG5pbXBvcnQgeyBkZWZpbmVDb25maWcgfSBmcm9tIFwidml0ZVwiO1xuXG5leHBvcnQgZGVmYXVsdCBkZWZpbmVDb25maWcoeyBwbHVnaW5zOiBbc3ZlbHRla2l0KCldIH0pO1xuIl0sCiAgIm1hcHBpbmdzIjogIjtBQUEyUixTQUFTLGlCQUFpQjtBQUNyVCxTQUFTLG9CQUFvQjtBQUU3QixJQUFPLHNCQUFRLGFBQWEsRUFBRSxTQUFTLENBQUMsVUFBVSxDQUFDLEVBQUUsQ0FBQzsiLAogICJuYW1lcyI6IFtdCn0K
