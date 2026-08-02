@@ -20,3 +20,11 @@ export function parseDollarsToMinor(input: string): { ok: true; minor: number } 
 export function formatMinor(minor: number): string {
   return (minor / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
+
+/** Format micro-USD (1e-6 USD) run/call cost as a dollar string (Story 4.5). Sub-cent precision:
+ *  ≥4 decimals (e.g. 4100 → "$0.0041"), scaling to more places for tiny amounts. */
+export function formatMicros(micros: number): string {
+  const usd = micros / 1_000_000;
+  const dp = usd !== 0 && Math.abs(usd) < 0.0001 ? 6 : 4;
+  return `$${usd.toLocaleString("en-US", { minimumFractionDigits: dp, maximumFractionDigits: dp })}`;
+}

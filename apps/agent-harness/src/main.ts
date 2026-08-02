@@ -159,11 +159,8 @@ export async function runHarness(): Promise<void> {
   // Phase 2 — the model call → the agent turn (the response / the draft artifact for draft-reply).
   const res = await guardModelCall(socketPath, { v: CONTRACT_VERSION, runId: spec.runId, model: spec.model, messages });
 
-  // latency + tokens originate at the Guard (E4-AD-10) — the harness relays them for display. The
-  // Guard measures latency even for a failed call, so metrics are emitted either way (tokens is 0
-  // when the call didn't complete). costMinor stays 0: cost is metered by the Guard's per-run key
-  // in Story 4.5 (0 = not-yet-metered placeholder).
-  emit({ type: "metrics", v: CONTRACT_VERSION, latencyMs: res.latencyMs ?? 0, tokens: res.tokens ?? 0, costMinor: 0 });
+  // The harness emits ONLY turn + done + relayed refusals (E4-AD-10). Cost/tokens `metrics` are the
+  // Guard's out-of-band truth (Story 4.5) — reported Guard→orchestrator, not through this sandbox.
   emit({ type: "turn", v: CONTRACT_VERSION, role: "agent", text: res.ok ? (res.text ?? "") : `[model error] ${res.error ?? "unknown error"}` });
 
   // Phase 3 — outbound/write ops (label, send). A blocked send is a refusal, NOT a run failure — the

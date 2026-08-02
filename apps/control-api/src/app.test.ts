@@ -14,4 +14,15 @@ describe("control-api", () => {
     const body = (await res.json()) as { version: string };
     expect(typeof body.version).toBe("string");
   });
+
+  it("the Guard callback route rejects a bad token (constant-time) and is NOT web-session-guarded", async () => {
+    const app2 = createApp({ guardCallbackToken: "secret-cb" });
+    const event = JSON.stringify({ type: "metrics", v: 4, latencyMs: 1, tokens: 1, costMicros: 1 });
+    // No token → 403 (not 401/redirect — it's control-plane, token-authenticated, not session).
+    const bad = await app2.request("/internal/guard/runs/R1/events", { method: "POST", headers: { "content-type": "application/json" }, body: event });
+    expect(bad.status).toBe(403);
+    // Correct token → 200 (an event for an unknown run is a harmless no-op).
+    const ok = await app2.request("/internal/guard/runs/R1/events", { method: "POST", headers: { "content-type": "application/json", "x-guard-callback": "secret-cb" }, body: event });
+    expect(ok.status).toBe(200);
+  });
 });

@@ -18,7 +18,7 @@ const errFetch = (async () =>
 describe("guard model proxy", () => {
   it("maps a model request to a LiteLLM call and returns the completion", async () => {
     const guard = createGuard({ socketDir: "/tmp", litellmBaseUrl: "http://litellm:4000", litellmMasterKey: "sk", fetchImpl: okFetch });
-    const res = await guard.proxyModel({ v: 3, runId: "r", model: "openai/gpt-4o", messages: [{ role: "user", content: "hi" }] });
+    const res = await guard.proxyModel("01ARZ3NDEKTSV4RRFFQ69G5FAV", { v: 4, runId: "r", model: "openai/gpt-4o", messages: [{ role: "user", content: "hi" }] });
     expect(res.ok).toBe(true);
     expect(res.text).toBe("hello from the model");
     expect(res.tokens).toBe(12);
@@ -26,7 +26,7 @@ describe("guard model proxy", () => {
 
   it("surfaces a provider error (no fallback)", async () => {
     const guard = createGuard({ socketDir: "/tmp", litellmBaseUrl: "http://litellm:4000", litellmMasterKey: "sk", fetchImpl: errFetch });
-    const res = await guard.proxyModel({ v: 3, runId: "r", model: "openai/gpt-4o", messages: [{ role: "user", content: "hi" }] });
+    const res = await guard.proxyModel("01ARZ3NDEKTSV4RRFFQ69G5FAV", { v: 4, runId: "r", model: "openai/gpt-4o", messages: [{ role: "user", content: "hi" }] });
     expect(res.ok).toBe(false);
     expect(res.error).toMatch(/401/);
   });
@@ -49,7 +49,7 @@ describe("guard per-run socket lifecycle", () => {
     expect(guard.activeRuns()).toEqual([RUN]);
 
     // A harness-style HTTP-over-UDS call resolves through the socket.
-    const body = JSON.stringify({ v: 3, runId: RUN, model: "m", messages: [{ role: "user", content: "hi" }] });
+    const body = JSON.stringify({ v: 4, runId: RUN, model: "m", messages: [{ role: "user", content: "hi" }] });
     const out = await new Promise<GuardModelResponse>((resolve) => {
       const req = http.request({ socketPath, path: "/", method: "POST", headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body) } }, (res) => {
         let raw = "";
@@ -70,7 +70,7 @@ describe("guard per-run socket lifecycle", () => {
 
 const gmailConn: ProvisionConnection = { connectionId: "gmail", provider: "gmail", destinations: ["gmail.googleapis.com", "oauth2.googleapis.com"], accessToken: "tok-secret-123" };
 const FULL_GRANT: SkillGrant[] = [{ scope: "read-write", send: true }]; // authorizes any op — used to reach the egress stage
-const readReq = { v: 3 as const, runId: RUN, connectionId: "gmail", op: "read" as const, params: { maxResults: 5 } };
+const readReq = { v: 4 as const, runId: RUN, connectionId: "gmail", op: "read" as const, params: { maxResults: 5 } };
 
 // A fetch spy that captures the outbound request and returns a Gmail-style message list.
 function captureGmailFetch() {
@@ -157,7 +157,7 @@ describe("guard skill-permission enforcement (4.4, permission-first)", () => {
     await guard.register(RUN, { connections, grants });
     return { guard, cleanup: async () => { await guard.teardown(RUN); fs.rmSync(dir, { recursive: true, force: true }); } };
   }
-  const op = (o: "read" | "label" | "send") => ({ v: 3 as const, runId: RUN, connectionId: "gmail", op: o });
+  const op = (o: "read" | "label" | "send") => ({ v: 4 as const, runId: RUN, connectionId: "gmail", op: o });
 
   it("refuses an out-of-scope op with kind=permission BEFORE any credential is consulted (AC2)", async () => {
     const { impl, calls } = captureGmailFetch();
@@ -198,6 +198,69 @@ describe("guard skill-permission enforcement (4.4, permission-first)", () => {
     expect(res.ok).toBe(false);
     expect(res.refusal?.kind).toBe("permission");
     expect(calls).toHaveLength(0);
+    await cleanup();
+  });
+});
+
+describe("guard cost metering + kill-on-breach (4.5)", () => {
+  const modelReq = { v: 4 as const, runId: RUN, model: "openai/gpt-4o", messages: [{ role: "user" as const, content: "hi" }] };
+
+  function costFetch(status: number, message?: string, cost = "0.0041") {
+    const calls: { auth: string | undefined }[] = [];
+    const impl = (async (_url: string | URL | Request, init?: RequestInit) => {
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      calls.push({ auth: headers.authorization });
+      const body = status === 200 ? { choices: [{ message: { content: "hi" } }], usage: { total_tokens: 10 } } : { error: { message } };
+      return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", "x-litellm-response-cost": cost } });
+    }) as unknown as typeof fetch;
+    return { impl, calls };
+  }
+
+  async function withCostKey(fetchImpl: typeof fetch, costKey = "sk-run-costkey") {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "guard-"));
+    const events: { runId: string; event: { type: string; costMicros?: number; scope?: string } }[] = [];
+    const guard = createGuard({ socketDir: dir, litellmBaseUrl: "http://x", litellmMasterKey: "sk-master", fetchImpl, emitRunEvent: (runId, event) => { events.push({ runId, event }); } });
+    await guard.register(RUN, { connections: [], grants: [], costKey });
+    return { guard, events, cleanup: async () => { await guard.teardown(RUN); fs.rmSync(dir, { recursive: true, force: true }); } };
+  }
+
+  it("attaches the per-run cost key (not the master) and reports cost metrics out-of-band", async () => {
+    const { impl, calls } = costFetch(200);
+    const { guard, events, cleanup } = await withCostKey(impl);
+    const res = await guard.proxyModel(RUN, modelReq);
+    expect(res.ok).toBe(true);
+    expect(calls[0].auth).toBe("Bearer sk-run-costkey"); // the per-run key, not sk-master
+    const metrics = events.find((e) => e.event.type === "metrics");
+    expect(metrics?.event.costMicros).toBe(4100); // $0.0041 → 4100 micro-USD
+    expect(events.some((e) => e.event.type === "kill")).toBe(false);
+    await cleanup();
+  });
+
+  it("detects a 400 budget block as a breach and emits a kill event (per-run scope)", async () => {
+    const { impl } = costFetch(400, "Budget has been exceeded! Current cost: 0.6, Max budget: 0.5");
+    const { guard, events, cleanup } = await withCostKey(impl);
+    const res = await guard.proxyModel(RUN, modelReq);
+    expect(res.ok).toBe(false);
+    const kill = events.find((e) => e.event.type === "kill");
+    expect(kill?.event.scope).toBe("run");
+    await cleanup();
+  });
+
+  it("classifies a team budget message as the daily (day) breach", async () => {
+    const { impl } = costFetch(400, "ExceededBudget: Crossed spend within team");
+    const { guard, events, cleanup } = await withCostKey(impl);
+    await guard.proxyModel(RUN, modelReq);
+    expect(events.find((e) => e.event.type === "kill")?.event.scope).toBe("day");
+    await cleanup();
+  });
+
+  it("a non-budget error (e.g. 401) is NOT a breach — no kill event", async () => {
+    const { impl } = costFetch(401, "no key configured");
+    const { guard, events, cleanup } = await withCostKey(impl);
+    const res = await guard.proxyModel(RUN, modelReq);
+    expect(res.ok).toBe(false);
+    expect(events.some((e) => e.event.type === "kill")).toBe(false);
+    expect(events.some((e) => e.event.type === "metrics")).toBe(true); // metrics still reported
     await cleanup();
   });
 });

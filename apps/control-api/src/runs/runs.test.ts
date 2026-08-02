@@ -7,9 +7,10 @@ import { fakeRunGuard } from "./guardClient.js";
 import { createRunHub } from "./hub.js";
 import { encryptSecret } from "../secrets/crypto.js";
 import { fakeGoogleOAuth } from "../oauth/google.js";
-import type { AttachedSkill } from "@turanga/domain";
+import { fakeModelGateway } from "../litellm/gateway.js";
+import type { AttachedSkill, CostCap } from "@turanga/domain";
 
-type Agent = { id: string; model: string | null; instructions: string; state: "draft" | "active"; skills?: AttachedSkill[] };
+type Agent = { id: string; model: string | null; instructions: string; state: "draft" | "active"; skills?: AttachedSkill[]; costCap?: CostCap };
 const agent = (over: Partial<Agent> = {}): Agent => ({ id: "a1", model: "openai/gpt-4o", instructions: "be nice", state: "draft", ...over });
 const agentsRepo = (a: Agent | null) => ({ get: async (id: string) => (a && a.id === id ? a : null) });
 
@@ -21,7 +22,7 @@ function orch(opts: { agent?: Agent; runtime?: ReturnType<typeof fakeSandboxRunt
   const hub = createRunHub();
   const runtime =
     opts.runtime ??
-    fakeSandboxRuntime({ lines: [nd({ type: "turn", v: 3, role: "agent", text: "hi" }), nd({ type: "done", v: 3, status: "succeeded" })] });
+    fakeSandboxRuntime({ lines: [nd({ type: "turn", v: 4, role: "agent", text: "hi" }), nd({ type: "done", v: 4, status: "succeeded" })] });
   const o = runOrchestrator({ runsRepo, agentsRepo: agentsRepo(opts.agent ?? agent()), runtime, guard, hub, image: "img", sandboxVolume: "vol", maxConcurrent: opts.maxConcurrent, runTimeoutMs: opts.runTimeoutMs });
   return { o, runsRepo, guard, runtime, hub };
 }
@@ -74,7 +75,7 @@ describe("run orchestrator", () => {
   });
 
   it("ignores malformed control lines and stops at the first done", async () => {
-    const { o } = orch({ runtime: fakeSandboxRuntime({ lines: ["not json", "{}", nd({ type: "done", v: 3, status: "succeeded" }), nd({ type: "done", v: 3, status: "failed" })] }) });
+    const { o } = orch({ runtime: fakeSandboxRuntime({ lines: ["not json", "{}", nd({ type: "done", v: 4, status: "succeeded" }), nd({ type: "done", v: 4, status: "failed" })] }) });
     const r = await o.launch("a1", "x");
     expect(r.ok).toBe(true);
     if (!r.ok) return;
@@ -141,7 +142,7 @@ describe("run orchestrator", () => {
       if (failNext) { failNext = false; throw new Error("db blip"); }
       return base.create(row);
     } };
-    const runtime = fakeSandboxRuntime({ lines: [nd({ type: "done", v: 3, status: "succeeded" })] });
+    const runtime = fakeSandboxRuntime({ lines: [nd({ type: "done", v: 4, status: "succeeded" })] });
     const o = runOrchestrator({ runsRepo: flaky, agentsRepo: agentsRepo(agent()), runtime, guard: fakeRunGuard(), hub: createRunHub(), image: "img", sandboxVolume: "vol", maxConcurrent: 1 });
     await expect(o.launch("a1", "x")).rejects.toThrow("db blip"); // create() threw before execute()
     const r = await o.launch("a1", "x"); // slot was released → not stuck at the cap
@@ -172,7 +173,7 @@ describe("run orchestrator — connections + credentialed provisioning (4.3)", (
   function connOrch(opts: { skills?: AttachedSkill[]; connections?: Conn[] }) {
     const runsRepo = memoryRunsRepo();
     const guard = fakeRunGuard();
-    const runtime = fakeSandboxRuntime({ lines: [nd({ type: "done", v: 3, status: "succeeded" })] });
+    const runtime = fakeSandboxRuntime({ lines: [nd({ type: "done", v: 4, status: "succeeded" })] });
     const googleOAuth = fakeGoogleOAuth();
     const dataConnectionsRepo = { list: async () => opts.connections ?? [] };
     const o = runOrchestrator({
@@ -243,11 +244,66 @@ describe("run orchestrator — connections + credentialed provisioning (4.3)", (
   });
 });
 
+describe("run orchestrator — cost keys + kill-on-breach (4.5)", () => {
+  const cap: CostCap = { perRun: { minor: 50, currency: "USD" }, perDay: null }; // $0.50 per-run
+
+  function costOrch(opts: { hang?: boolean } = {}) {
+    const runsRepo = memoryRunsRepo();
+    const guard = fakeRunGuard();
+    const modelGateway = fakeModelGateway();
+    const runtime = opts.hang
+      ? fakeSandboxRuntime({ hang: true })
+      : fakeSandboxRuntime({ lines: [nd({ type: "done", v: 4, status: "succeeded" })] });
+    const o = runOrchestrator({ runsRepo, agentsRepo: agentsRepo(agent({ costCap: cap })), runtime, guard, hub: createRunHub(), modelGateway, image: "img", sandboxVolume: "vol" });
+    return { o, runsRepo, guard, runtime, modelGateway };
+  }
+
+  it("mints the per-run cost key into the provision (never the jobSpec) and deletes it on teardown (AD-10)", async () => {
+    const { o, guard, runtime, modelGateway } = costOrch();
+    const r = await o.launch("a1", "x");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    // The key is minted under the agent's team with the per-run cap and passed to the Guard…
+    expect(modelGateway.mintedKeys).toHaveLength(1);
+    expect(modelGateway.mintedKeys[0].perRunCap).toEqual(cap.perRun);
+    const key = guard.registered[0].provision.costKey;
+    expect(key).toBeTruthy();
+    // …but NEVER into the sandbox jobSpec…
+    expect(runtime.established[0].jobSpecJson).not.toContain(key!);
+    // …and it's deleted on teardown (no leaked LiteLLM keys).
+    expect(modelGateway.deletedKeys).toContain(key);
+  });
+
+  it("a Guard kill event reaps a live run → killed with a cap reason; a metrics event sets the cost summary (no drift)", async () => {
+    const { o, runsRepo } = costOrch({ hang: true });
+    const r = await o.start("a1", "x");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    await vi.waitFor(async () => expect((await runsRepo.get(r.run.id))?.status).toBe("running")); // controller registered
+    await o.handleGuardEvent(r.run.id, { type: "metrics", v: 4, latencyMs: 12, tokens: 100, costMicros: 4100 });
+    await o.handleGuardEvent(r.run.id, { type: "kill", v: 4, scope: "run" });
+    await vi.waitFor(async () => expect((await runsRepo.get(r.run.id))?.status).toBe("killed"));
+    const run = await runsRepo.get(r.run.id);
+    expect(run?.reason).toMatch(/per-run cost cap reached \(\$0\.50\)/);
+    expect(run?.costMicros).toBe(4100); // persisted summary = the summed metrics event (AC3)
+    expect(run?.transcript.some((m) => m.type === "metrics" && m.costMicros === 4100)).toBe(true);
+  });
+
+  it("sumTodayMicros aggregates the agent's run costs since UTC midnight", async () => {
+    const repo = memoryRunsRepo();
+    const now = new Date().toISOString();
+    await repo.create({ id: "r1", agentId: "a1", status: "succeeded", taskInput: "", transcript: [], reason: null, costMicros: 4100, createdAt: now, endedAt: now });
+    await repo.create({ id: "r2", agentId: "a1", status: "succeeded", taskInput: "", transcript: [], reason: null, costMicros: 900, createdAt: now, endedAt: now });
+    await repo.create({ id: "r3", agentId: "other", status: "succeeded", taskInput: "", transcript: [], reason: null, costMicros: 5000, createdAt: now, endedAt: now });
+    expect(await repo.sumTodayMicros("a1")).toBe(5000);
+  });
+});
+
 describe("RunsRepo (memory)", () => {
   it("create/get/setStatus/appendMessage/list", async () => {
     const repo = memoryRunsRepo();
     await repo.create({ id: "r1", agentId: "a1", status: "created", taskInput: "x", transcript: [], reason: null, createdAt: new Date().toISOString(), endedAt: null });
-    await repo.appendMessage("r1", { type: "turn", v: 3, role: "user", text: "hi" });
+    await repo.appendMessage("r1", { type: "turn", v: 4, role: "user", text: "hi" });
     await repo.setStatus("r1", "succeeded", { endedAt: new Date().toISOString() });
     const got = await repo.get("r1");
     expect(got?.status).toBe("succeeded");

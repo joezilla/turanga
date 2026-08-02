@@ -7,7 +7,8 @@
   import { ArrowLeft, Circle } from "@lucide/svelte";
   import { getAgent, updateAgent, type Agent, type AgentPatch, type AgentVariable, type AttachedSkill, type CostCap } from "$lib/agents";
   import { listProviders, type Provider } from "$lib/connections";
-  import { startRun, runEventsUrl, type RunMessage } from "$lib/runs";
+  import { startRun, runEventsUrl, getAgentCost, getRun, type RunMessage } from "$lib/runs";
+  import { formatMinor, formatMicros } from "$lib/money";
   import { undefinedVariables } from "$lib/variables";
   import Section from "$lib/components/Section.svelte";
   import StatusDot from "$lib/components/StatusDot.svelte";
@@ -59,7 +60,11 @@
   // (Clear, or switching agents) is discarded instead of streaming into the wrong context.
   let runGen = 0;
 
-  const lastMetrics = $derived(transcript.filter((m): m is Extract<RunMessage, { type: "metrics" }> => m.type === "metrics").at(-1));
+  const metricsMsgs = $derived(transcript.filter((m): m is Extract<RunMessage, { type: "metrics" }> => m.type === "metrics"));
+  const lastMetrics = $derived(metricsMsgs.at(-1));
+  const runCostMicros = $derived(metricsMsgs.reduce((s, m) => s + m.costMicros, 0)); // = the persisted summary (no drift, AC3)
+  let todayMicros = $state<number | null>(null); // the agent's cumulative spend today (daily meter)
+  let runReason = $state(""); // the killed/failed reason (e.g. "Killed — per-run cost cap reached ($0.50).")
   const fmtNum = (n: number) => n.toLocaleString("en-US");
 
   function closeStream() {
@@ -108,6 +113,9 @@
           runState = "failed";
         }
         closeStream(); // we own the close so the browser doesn't auto-reconnect
+        // Pull the daily spend (for the meter) + the persisted run reason (the killed/failed cause).
+        void getAgentCost(id).then((c) => { if (myGen === runGen && c) todayMicros = c.todayMicros; });
+        void getRun(started.value.id).then((run) => { if (myGen === runGen && run) runReason = run.reason ?? ""; });
       });
       source.onerror = () => {
         if (myGen !== runGen) return;
@@ -127,6 +135,7 @@
     closeStream();
     transcript = [];
     runError = "";
+    runReason = "";
     runState = "empty";
   }
 
@@ -391,9 +400,19 @@
             <div class="resolution">
               <RunStatusDot status={runState} />
               {#if lastMetrics}
-                <span class="metrics mono-num">{fmtNum(lastMetrics.latencyMs)} ms · {fmtNum(lastMetrics.tokens)} tokens</span>
+                <span class="metrics mono-num">{fmtNum(lastMetrics.latencyMs)} ms · {fmtNum(lastMetrics.tokens)} tokens · {formatMicros(lastMetrics.costMicros)}</span>
               {/if}
             </div>
+            {#if runReason && (runState === "killed" || runState === "failed")}
+              <p class="run-reason">{runReason}</p>
+            {/if}
+            {#if agent.costCap.perRun || agent.costCap.perDay}
+              <p class="cost-meter mono-num">
+                {#if agent.costCap.perRun}run {formatMicros(runCostMicros)} / ${formatMinor(agent.costCap.perRun.minor)}{/if}
+                {#if agent.costCap.perRun && agent.costCap.perDay} · {/if}
+                {#if agent.costCap.perDay}today {formatMicros(todayMicros ?? 0)} / ${formatMinor(agent.costCap.perDay.minor)}{/if}
+              </p>
+            {/if}
           {/if}
         {/if}
 
@@ -529,6 +548,16 @@
     display: flex;
     align-items: center;
     gap: var(--space-3);
+  }
+  .run-reason {
+    margin: var(--space-1) 0 0;
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+  }
+  .cost-meter {
+    margin: var(--space-1) 0 0;
+    font-size: var(--text-sm); /* ≥ 12px, mono/tabular */
+    color: var(--text-tertiary); /* neutral until near a cap */
   }
   .metrics {
     font-size: var(--text-sm); /* ≥ 12px */

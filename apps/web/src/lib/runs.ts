@@ -8,10 +8,10 @@ export type RunStatus = "created" | "running" | "succeeded" | "failed" | "killed
 
 // One control-channel message — the discriminated union the harness/Guard emit (E4-AD-9/10).
 export type RunMessage =
-  | { type: "turn"; v: 3; role: "user" | "agent"; text: string }
-  | { type: "metrics"; v: 3; latencyMs: number; tokens: number; costMinor: number }
-  | { type: "refusal"; v: 3; kind: "egress" | "permission"; detail: string }
-  | { type: "done"; v: 3; status: "succeeded" | "failed" | "killed" };
+  | { type: "turn"; v: 4; role: "user" | "agent"; text: string }
+  | { type: "metrics"; v: 4; latencyMs: number; tokens: number; costMicros: number }
+  | { type: "refusal"; v: 4; kind: "egress" | "permission"; detail: string }
+  | { type: "done"; v: 4; status: "succeeded" | "failed" | "killed" };
 
 export interface Run {
   id: string;
@@ -51,4 +51,27 @@ export async function startRun(agentId: string, taskInput: string): Promise<Resu
 /** The SSE endpoint for a run's live control-channel messages (open with EventSource). */
 export function runEventsUrl(id: string): string {
   return `${base}/runs/${encodeURIComponent(id)}/events`;
+}
+
+/** The agent's cumulative spend today in micro-USD (the daily meter; Story 4.5). Best-effort — a
+ *  read failure just leaves the daily line blank. */
+export async function getAgentCost(agentId: string): Promise<{ todayMicros: number } | null> {
+  try {
+    const r = await fetch(`${base}/agents/${encodeURIComponent(agentId)}/cost`, { credentials: "include" });
+    if (!r.ok) return null;
+    return (await r.json()) as { todayMicros: number };
+  } catch {
+    return null;
+  }
+}
+
+/** Fetch a run (for its persisted reason + cost summary after it resolves). Best-effort. */
+export async function getRun(id: string): Promise<Run | null> {
+  try {
+    const r = await fetch(`${base}/runs/${encodeURIComponent(id)}`, { credentials: "include" });
+    if (!r.ok) return null;
+    return ((await r.json()) as { run: Run }).run;
+  } catch {
+    return null;
+  }
 }

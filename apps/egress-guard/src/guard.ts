@@ -24,6 +24,7 @@ import {
   type GuardModelResponse,
   type GuardConnectionRequest,
   type GuardConnectionResponse,
+  type GuardRunEvent,
 } from "@turanga/contracts";
 
 /** A credential the Guard holds for the life of a run (AD-10) — never crosses the UDS to the
@@ -42,6 +43,7 @@ export interface SkillGrant {
 export interface RunProvision {
   connections: ProvisionConnection[];
   grants: SkillGrant[];
+  costKey?: string; // the per-run LiteLLM cost key (Story 4.5) — held by the Guard, never the sandbox
 }
 
 /** The Filter Hook (E4-AD-6): a synchronous inspection point invoked before a credentialed
@@ -120,6 +122,12 @@ export interface GuardConfig {
   modelTimeoutMs?: number;
   connectionTimeoutMs?: number;
   filterHook?: FilterHook; // defaults to the no-op (4.6 swaps in the real one)
+  // Story 4.5 — the out-of-band Guard→orchestrator control-plane channel (E4-AD-10). Cost `metrics`
+  // and a budget-breach `kill` are reported here, NOT through the sandbox. Default posts an HTTP
+  // callback to control-api; injectable for tests.
+  controlCallbackUrl?: string;
+  callbackToken?: string;
+  emitRunEvent?: (runId: string, event: GuardRunEvent) => void | Promise<void>;
 }
 
 interface RunState {
@@ -127,11 +135,20 @@ interface RunState {
   allowlist: Set<string>; // union of the run's Connections' declared destinations (default-deny)
   credentials: Map<string, ProvisionConnection>; // by connectionId — the held tokens (AD-10)
   grants: SkillGrant[]; // the agent's attached-skill grants — the authority to run an op (4.4)
+  costKey?: string; // the per-run LiteLLM cost key (Story 4.5) — held here, never in the sandbox (AD-10)
 }
 
 const ULID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/i; // reject anything that could escape the socket dir
 const MAX_REQ_BODY = 256 * 1024; // a request is small; cap to prevent memory-exhaustion DoS
 const SOCKET_NAME = "run.sock";
+const MICROS_PER_USD = 1_000_000;
+
+// A LiteLLM budget block on /chat/completions is HTTP 400 with a "budget exceeded" message (NOT 429
+// — 429 is rate-limits). Match the message; classify a team message as the daily cap.
+function budgetBreach(status: number, message: string): { scope: "run" | "day" } | null {
+  if (status !== 400 || !/budget|exceeded/i.test(message)) return null;
+  return { scope: /team|crossed spend/i.test(message) ? "day" : "run" };
+}
 
 function safeJson(raw: string): unknown {
   try {
@@ -148,32 +165,60 @@ export function createGuard(cfg: GuardConfig) {
   const filterHook = cfg.filterHook ?? NOOP_HOOK;
   const runs = new Map<string, RunState>();
 
+  // Out-of-band Guard→orchestrator channel (E4-AD-10). Default: an HTTP callback to control-api,
+  // authenticated by the shared callback token. Best-effort (a lost event must never hang a run).
+  const emitRunEvent =
+    cfg.emitRunEvent ??
+    ((runId: string, event: GuardRunEvent) => {
+      if (!cfg.controlCallbackUrl) return;
+      void doFetch(`${cfg.controlCallbackUrl}/internal/guard/runs/${encodeURIComponent(runId)}/events`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-guard-callback": cfg.callbackToken ?? "" },
+        body: JSON.stringify(event),
+        signal: AbortSignal.timeout(5_000),
+      }).catch(() => {});
+    });
+
   function runDir(runId: string): string {
     if (!ULID_RE.test(runId)) throw new Error("Invalid runId.");
     return path.join(cfg.socketDir, runId);
   }
 
-  // Proxy a model call to LiteLLM. Story 4.5 swaps the master key for the per-run cost key + adds
-  // kill-on-429; 4.6 runs the Filter Hook on the body first.
-  async function proxyModel(req: GuardModelRequest): Promise<GuardModelResponse> {
+  // Proxy a model call to LiteLLM using the run's PER-RUN COST KEY (Story 4.5, AD-6) — LiteLLM 400s
+  // the call when the per-run or per-agent(daily) budget is exceeded, capping spend regardless of the
+  // harness. Cost/tokens + any breach are reported to the orchestrator OUT OF BAND (E4-AD-10), never
+  // through the sandbox. `runId` is the trusted socket runId, not the body's.
+  async function proxyModel(runId: string, req: GuardModelRequest): Promise<GuardModelResponse> {
     const started = Date.now();
+    const costKey = runs.get(runId)?.costKey ?? cfg.litellmMasterKey; // fall back to master pre-4.5 / unregistered
     try {
       const r = await doFetch(`${cfg.litellmBaseUrl}/v1/chat/completions`, {
         method: "POST",
-        headers: { "content-type": "application/json", authorization: `Bearer ${cfg.litellmMasterKey}` },
+        headers: { "content-type": "application/json", authorization: `Bearer ${costKey}` },
         body: JSON.stringify({ model: req.model, messages: req.messages }),
         signal: AbortSignal.timeout(modelTimeoutMs), // never let a stalled gateway hang the run
       });
       const latencyMs = Date.now() - started;
+      const costMicros = Math.round((Number(r.headers.get("x-litellm-response-cost")) || 0) * MICROS_PER_USD);
       const body = (await r.json().catch(() => ({}))) as {
         choices?: { message?: { content?: string } }[];
         usage?: { total_tokens?: number };
         error?: { message?: string };
       };
-      if (!r.ok) return { v: CONTRACT_VERSION, ok: false, error: body?.error?.message ?? `The model gateway rejected the call (HTTP ${r.status}).`, latencyMs };
-      return { v: CONTRACT_VERSION, ok: true, text: body?.choices?.[0]?.message?.content ?? "", tokens: body?.usage?.total_tokens, latencyMs };
+      const tokens = body?.usage?.total_tokens ?? 0;
+      // Report cost/tokens for this call to the orchestrator (E4-AD-10) — this is the cost truth now,
+      // replacing the harness's metrics emit.
+      void emitRunEvent(runId, { type: "metrics", v: CONTRACT_VERSION, latencyMs, tokens, costMicros });
+      if (!r.ok) {
+        const message = body?.error?.message ?? `The model gateway rejected the call (HTTP ${r.status}).`;
+        const breach = budgetBreach(r.status, message);
+        if (breach) void emitRunEvent(runId, { type: "kill", v: CONTRACT_VERSION, scope: breach.scope }); // → orchestrator reaps
+        return { v: CONTRACT_VERSION, ok: false, error: message, latencyMs };
+      }
+      return { v: CONTRACT_VERSION, ok: true, text: body?.choices?.[0]?.message?.content ?? "", tokens, latencyMs };
     } catch (e) {
       const timedOut = e instanceof Error && e.name === "TimeoutError";
+      void emitRunEvent(runId, { type: "metrics", v: CONTRACT_VERSION, latencyMs: Date.now() - started, tokens: 0, costMicros: 0 });
       return { v: CONTRACT_VERSION, ok: false, error: timedOut ? "The model gateway timed out." : "Can't reach the model gateway.", latencyMs: Date.now() - started };
     }
   }
@@ -235,7 +280,7 @@ export function createGuard(cfg: GuardConfig) {
     const conn = GuardConnectionRequestSchema.safeParse(json);
     if (conn.success) return { status: 200, body: await forwardConnection(runId, conn.data) };
     const model = GuardModelRequestSchema.safeParse(json);
-    if (model.success) return { status: 200, body: await proxyModel(model.data) };
+    if (model.success) return { status: 200, body: await proxyModel(runId, model.data) };
     return { status: 400, body: { v: CONTRACT_VERSION, ok: false, error: "Malformed guard request." } };
   }
 
@@ -287,7 +332,7 @@ export function createGuard(cfg: GuardConfig) {
         server.once("error", reject);
         server.listen(socketPath, resolve);
       });
-      runs.set(runId, { server, allowlist, credentials, grants });
+      runs.set(runId, { server, allowlist, credentials, grants, costKey: provision.costKey });
       return { socketPath };
     },
     async teardown(runId: string): Promise<void> {

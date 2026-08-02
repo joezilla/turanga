@@ -329,3 +329,31 @@ test("test pane: draft-reply without a send grant → send refused, the run stil
   await expect(transcript.locator(".turn-role", { hasText: "agent" })).toBeVisible();
   await expect(transcript.locator(".run-status")).toContainText(/failed|succeeded/, { timeout: 20000 });
 });
+
+test("test pane: cost meters — the metrics line carries a cost + the run/today meter renders (from the Guard callback)", async ({ page }) => {
+  await signIn(page);
+
+  // An agent with a model + both caps set → the per-run cost key is minted, the Guard reports cost
+  // out-of-band, and the meter renders. (No provider key in dev → $0.0000, but the cost path is exercised.) [4.5 AC1/AC3]
+  await page.getByRole("button", { name: "Create agent" }).first().click();
+  await page.locator("a.agent").first().click();
+  await expect(page).toHaveURL(/\/agents\/[0-9A-Z]{26}$/);
+  const agentId = page.url().split("/").pop();
+  const patch = await page.request.patch(`${CONTROL_API}/agents/${agentId}`, {
+    data: { model: "openai/gpt-4o", costCap: { perRun: { minor: 50, currency: "USD" }, perDay: { minor: 500, currency: "USD" } } },
+    headers: { "content-type": "application/json" },
+  });
+  expect(patch.ok()).toBeTruthy();
+  await page.reload();
+
+  await page.getByLabel("Task for this test run").fill("hello");
+  await page.getByRole("button", { name: "Run test" }).click();
+
+  const transcript = page.locator(".transcript");
+  await expect(transcript.locator(".run-status")).toContainText(/failed|succeeded/, { timeout: 20000 });
+  // The metrics line carries a cost (Guard-reported, E4-AD-10) joined with the middot. [4.5 AC1]
+  await expect(transcript.locator(".metrics")).toContainText(/ms · .* tokens · \$/, { timeout: 20000 });
+  // The live meter shows run + today spend vs the caps. [4.5 AC1]
+  await expect(transcript.locator(".cost-meter")).toContainText(/run \$.* \/ \$0\.50/);
+  await expect(transcript.locator(".cost-meter")).toContainText(/today \$.* \/ \$5\.00/);
+});

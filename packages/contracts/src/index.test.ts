@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { JobSpecSchema, ControlChannelMessageSchema, GuardConnectionRequestSchema, GuardConnectionResponseSchema, authorizes, SKILL_OPS, OP_REQUIREMENTS, CONTRACT_VERSION } from "./index.js";
+import { JobSpecSchema, ControlChannelMessageSchema, GuardConnectionRequestSchema, GuardConnectionResponseSchema, GuardRunEventSchema, authorizes, SKILL_OPS, OP_REQUIREMENTS, CONTRACT_VERSION } from "./index.js";
 
 describe("contracts", () => {
   it("job spec round-trips (with logical connection handles)", () => {
@@ -62,5 +62,14 @@ describe("contracts", () => {
     expect(SKILL_OPS["read-search"]).toEqual(["read"]);
     expect(SKILL_OPS["draft-reply"]).toEqual(["send"]);
     for (const ops of Object.values(SKILL_OPS)) for (const op of ops) expect(OP_REQUIREMENTS[op]).toBeTruthy();
+  });
+
+  it("metrics carries costMicros; the Guard→orchestrator event channel parses metrics + kill", () => {
+    const m = ControlChannelMessageSchema.parse({ type: "metrics", v: CONTRACT_VERSION, latencyMs: 428, tokens: 1284, costMicros: 4100 });
+    expect(m.type === "metrics" && m.costMicros).toBe(4100);
+    expect(GuardRunEventSchema.parse({ type: "metrics", v: CONTRACT_VERSION, latencyMs: 1, tokens: 2, costMicros: 3 }).type).toBe("metrics");
+    const kill = GuardRunEventSchema.parse({ type: "kill", v: CONTRACT_VERSION, scope: "run" });
+    expect(kill.type === "kill" && kill.scope).toBe("run");
+    expect(GuardRunEventSchema.safeParse({ type: "kill", v: CONTRACT_VERSION, scope: "week" }).success).toBe(false);
   });
 });

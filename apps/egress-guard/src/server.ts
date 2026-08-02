@@ -15,6 +15,9 @@ const guard = createGuard({
   socketDir: process.env.GUARD_SOCKET_DIR ?? "/run/guard",
   litellmBaseUrl: process.env.LITELLM_BASE_URL ?? "http://litellm:4000",
   litellmMasterKey: process.env.LITELLM_MASTER_KEY ?? "sk-turanga-dev",
+  // Out-of-band Guard→orchestrator channel (Story 4.5, E4-AD-10): cost metrics + breach kill.
+  controlCallbackUrl: process.env.CONTROL_API_URL ?? "http://control-api:8080",
+  callbackToken: process.env.GUARD_CALLBACK_TOKEN ?? "dev-guard-callback",
 });
 
 const app = createApp({ guard, adminToken });

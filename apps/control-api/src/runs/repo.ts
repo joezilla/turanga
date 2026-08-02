@@ -1,4 +1,4 @@
-import { desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, gte, sql } from "drizzle-orm";
 import type { ControlChannelMessage } from "@turanga/contracts";
 import type { Db } from "../db/client.js";
 import { runs } from "../db/schema.js";
@@ -12,20 +12,27 @@ export interface RunRow {
   taskInput: string;
   transcript: ControlChannelMessage[];
   reason: string | null;
+  costMicros: number; // persisted run-cost summary in micro-USD (Story 4.5) = summed metrics (no drift)
   createdAt: string; // UTC ISO-8601
   endedAt: string | null;
 }
 
-// Written only by the run-orchestrator (AD-7). No `update(patch)` surface beyond these.
+// Written only by the run-orchestrator (AD-7). No `update(patch)` surface beyond these. LiteLLM owns
+// spend; this `costMicros` summary is the summed run metrics the Guard reported (AD-7 — read, not recomputed).
 export interface RunsRepo {
-  create(row: RunRow): Promise<void>;
+  create(row: Omit<RunRow, "costMicros"> & { costMicros?: number }): Promise<void>;
   get(id: string): Promise<RunRow | null>;
   list(agentId?: string, limit?: number): Promise<RunRow[]>; // newest first, bounded
-  setStatus(id: string, status: RunStatus, patch?: { reason?: string | null; endedAt?: string }): Promise<void>;
+  setStatus(id: string, status: RunStatus, patch?: { reason?: string | null; endedAt?: string; costMicros?: number }): Promise<void>;
   appendMessage(id: string, msg: ControlChannelMessage): Promise<void>;
+  sumTodayMicros(agentId: string): Promise<number>; // agent's summed run cost since UTC midnight (daily meter)
 }
 
 const DEFAULT_LIST_LIMIT = 100;
+const startOfUtcToday = (): Date => {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+};
 
 function toRow(r: typeof runs.$inferSelect): RunRow {
   return {
@@ -35,6 +42,7 @@ function toRow(r: typeof runs.$inferSelect): RunRow {
     taskInput: r.taskInput,
     transcript: r.transcript as ControlChannelMessage[],
     reason: r.reason,
+    costMicros: r.costMicros ?? 0,
     createdAt: r.createdAt.toISOString(),
     endedAt: r.endedAt ? r.endedAt.toISOString() : null,
   };
@@ -50,6 +58,7 @@ export function drizzleRunsRepo(db: Db): RunsRepo {
         taskInput: row.taskInput,
         transcript: row.transcript,
         reason: row.reason,
+        costMicros: row.costMicros ?? 0,
         createdAt: new Date(row.createdAt),
         endedAt: row.endedAt ? new Date(row.endedAt) : null,
       });
@@ -67,6 +76,7 @@ export function drizzleRunsRepo(db: Db): RunsRepo {
       const set: Partial<typeof runs.$inferInsert> = { status };
       if (patch && "reason" in patch) set.reason = patch.reason ?? null;
       if (patch?.endedAt) set.endedAt = new Date(patch.endedAt);
+      if (patch?.costMicros !== undefined) set.costMicros = patch.costMicros;
       await db.update(runs).set(set).where(eq(runs.id, id));
     },
     async appendMessage(id, msg) {
@@ -76,6 +86,13 @@ export function drizzleRunsRepo(db: Db): RunsRepo {
         .set({ transcript: sql`${runs.transcript} || ${JSON.stringify([msg])}::jsonb` })
         .where(eq(runs.id, id));
     },
+    async sumTodayMicros(agentId) {
+      const rows = await db
+        .select({ total: sql<number>`coalesce(sum(${runs.costMicros}), 0)` })
+        .from(runs)
+        .where(and(eq(runs.agentId, agentId), gte(runs.createdAt, startOfUtcToday())));
+      return Number(rows[0]?.total ?? 0);
+    },
   };
 }
 
@@ -84,7 +101,7 @@ export function memoryRunsRepo(): RunsRepo {
   const order: string[] = [];
   return {
     async create(row) {
-      rows.set(row.id, { ...row, transcript: [...row.transcript] });
+      rows.set(row.id, { costMicros: 0, ...row, transcript: [...row.transcript] });
       order.unshift(row.id);
     },
     async get(id) {
@@ -104,9 +121,14 @@ export function memoryRunsRepo(): RunsRepo {
       r.status = status;
       if (patch && "reason" in patch) r.reason = patch.reason ?? null;
       if (patch?.endedAt) r.endedAt = patch.endedAt;
+      if (patch?.costMicros !== undefined) r.costMicros = patch.costMicros;
     },
     async appendMessage(id, msg) {
       rows.get(id)?.transcript.push(msg);
+    },
+    async sumTodayMicros(agentId) {
+      const midnight = startOfUtcToday().toISOString();
+      return [...rows.values()].filter((r) => r.agentId === agentId && r.createdAt >= midnight).reduce((s, r) => s + r.costMicros, 0);
     },
   };
 }

@@ -20,6 +20,7 @@ export interface SkillGrant {
 export interface RunProvision {
   connections: ProvisionConnection[];
   grants: SkillGrant[];
+  costKey?: string; // the per-run LiteLLM cost key (Story 4.5) — control-plane only, never the jobSpec
 }
 
 export interface RunGuard {

@@ -1,5 +1,7 @@
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
+import { timingSafeEqual } from "node:crypto";
+import { GuardRunEventSchema } from "@turanga/contracts";
 import type { RunsRepo } from "./repo.js";
 import type { RunOrchestrator } from "./orchestrator.js";
 import type { RunHub } from "./hub.js";
@@ -10,8 +12,32 @@ import type { RunHub } from "./hub.js";
 // back to the persisted transcript for a terminal or hub-evicted run.
 const MAX_TASK_INPUT = 10_000; // the task input flows into an env-injected job spec — keep it bounded
 
-export function runRoutes(repo: RunsRepo, orchestrator: RunOrchestrator, hub: RunHub) {
+function tokenMatches(provided: string | undefined, expected: string): boolean {
+  if (!expected || !provided) return false;
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+export function runRoutes(repo: RunsRepo, orchestrator: RunOrchestrator, hub: RunHub, callbackToken = "") {
   const app = new Hono();
+
+  // The Guard→orchestrator control-plane callback (E4-AD-10, Story 4.5). NOT web-session-guarded —
+  // it's control-plane, authenticated by the shared callback token (constant-time). Cost `metrics`
+  // merge into the Run + SSE; a budget `kill` reaps the run.
+  app.post("/internal/guard/runs/:id/events", async (c) => {
+    if (!tokenMatches(c.req.header("x-guard-callback"), callbackToken)) return c.json({ error: "Forbidden." }, 403);
+    const parsed = GuardRunEventSchema.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: "Malformed guard event." }, 400);
+    await orchestrator.handleGuardEvent(c.req.param("id"), parsed.data);
+    return c.json({ ok: true });
+  });
+
+  // The agent's cumulative spend today (micro-USD) for the live daily meter (the web pairs it with the
+  // agent's per-day cap it already holds). Session-guarded via /agents/* in app.ts.
+  app.get("/agents/:id/cost", async (c) => {
+    return c.json({ todayMicros: await repo.sumTodayMicros(c.req.param("id")) });
+  });
 
   app.post("/runs", async (c) => {
     const body = ((await c.req.json().catch(() => ({}))) ?? {}) as { agentId?: unknown; taskInput?: unknown };

@@ -35,10 +35,11 @@ export function createApp(deps: AppDeps = {}) {
         // The provision (allowlist + held credentials) is control-plane data — it arrives only over
         // this admin-token-guarded route, never in the sandbox's job spec (AD-10). An absent/empty
         // body means an empty allowlist (default-deny — the run reaches nothing).
-        const provision = ((await c.req.json().catch(() => ({}))) ?? {}) as { connections?: unknown; grants?: unknown };
+        const provision = ((await c.req.json().catch(() => ({}))) ?? {}) as { connections?: unknown; grants?: unknown; costKey?: unknown };
         const connections = Array.isArray(provision.connections) ? (provision.connections as ProvisionConnection[]) : [];
         const grants = Array.isArray(provision.grants) ? (provision.grants as SkillGrant[]) : [];
-        const { socketPath } = await guard.register(c.req.param("id"), { connections, grants });
+        const costKey = typeof provision.costKey === "string" ? provision.costKey : undefined;
+        const { socketPath } = await guard.register(c.req.param("id"), { connections, grants, costKey });
         return c.json({ ok: true, socketPath });
       } catch (e) {
         return c.json({ error: e instanceof Error ? e.message : "Register failed." }, 400);

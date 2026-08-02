@@ -36,6 +36,7 @@ export interface AppDeps {
   runsRepo?: RunsRepo;
   runHub?: RunHub; // the live SSE relay; MUST be the same instance the orchestrator publishes to
   orchestrator?: RunOrchestrator; // defaults to a fake-runtime orchestrator (tests / no-Docker boot)
+  guardCallbackToken?: string; // authenticates the Guard→orchestrator callback (Story 4.5)
 }
 
 export function createApp(deps: AppDeps = {}) {
@@ -78,8 +79,8 @@ export function createApp(deps: AppDeps = {}) {
   // Docker; server.ts injects the real Docker-backed orchestrator (built on the same hub).
   const orchestrator =
     deps.orchestrator ??
-    runOrchestrator({ runsRepo, agentsRepo, runtime: fakeSandboxRuntime(), guard: fakeRunGuard(), hub: runHub, dataConnectionsRepo, googleOAuth: google, image: "turanga/agent-harness:dev", sandboxVolume: "guard-run" });
-  app.route("/", runRoutes(runsRepo, orchestrator, runHub));
+    runOrchestrator({ runsRepo, agentsRepo, runtime: fakeSandboxRuntime(), guard: fakeRunGuard(), hub: runHub, dataConnectionsRepo, googleOAuth: google, modelGateway: gateway, image: "turanga/agent-harness:dev", sandboxVolume: "guard-run" });
+  app.route("/", runRoutes(runsRepo, orchestrator, runHub, deps.guardCallbackToken ?? "dev-guard-callback"));
 
   return app;
 }

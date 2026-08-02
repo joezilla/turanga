@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, jsonb, integer } from "drizzle-orm/pg-core";
 
 // users + sessions — the first control-api tables (AD-7: control-api owns this state).
 export const users = pgTable("users", {
@@ -77,6 +77,7 @@ export const runs = pgTable("runs", {
   taskInput: text("task_input").notNull().default(""),
   transcript: jsonb("transcript").$type<unknown[]>().notNull().default([]), // ControlChannelMessage[]
   reason: text("reason"), // the stated fail/kill reason
+  costMicros: integer("cost_micros").notNull().default(0), // summed run cost in micro-USD (Story 4.5)
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   endedAt: timestamp("ended_at", { withTimezone: true }),
 });

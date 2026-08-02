@@ -3,10 +3,11 @@
 // they harden in Epic 4. The `v` field is the contract version — bump on any change.
 import { z } from "zod";
 
-// v3 (Story 4.4): connection ops become provider-agnostic (read | label | send), connection
-// refusals carry a `kind`, and the skill→op permission policy is shared here (Guard-enforced).
+// v4 (Story 4.5): metrics cost is real (micro-USD `costMicros`); the Guard→orchestrator event
+// channel (metrics + kill) is defined here (E4-AD-10, out-of-band control-plane).
+// v3 (Story 4.4): provider-agnostic connection ops (read | label | send), refusal `kind`, skill policy.
 // v2 (Story 4.3): connection-read entries + logical connection handles.
-export const CONTRACT_VERSION = 3 as const;
+export const CONTRACT_VERSION = 4 as const;
 
 /** A logical connection handle the agent is configured to use. NO token, URL, or destination —
  *  the Guard holds the credential + allowlist per-run (AD-10); the sandbox names only the handle. */
@@ -40,7 +41,7 @@ export const ControlChannelMessageSchema = z.discriminatedUnion("type", [
     v: z.literal(CONTRACT_VERSION),
     latencyMs: z.number(),
     tokens: z.number(),
-    costMinor: z.number(),
+    costMicros: z.number(), // cost in micro-USD (1e-6 USD) — fine enough for sub-cent per-call costs
   }),
   z.object({ type: z.literal("refusal"), v: z.literal(CONTRACT_VERSION), kind: z.enum(["egress", "permission"]), detail: z.string() }),
   z.object({ type: z.literal("done"), v: z.literal(CONTRACT_VERSION), status: z.enum(["succeeded", "failed", "killed"]) }),
@@ -133,3 +134,13 @@ export function authorizes(grants: { scope: SkillScope; send: boolean }[], op: C
   const req = OP_REQUIREMENTS[op];
   return grants.some((g) => scopeRank(g.scope) >= scopeRank(req.requiredScope) && (!req.requiresSend || g.send));
 }
+
+/** The Guard→orchestrator control-plane event channel (Story 4.5, E4-AD-10). The Guard reports cost
+ *  and a budget breach to the orchestrator OUT OF BAND (not via the sandbox), so cost/kill truth is
+ *  the Guard/LiteLLM, never the harness. Delivered over a token-authenticated control-api callback,
+ *  never the harness UDS. (Refusals move here in a later story; harness-relayed for now.) */
+export const GuardRunEventSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("metrics"), v: z.literal(CONTRACT_VERSION), latencyMs: z.number(), tokens: z.number(), costMicros: z.number() }),
+  z.object({ type: z.literal("kill"), v: z.literal(CONTRACT_VERSION), scope: z.enum(["run", "day"]), detail: z.string().optional() }),
+]);
+export type GuardRunEvent = z.infer<typeof GuardRunEventSchema>;

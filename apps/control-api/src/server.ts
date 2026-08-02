@@ -75,6 +75,7 @@ async function main() {
     hub: runHub,
     dataConnectionsRepo, // Story 4.3 — resolve the run's Gmail connection + allowlist
     googleOAuth: google, // Story 4.3 — mint the short-lived access token handed to the Guard
+    modelGateway, // Story 4.5 — mint the per-run cost key under the agent's daily-budget team
     image: process.env.AGENT_HARNESS_IMAGE ?? "turanga/agent-harness:dev",
     sandboxVolume: process.env.GUARD_SANDBOX_VOLUME ?? "turanga_guard-run",
   });
@@ -91,6 +92,7 @@ async function main() {
     runsRepo,
     runHub,
     orchestrator,
+    guardCallbackToken: process.env.GUARD_CALLBACK_TOKEN ?? "dev-guard-callback",
   });
   serve({ fetch: app.fetch, port }, (info) => {
     console.log(`[control-api] listening on :${info.port}`);

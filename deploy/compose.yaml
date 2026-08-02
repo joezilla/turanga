@@ -83,6 +83,8 @@ services:
       SANDBOX_RUNTIME: ${SANDBOX_RUNTIME:-dev-insecure}
       GUARD_ADMIN_URL: http://egress-guard:8081
       GUARD_ADMIN_TOKEN: ${GUARD_ADMIN_TOKEN:-dev-guard-admin}
+      # Authenticates the Guard→orchestrator cost/kill callback (Story 4.5, E4-AD-10).
+      GUARD_CALLBACK_TOKEN: ${GUARD_CALLBACK_TOKEN:-dev-guard-callback}
       AGENT_HARNESS_IMAGE: ${AGENT_HARNESS_IMAGE:-turanga/agent-harness:dev}
       # The named volume the guard's per-run sockets live on (docker-compose prefixes with the project name).
       GUARD_SANDBOX_VOLUME: turanga_guard-run
@@ -111,6 +113,9 @@ services:
       GUARD_ADMIN_TOKEN: ${GUARD_ADMIN_TOKEN:-dev-guard-admin}
       LITELLM_BASE_URL: http://litellm:4000
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-turanga-dev}
+      # The Guard→orchestrator cost/kill callback (Story 4.5, E4-AD-10).
+      CONTROL_API_URL: http://control-api:8080
+      GUARD_CALLBACK_TOKEN: ${GUARD_CALLBACK_TOKEN:-dev-guard-callback}
     volumes:
       # Shared with each sandbox (bound to /guard there): the per-run UDS lives here (E4-AD-1).
       - guard-run:/run/guard
