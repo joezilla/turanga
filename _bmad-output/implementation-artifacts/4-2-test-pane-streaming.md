@@ -3,7 +3,7 @@ baseline_commit: 8c6e50c6fb23a47ed92a76f71c098b86a0980eb8
 ---
 # Story 4.2: Test pane — streaming transcript and metrics
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -97,6 +97,17 @@ so that I can judge the agent before trusting it.
 - [Source: packages/contracts (ControlChannelMessage: turn/metrics/refusal/done); apps/control-api/src/runs (4.1 orchestrator/repo/routes); apps/agent-harness/src/main.ts]
 - [Source: _bmad-output/implementation-artifacts/4-1-sandbox-bare-loop.md; project-context.md; deferred-work.md]
 
+### Review Findings (code review 2026-08-02)
+
+- [x] [Review][Patch] Running window shows "No test runs." with no pulse — gate the empty copy on `runState === "empty"` so a running-with-no-messages-yet state reaches the pulse [apps/web/src/routes/(app)/agents/[id]/+page.svelte:360] — FIXED
+- [x] [Review][Patch] Concurrency slot leak — reserve inside a try/catch that releases on failure, and drop start()'s redundant `runsRepo.get` (return the row already in hand) [apps/control-api/src/runs/orchestrator.ts:63] — FIXED (+ unit test)
+- [x] [Review][Patch] SSE fallback can emit a non-terminal `done` — coerce a `created`/`running` persisted status to `failed` in the repo-replay path so an orphaned run resolves cleanly [apps/control-api/src/runs/routes.ts:74] — FIXED
+- [x] [Review][Patch] Start-run continuation ignores Clear/navigate — a `runGen` token bumped in runTest/clearTest(/load); the post-`await` IIFE + the SSE listeners bail when stale [apps/web/src/routes/(app)/agents/[id]/+page.svelte:77] — FIXED
+- [x] [Review][Patch] `hub.complete` has no `s.done` guard — early-return when already done and clear the prior `evictTimer` before setting a new one [apps/control-api/src/runs/hub.ts:56] — FIXED (+ unit test)
+- [x] [Review][Patch] `Cmd/Ctrl+Enter` on a narrow viewport runs with the pane collapsed — `runTest` now sets `showTest = true` [apps/web/src/routes/(app)/agents/[id]/+page.svelte:123] — FIXED
+- [x] [Review][Patch] `killed` dot renders neutral grey, not caution — `--state-killed: var(--caution-500)` per DESIGN.md, both light + dark blocks [apps/web/src/lib/design/warm-ink/colors.css:102] — FIXED
+- [x] [Review][Defer] Some test-pane error strings are cause-only, not cause→consequence→recovery (AC2) [apps/web/src/lib/runs.ts:47] — deferred, low-value copy polish (partly shared with $lib/agents)
+
 ## Dev Agent Record
 
 ### Agent Model Used
@@ -137,3 +148,4 @@ claude-opus-4-8[1m]
 | Date | Change |
 | --- | --- |
 | 2026-08-01 | Story 4.2 implemented: RunHub + SSE relay (async POST /runs), harness metrics, web run client + EventSource, streaming test pane (running pulse, run-status dots, mono metrics, five states, Clear, Cmd/Ctrl+Enter). All gates green incl. 16/16 e2e live. Status → review. |
+| 2026-08-02 | Code review: 7 patches applied (running-window pulse gap, concurrency-slot leak on create failure, non-terminal SSE `done` coercion, start-run generation token vs Clear/navigate, idempotent `hub.complete`, Cmd+Enter reveals collapsed pane, `killed`→caution per DESIGN.md) + 2 unit tests; 1 deferred, 2 dismissed. Re-verified: build 6/6, control-api 79 unit, svelte-check 0/0, lint clean, 7/7 agents e2e + gated integration live, no leaked containers. Status → done. |

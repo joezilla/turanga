@@ -55,6 +55,9 @@
   let runError = $state("");
   let es: EventSource | null = null; // the live SSE stream (not reactive)
   let doneReceived = false;
+  // Bumped on every runTest/clearTest/navigate so a start-run that resolves after the pane moved on
+  // (Clear, or switching agents) is discarded instead of streaming into the wrong context.
+  let runGen = 0;
 
   const lastMetrics = $derived(transcript.filter((m): m is Extract<RunMessage, { type: "metrics" }> => m.type === "metrics").at(-1));
   const fmtNum = (n: number) => n.toLocaleString("en-US");
@@ -69,13 +72,16 @@
   function runTest() {
     if (runState === "running") return; // one test at a time
     closeStream();
+    showTest = true; // reveal the pane on narrow viewports so a keyboard-run isn't invisible
     transcript = [];
     runError = "";
     doneReceived = false;
     runState = "running";
     const task = taskInput;
+    const myGen = ++runGen;
     void (async () => {
       const started = await startRun(id, task);
+      if (myGen !== runGen) return; // Clear/navigate happened during the POST — discard this start
       if (!started.ok) {
         // Couldn't even start — cause→consequence→recovery inline (no run executed).
         runState = "error";
@@ -85,6 +91,7 @@
       const source = new EventSource(runEventsUrl(started.value.id), { withCredentials: true });
       es = source;
       source.addEventListener("message", (e) => {
+        if (myGen !== runGen) return; // a superseded stream must not write into the current pane
         try {
           transcript = [...transcript, JSON.parse((e as MessageEvent).data) as RunMessage];
         } catch {
@@ -92,6 +99,7 @@
         }
       });
       source.addEventListener("done", (e) => {
+        if (myGen !== runGen) return;
         doneReceived = true;
         try {
           const { status } = JSON.parse((e as MessageEvent).data) as { status: "succeeded" | "failed" | "killed" };
@@ -102,6 +110,7 @@
         closeStream(); // we own the close so the browser doesn't auto-reconnect
       });
       source.onerror = () => {
+        if (myGen !== runGen) return;
         // EventSource also fires error when the server closes normally — only surface it if we
         // never received the terminal `done` (a genuine mid-stream drop).
         if (!doneReceived) {
@@ -114,6 +123,7 @@
   }
 
   function clearTest() {
+    runGen++; // discard any in-flight start that resolves after this reset (Clear or navigate)
     closeStream();
     transcript = [];
     runError = "";
@@ -357,7 +367,7 @@
     </div>
     <div class="test-pane">
       <div class="transcript" role="log" aria-live="polite">
-        {#if transcript.length === 0 && runState !== "error"}
+        {#if transcript.length === 0 && runState === "empty"}
           <p class="muted">No test runs.</p>
         {:else}
           {#each transcript as msg, i (i)}

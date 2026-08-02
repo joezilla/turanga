@@ -55,11 +55,13 @@ export function createRunHub(retainMs = 30_000): RunHub {
     },
     complete(runId, status) {
       const s = ensure(runId);
+      if (s.done) return; // idempotent — a run completes exactly once (a later kill path won't double-evict)
       s.status = status;
       s.done = true;
       for (const sub of s.subs) sub.onDone(status);
       s.subs.clear();
       // Retain briefly so a late subscriber still catches a fast run, then evict.
+      if (s.evictTimer) clearTimeout(s.evictTimer);
       s.evictTimer = setTimeout(() => runs.delete(runId), retainMs);
       s.evictTimer.unref?.();
     },

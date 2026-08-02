@@ -54,6 +54,16 @@ describe("RunHub", () => {
     expect(status).toBe("succeeded");
   });
 
+  it("complete is idempotent — a second complete doesn't overwrite the terminal status", () => {
+    const hub = createRunHub();
+    hub.open("r1");
+    hub.complete("r1", "succeeded");
+    hub.complete("r1", "failed"); // ignored — a run completes exactly once
+    let late = "";
+    hub.subscribe("r1", 0, () => {}, (s) => (late = s));
+    expect(late).toBe("succeeded");
+  });
+
   it("subscribe returns null for a run the hub never saw (caller falls back to the repo)", () => {
     const hub = createRunHub();
     expect(hub.subscribe("nope", 0, () => {}, () => {})).toBeNull();

@@ -1,5 +1,8 @@
 # Deferred Work
 
+## Deferred from: code review of 4-2-test-pane-streaming (2026-08-02)
+- Test-pane error strings in `apps/web/src/lib/runs.ts` ("The control plane returned an unexpected response.", "Couldn't start the run (${status}).", "Can't reach the control plane.") state a cause but no consequence/recovery (AC2 wants cause→consequence→recovery). Low-value copy polish, partly shared with `$lib/agents`. Revisit if the error states get a dedicated pass.
+
 ## Deferred from: code review of Epic 1 / story-1.4 (2026-07-31)
 - SameSite=Lax will not carry the session cookie in a multi-domain deploy (web and control-api on different sites). Revisit when moving off single-machine: either same-origin (reverse proxy) or SameSite=None+Secure.
 - WEB_ORIGIN is a single exact origin; multi-origin/deploy setups need this generalized.

@@ -131,6 +131,20 @@ describe("run orchestrator", () => {
     expect(terminal).toBe("succeeded");
   });
 
+  it("releases the concurrency slot when run creation fails — no permanent capacity loss", async () => {
+    const base = memoryRunsRepo();
+    let failNext = true;
+    const flaky = { ...base, create: async (row: Parameters<typeof base.create>[0]) => {
+      if (failNext) { failNext = false; throw new Error("db blip"); }
+      return base.create(row);
+    } };
+    const runtime = fakeSandboxRuntime({ lines: [nd({ type: "done", v: 1, status: "succeeded" })] });
+    const o = runOrchestrator({ runsRepo: flaky, agentsRepo: agentsRepo(agent()), runtime, guard: fakeRunGuard(), hub: createRunHub(), image: "img", sandboxVolume: "vol", maxConcurrent: 1 });
+    await expect(o.launch("a1", "x")).rejects.toThrow("db blip"); // create() threw before execute()
+    const r = await o.launch("a1", "x"); // slot was released → not stuck at the cap
+    expect(r.ok).toBe(true);
+  });
+
   it("start() enforces the concurrency cap up front (429, no run created)", async () => {
     const { o, runsRepo } = orch({ maxConcurrent: 0 });
     const r = await o.start("a1", "x");

@@ -54,19 +54,25 @@ export function runOrchestrator(deps: OrchestratorDeps) {
     return (await runsRepo.get(runId))!;
   }
 
-  type Created = { ok: true; runId: string; jobSpec: JobSpec } | { ok: false; error: string; status: 400 | 404 | 429 };
+  type Created = { ok: true; runId: string; jobSpec: JobSpec; row: RunRow } | { ok: false; error: string; status: 400 | 404 | 429 };
   async function validateAndCreate(agentId: string, taskInput: string): Promise<Created> {
     const agent = await agentsRepo.get(agentId);
     if (!agent) return { ok: false, error: "That agent doesn't exist.", status: 404 };
     if (!agent.model) return { ok: false, error: "An agent needs a model to run.", status: 400 };
     if (active >= maxConcurrent) return { ok: false, error: "Too many runs in progress. Try again in a moment.", status: 429 };
-    active++; // reserve the slot (released in execute's finally)
-    const runId = ulid(Date.now());
-    const now = new Date().toISOString();
-    const jobSpec: JobSpec = { v: 1, runId, agentId, model: agent.model, instructions: agent.instructions, skills: [], taskInput };
-    await runsRepo.create({ id: runId, agentId, status: "created", taskInput, transcript: [], reason: null, createdAt: now, endedAt: null });
-    hub.open(runId); // hub state exists before start() hands the run back — the SSE subscriber won't miss the opening
-    return { ok: true, runId, jobSpec };
+    active++; // reserve the slot (released in execute's finally, OR here if we never reach execute)
+    try {
+      const runId = ulid(Date.now());
+      const now = new Date().toISOString();
+      const jobSpec: JobSpec = { v: 1, runId, agentId, model: agent.model, instructions: agent.instructions, skills: [], taskInput };
+      const row: RunRow = { id: runId, agentId, status: "created", taskInput, transcript: [], reason: null, createdAt: now, endedAt: null };
+      await runsRepo.create(row);
+      hub.open(runId); // hub state exists before start() hands the run back — the SSE subscriber won't miss the opening
+      return { ok: true, runId, jobSpec, row };
+    } catch (e) {
+      active--; // create() (or hub.open) threw — execute() will never run, so release the slot now
+      throw e;
+    }
   }
 
   // Runs the sandbox to a terminal state, publishing every control message to the hub. ALWAYS
@@ -134,11 +140,11 @@ export function runOrchestrator(deps: OrchestratorDeps) {
     async start(agentId: string, taskInput: string): Promise<LaunchResult> {
       const v = await validateAndCreate(agentId, taskInput);
       if (!v.ok) return v;
-      const created = (await runsRepo.get(v.runId))!;
       void execute(v.runId, v.jobSpec).catch(() => {});
-      // Report `running` immediately — execute() flips the persisted status to running once the
-      // sandbox is established; the client watches /events for the live transcript.
-      return { ok: true, run: { ...created, status: "running" } };
+      // Report `running` immediately from the row we just created (no redundant re-read) — execute()
+      // flips the persisted status to running once the sandbox is established; the client watches
+      // /events for the live transcript.
+      return { ok: true, run: { ...v.row, status: "running" } };
     },
   };
 }

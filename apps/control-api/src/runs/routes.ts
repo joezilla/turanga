@@ -68,10 +68,13 @@ export function runRoutes(repo: RunsRepo, orchestrator: RunOrchestrator, hub: Ru
 
       if (!unsub) {
         // The hub doesn't know this run (terminal + evicted, or never live here) — the repo is the
-        // truth. Replay the persisted transcript, then close.
+        // truth. Replay the persisted transcript, then close. A run the hub has forgotten but whose
+        // row is still non-terminal is orphaned (e.g. control-api restarted mid-run): report it as
+        // `failed` so the client resolves cleanly instead of wedging on a running dot that never ends.
         const fresh = (await repo.get(id)) ?? run;
+        const status = fresh.status === "created" || fresh.status === "running" ? "failed" : fresh.status;
         for (const msg of fresh.transcript) await stream.writeSSE({ event: "message", data: JSON.stringify(msg) });
-        await stream.writeSSE({ event: "done", data: JSON.stringify({ status: fresh.status }) });
+        await stream.writeSSE({ event: "done", data: JSON.stringify({ status }) });
         return;
       }
 
