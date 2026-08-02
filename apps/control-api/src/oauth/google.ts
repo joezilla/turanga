@@ -9,11 +9,19 @@ export interface ExchangeResult {
   scopes: string[];
 }
 
+export interface AccessToken {
+  accessToken: string;
+  expiresAt: number | null; // epoch ms, if the provider reports it
+}
+
 export interface GoogleOAuth {
   isConfigured(): boolean;
   authUrl(state: string): string;
   exchange(code: string): Promise<ExchangeResult>;
   revoke(refreshToken: string): Promise<void>;
+  /** Mint a short-lived access token from a stored refresh token — the credential handed to the
+   *  Guard per-run (Story 4.3). Kept short-lived so the Guard holds only a transient secret (AD-10). */
+  accessTokenFromRefresh(refreshToken: string): Promise<AccessToken>;
 }
 
 export function googleOAuth(env: NodeJS.ProcessEnv = process.env): GoogleOAuth {
@@ -41,13 +49,22 @@ export function googleOAuth(env: NodeJS.ProcessEnv = process.env): GoogleOAuth {
     async revoke(refreshToken) {
       await client().revokeToken(refreshToken).catch(() => {});
     },
+    async accessTokenFromRefresh(refreshToken) {
+      const c = client();
+      c.setCredentials({ refresh_token: refreshToken });
+      const { token } = await c.getAccessToken(); // refreshes against oauth2.googleapis.com
+      if (!token) throw new Error("Google returned no access token.");
+      return { accessToken: token, expiresAt: c.credentials.expiry_date ?? null };
+    },
   };
 }
 
-export function fakeGoogleOAuth(opts: { configured?: boolean; email?: string; refreshToken?: string } = {}): GoogleOAuth & { revoked: string[] } {
+export function fakeGoogleOAuth(opts: { configured?: boolean; email?: string; refreshToken?: string; mintFails?: boolean } = {}): GoogleOAuth & { revoked: string[]; minted: string[] } {
   const revoked: string[] = [];
+  const minted: string[] = [];
   return {
     revoked,
+    minted,
     isConfigured: () => opts.configured ?? true,
     authUrl: (state) => `https://accounts.google.com/o/oauth2/v2/auth?state=${state}`,
     async exchange(code) {
@@ -55,6 +72,11 @@ export function fakeGoogleOAuth(opts: { configured?: boolean; email?: string; re
     },
     async revoke(t) {
       revoked.push(t);
+    },
+    async accessTokenFromRefresh(refreshToken) {
+      if (opts.mintFails) throw new Error("mint failed");
+      minted.push(refreshToken);
+      return { accessToken: `access-for-${refreshToken}`, expiresAt: null };
     },
   };
 }

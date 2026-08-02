@@ -4,7 +4,7 @@
 // (constant-time compare) and strict runId validation (the guard rejects a bad id, fail-closed).
 import { Hono } from "hono";
 import { timingSafeEqual } from "node:crypto";
-import type { Guard } from "./guard.js";
+import type { Guard, ProvisionConnection } from "./guard.js";
 
 export interface AppDeps {
   guard?: Guard;
@@ -32,7 +32,12 @@ export function createApp(deps: AppDeps = {}) {
     });
     app.post("/admin/runs/:id/register", async (c) => {
       try {
-        const { socketPath } = await guard.register(c.req.param("id"));
+        // The provision (allowlist + held credentials) is control-plane data — it arrives only over
+        // this admin-token-guarded route, never in the sandbox's job spec (AD-10). An absent/empty
+        // body means an empty allowlist (default-deny — the run reaches nothing).
+        const provision = ((await c.req.json().catch(() => ({}))) ?? {}) as { connections?: unknown };
+        const connections = Array.isArray(provision.connections) ? (provision.connections as ProvisionConnection[]) : [];
+        const { socketPath } = await guard.register(c.req.param("id"), { connections });
         return c.json({ ok: true, socketPath });
       } catch (e) {
         return c.json({ error: e instanceof Error ? e.message : "Register failed." }, 400);

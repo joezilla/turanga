@@ -3,7 +3,7 @@ import http from "node:http";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createGuard } from "./guard.js";
+import { createGuard, type ProvisionConnection } from "./guard.js";
 import type { GuardModelResponse } from "@turanga/contracts";
 
 const okFetch = (async () =>
@@ -18,7 +18,7 @@ const errFetch = (async () =>
 describe("guard model proxy", () => {
   it("maps a model request to a LiteLLM call and returns the completion", async () => {
     const guard = createGuard({ socketDir: "/tmp", litellmBaseUrl: "http://litellm:4000", litellmMasterKey: "sk", fetchImpl: okFetch });
-    const res = await guard.proxyModel({ v: 1, runId: "r", model: "openai/gpt-4o", messages: [{ role: "user", content: "hi" }] });
+    const res = await guard.proxyModel({ v: 2, runId: "r", model: "openai/gpt-4o", messages: [{ role: "user", content: "hi" }] });
     expect(res.ok).toBe(true);
     expect(res.text).toBe("hello from the model");
     expect(res.tokens).toBe(12);
@@ -26,7 +26,7 @@ describe("guard model proxy", () => {
 
   it("surfaces a provider error (no fallback)", async () => {
     const guard = createGuard({ socketDir: "/tmp", litellmBaseUrl: "http://litellm:4000", litellmMasterKey: "sk", fetchImpl: errFetch });
-    const res = await guard.proxyModel({ v: 1, runId: "r", model: "openai/gpt-4o", messages: [{ role: "user", content: "hi" }] });
+    const res = await guard.proxyModel({ v: 2, runId: "r", model: "openai/gpt-4o", messages: [{ role: "user", content: "hi" }] });
     expect(res.ok).toBe(false);
     expect(res.error).toMatch(/401/);
   });
@@ -49,7 +49,7 @@ describe("guard per-run socket lifecycle", () => {
     expect(guard.activeRuns()).toEqual([RUN]);
 
     // A harness-style HTTP-over-UDS call resolves through the socket.
-    const body = JSON.stringify({ v: 1, runId: RUN, model: "m", messages: [{ role: "user", content: "hi" }] });
+    const body = JSON.stringify({ v: 2, runId: RUN, model: "m", messages: [{ role: "user", content: "hi" }] });
     const out = await new Promise<GuardModelResponse>((resolve) => {
       const req = http.request({ socketPath, path: "/", method: "POST", headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body) } }, (res) => {
         let raw = "";
@@ -64,6 +64,89 @@ describe("guard per-run socket lifecycle", () => {
     await guard.teardown(RUN);
     expect(fs.existsSync(socketPath)).toBe(false);
     expect(guard.activeRuns()).toEqual([]);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+const gmailConn: ProvisionConnection = { connectionId: "gmail", provider: "gmail", destinations: ["gmail.googleapis.com", "oauth2.googleapis.com"], accessToken: "tok-secret-123" };
+const req = { v: 2 as const, runId: RUN, connectionId: "gmail", op: "gmail.list" as const, params: { maxResults: 5 } };
+
+// A fetch spy that captures the outbound request and returns a Gmail-style message list.
+function captureGmailFetch() {
+  const calls: { url: string; auth: string | undefined }[] = [];
+  const impl = (async (url: string | URL | Request, init?: RequestInit) => {
+    const headers = (init?.headers ?? {}) as Record<string, string>;
+    calls.push({ url: String(url), auth: headers.authorization });
+    return new Response(JSON.stringify({ messages: [{ id: "m1" }, { id: "m2" }] }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as unknown as typeof fetch;
+  return { impl, calls };
+}
+
+describe("guard credentialed-connection gateway (mode a) + default-deny allowlist", () => {
+  async function withGuard(provision: { connections: ProvisionConnection[] }, fetchImpl: typeof fetch) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "guard-"));
+    const guard = createGuard({ socketDir: dir, litellmBaseUrl: "http://x", litellmMasterKey: "sk", fetchImpl });
+    await guard.register(RUN, provision);
+    return { guard, dir, cleanup: async () => { await guard.teardown(RUN); fs.rmSync(dir, { recursive: true, force: true }); } };
+  }
+
+  it("forwards an allowlisted read with the HELD credential; the token never returns to the sandbox (AC1)", async () => {
+    const { impl, calls } = captureGmailFetch();
+    const { guard, cleanup } = await withGuard({ connections: [gmailConn] }, impl);
+    const res = await guard.forwardConnection(RUN, req);
+    expect(res.ok).toBe(true);
+    expect((res.data as { messageCount: number }).messageCount).toBe(2);
+    // The Guard terminated TLS and attached the held token itself (AD-5)…
+    expect(calls[0].auth).toBe("Bearer tok-secret-123");
+    expect(calls[0].url).toContain("gmail.googleapis.com/gmail/v1/users/me/messages");
+    // …and the token is NOWHERE in what crosses back to the sandbox (AD-10).
+    expect(JSON.stringify(res)).not.toContain("tok-secret-123");
+    await cleanup();
+  });
+
+  it("refuses a read when the allowlist is empty — reaches nothing (AC3)", async () => {
+    const { impl, calls } = captureGmailFetch();
+    const { guard, cleanup } = await withGuard({ connections: [] }, impl);
+    const res = await guard.forwardConnection(RUN, req);
+    expect(res.ok).toBe(false);
+    expect(res.refusal?.destination).toBe("gmail.googleapis.com");
+    expect(res.refusal?.detail).toMatch(/not on this agent's allowlist/);
+    expect(calls).toHaveLength(0); // never forwarded
+    await cleanup();
+  });
+
+  it("refuses a read for a connection whose credential the run doesn't hold (AC2)", async () => {
+    const { impl, calls } = captureGmailFetch();
+    // Allowlist has the destination but no credential for the requested connectionId.
+    const { guard, cleanup } = await withGuard({ connections: [{ ...gmailConn, connectionId: "other" }] }, impl);
+    const res = await guard.forwardConnection(RUN, req); // asks for connectionId "gmail"
+    expect(res.ok).toBe(false);
+    expect(res.refusal).toBeTruthy();
+    expect(calls).toHaveLength(0);
+    await cleanup();
+  });
+
+  it("fails closed — a forward error becomes a refusal, never a permitted egress (NFR-2)", async () => {
+    const throwing = (async () => { throw new Error("network down"); }) as unknown as typeof fetch;
+    const { guard, cleanup } = await withGuard({ connections: [gmailConn] }, throwing);
+    const res = await guard.forwardConnection(RUN, req);
+    expect(res.ok).toBe(false);
+    expect(res.refusal?.destination).toBe("gmail.googleapis.com");
+    await cleanup();
+  });
+
+  it("a registered no-op filter block refuses; teardown zeroes the held credentials", async () => {
+    const { impl } = captureGmailFetch();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "guard-"));
+    const guard = createGuard({ socketDir: dir, litellmBaseUrl: "http://x", litellmMasterKey: "sk", fetchImpl: impl, filterHook: () => ({ allow: false, reason: "blocked by test sentinel" }) });
+    await guard.register(RUN, { connections: [gmailConn] });
+    const blocked = await guard.forwardConnection(RUN, req);
+    expect(blocked.ok).toBe(false);
+    expect(blocked.refusal?.detail).toMatch(/blocked by test sentinel/);
+    await guard.teardown(RUN);
+    // After teardown the run is unknown → any read refuses (no lingering credential).
+    const afterTeardown = await guard.forwardConnection(RUN, req);
+    expect(afterTeardown.ok).toBe(false);
     fs.rmSync(dir, { recursive: true, force: true });
   });
 });

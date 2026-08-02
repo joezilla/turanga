@@ -73,6 +73,8 @@ async function main() {
     runtime,
     guard,
     hub: runHub,
+    dataConnectionsRepo, // Story 4.3 — resolve the run's Gmail connection + allowlist
+    googleOAuth: google, // Story 4.3 — mint the short-lived access token handed to the Guard
     image: process.env.AGENT_HARNESS_IMAGE ?? "turanga/agent-harness:dev",
     sandboxVolume: process.env.GUARD_SANDBOX_VOLUME ?? "turanga_guard-run",
   });

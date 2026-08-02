@@ -1,15 +1,34 @@
 // Talks to the egress-guard's run-admin API (compose network, control-plane only). Registering
-// a run provisions its per-run UDS on the shared volume; teardown removes it. (E4-AD-1.)
+// a run provisions its per-run UDS on the shared volume + the run's allowlist + held credentials;
+// teardown removes them. (E4-AD-1, AD-5.) The provision (allowlist + tokens) travels ONLY over this
+// admin-token-guarded control-plane path — never through the sandbox's job spec (AD-10).
+
+/** A credential + allowlist the Guard holds for a run. The access token is short-lived (minted by
+ *  control-api). This is control-plane data; it never enters the sandbox. */
+export interface ProvisionConnection {
+  connectionId: string;
+  provider: "gmail";
+  destinations: string[];
+  accessToken: string;
+}
+export interface RunProvision {
+  connections: ProvisionConnection[];
+}
+
 export interface RunGuard {
-  registerRun(runId: string): Promise<void>;
+  registerRun(runId: string, provision?: RunProvision): Promise<void>;
   teardownRun(runId: string): Promise<void>;
 }
 
 export function httpRunGuard(adminUrl: string, adminToken: string): RunGuard {
   const headers = { "content-type": "application/json", "x-guard-admin": adminToken };
   return {
-    async registerRun(runId) {
-      const r = await fetch(`${adminUrl}/admin/runs/${encodeURIComponent(runId)}/register`, { method: "POST", headers });
+    async registerRun(runId, provision = { connections: [] }) {
+      const r = await fetch(`${adminUrl}/admin/runs/${encodeURIComponent(runId)}/register`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(provision),
+      });
       if (!r.ok) throw new Error(`guard register failed (HTTP ${r.status})`);
     },
     async teardownRun(runId) {
@@ -19,18 +38,19 @@ export function httpRunGuard(adminUrl: string, adminToken: string): RunGuard {
   };
 }
 
-// A no-op guard for unit tests / no-guard boot.
-export function fakeRunGuard(): RunGuard & { registered: string[]; toreDown: string[] } {
-  const registered: string[] = [];
+// A no-op guard for unit tests / no-guard boot. Records the provision so tests can assert the
+// allowlist + that a credential was passed (and, crucially, that it never leaked into the jobSpec).
+export function fakeRunGuard(): RunGuard & { registered: { runId: string; provision: RunProvision }[]; toreDown: string[] } {
+  const registered: { runId: string; provision: RunProvision }[] = [];
   const toreDown: string[] = [];
   return {
     registered,
     toreDown,
-    async registerRun(id) {
-      registered.push(id);
+    async registerRun(runId, provision = { connections: [] }) {
+      registered.push({ runId, provision });
     },
-    async teardownRun(id) {
-      toreDown.push(id);
+    async teardownRun(runId) {
+      toreDown.push(runId);
     },
   };
 }

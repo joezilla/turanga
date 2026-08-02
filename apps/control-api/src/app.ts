@@ -78,7 +78,7 @@ export function createApp(deps: AppDeps = {}) {
   // Docker; server.ts injects the real Docker-backed orchestrator (built on the same hub).
   const orchestrator =
     deps.orchestrator ??
-    runOrchestrator({ runsRepo, agentsRepo, runtime: fakeSandboxRuntime(), guard: fakeRunGuard(), hub: runHub, image: "turanga/agent-harness:dev", sandboxVolume: "guard-run" });
+    runOrchestrator({ runsRepo, agentsRepo, runtime: fakeSandboxRuntime(), guard: fakeRunGuard(), hub: runHub, dataConnectionsRepo, googleOAuth: google, image: "turanga/agent-harness:dev", sandboxVolume: "guard-run" });
   app.route("/", runRoutes(runsRepo, orchestrator, runHub));
 
   return app;

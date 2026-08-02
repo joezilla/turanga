@@ -250,3 +250,31 @@ test("test pane: stream a run → user turn, failed dot + agent turn + mono metr
   await expect(transcript.locator(".turn", { hasText: "again" })).toBeVisible({ timeout: 20000 });
   await expect(transcript.locator(".run-status")).toContainText("failed", { timeout: 20000 });
 });
+
+test("test pane: a scoped-skill agent's off-allowlist egress is refused inline (default-deny)", async ({ page }) => {
+  await signIn(page);
+
+  // Agent with a model + a Gmail-scoped skill (read) but no connected Gmail connection / no OAuth
+  // configured → the harness attempts the read, the Guard has nothing provisioned, and refuses it
+  // (default-deny). [4.3 AC2/AC3]
+  await page.getByRole("button", { name: "Create agent" }).first().click();
+  await page.locator("a.agent").first().click();
+  await expect(page).toHaveURL(/\/agents\/[0-9A-Z]{26}$/);
+  const agentId = page.url().split("/").pop();
+  const patch = await page.request.patch(`${CONTROL_API}/agents/${agentId}`, {
+    data: { model: "openai/gpt-4o", skills: [{ skill: "read-search", scope: "read", send: false }] },
+    headers: { "content-type": "application/json" },
+  });
+  expect(patch.ok()).toBeTruthy();
+  await page.reload();
+
+  await page.getByLabel("Task for this test run").fill("read my mail");
+  await page.getByRole("button", { name: "Run test" }).click();
+
+  // The blocked egress surfaces inline as a refusal row: destination + reason (not a red banner). [4.3 AC2]
+  const transcript = page.locator(".transcript");
+  await expect(transcript.locator(".refusal")).toContainText(/not on this agent's allowlist/, { timeout: 20000 });
+  await expect(transcript.locator(".refusal")).toContainText("gmail.googleapis.com");
+  // The run still resolves terminally (a blocked egress refuses that egress; it doesn't kill the run). [4.3]
+  await expect(transcript.locator(".run-status")).toContainText(/failed|succeeded/, { timeout: 20000 });
+});

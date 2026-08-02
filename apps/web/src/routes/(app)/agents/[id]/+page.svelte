@@ -377,9 +377,10 @@
                 <p class="turn-text">{msg.text}</p>
               </div>
             {:else if msg.type === "refusal"}
+              <!-- A guardrail stopped an egress — reads caution (dot + full reason), never a red banner. -->
               <div class="refusal">
-                <Circle size={7} fill="var(--state-failed)" color="var(--state-failed)" aria-hidden="true" />
-                <span>Refused ({msg.kind}) — {msg.detail}</span>
+                <Circle size={7} fill="var(--state-killed)" color="var(--state-killed)" aria-hidden="true" />
+                <span>{msg.detail}</span>
               </div>
             {/if}
           {/each}

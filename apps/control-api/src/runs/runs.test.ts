@@ -1,12 +1,14 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import type { ControlChannelMessage } from "@turanga/contracts";
 import { runOrchestrator } from "./orchestrator.js";
 import { memoryRunsRepo } from "./repo.js";
 import { fakeSandboxRuntime, resolveSandboxRuntimeKind } from "./runtime.js";
 import { fakeRunGuard } from "./guardClient.js";
 import { createRunHub } from "./hub.js";
+import { encryptSecret } from "../secrets/crypto.js";
+import { fakeGoogleOAuth } from "../oauth/google.js";
 
-type Agent = { id: string; model: string | null; instructions: string; state: "draft" | "active" };
+type Agent = { id: string; model: string | null; instructions: string; state: "draft" | "active"; skills?: { scope: string }[] };
 const agent = (over: Partial<Agent> = {}): Agent => ({ id: "a1", model: "openai/gpt-4o", instructions: "be nice", state: "draft", ...over });
 const agentsRepo = (a: Agent | null) => ({ get: async (id: string) => (a && a.id === id ? a : null) });
 
@@ -18,7 +20,7 @@ function orch(opts: { agent?: Agent; runtime?: ReturnType<typeof fakeSandboxRunt
   const hub = createRunHub();
   const runtime =
     opts.runtime ??
-    fakeSandboxRuntime({ lines: [nd({ type: "turn", v: 1, role: "agent", text: "hi" }), nd({ type: "done", v: 1, status: "succeeded" })] });
+    fakeSandboxRuntime({ lines: [nd({ type: "turn", v: 2, role: "agent", text: "hi" }), nd({ type: "done", v: 2, status: "succeeded" })] });
   const o = runOrchestrator({ runsRepo, agentsRepo: agentsRepo(opts.agent ?? agent()), runtime, guard, hub, image: "img", sandboxVolume: "vol", maxConcurrent: opts.maxConcurrent, runTimeoutMs: opts.runTimeoutMs });
   return { o, runsRepo, guard, runtime, hub };
 }
@@ -71,7 +73,7 @@ describe("run orchestrator", () => {
   });
 
   it("ignores malformed control lines and stops at the first done", async () => {
-    const { o } = orch({ runtime: fakeSandboxRuntime({ lines: ["not json", "{}", nd({ type: "done", v: 1, status: "succeeded" }), nd({ type: "done", v: 1, status: "failed" })] }) });
+    const { o } = orch({ runtime: fakeSandboxRuntime({ lines: ["not json", "{}", nd({ type: "done", v: 2, status: "succeeded" }), nd({ type: "done", v: 2, status: "failed" })] }) });
     const r = await o.launch("a1", "x");
     expect(r.ok).toBe(true);
     if (!r.ok) return;
@@ -138,7 +140,7 @@ describe("run orchestrator", () => {
       if (failNext) { failNext = false; throw new Error("db blip"); }
       return base.create(row);
     } };
-    const runtime = fakeSandboxRuntime({ lines: [nd({ type: "done", v: 1, status: "succeeded" })] });
+    const runtime = fakeSandboxRuntime({ lines: [nd({ type: "done", v: 2, status: "succeeded" })] });
     const o = runOrchestrator({ runsRepo: flaky, agentsRepo: agentsRepo(agent()), runtime, guard: fakeRunGuard(), hub: createRunHub(), image: "img", sandboxVolume: "vol", maxConcurrent: 1 });
     await expect(o.launch("a1", "x")).rejects.toThrow("db blip"); // create() threw before execute()
     const r = await o.launch("a1", "x"); // slot was released → not stuck at the cap
@@ -155,11 +157,87 @@ describe("run orchestrator", () => {
   });
 });
 
+describe("run orchestrator — connections + credentialed provisioning (4.3)", () => {
+  const OLD_KEY = process.env.TOKEN_ENC_KEY;
+  beforeAll(() => {
+    process.env.TOKEN_ENC_KEY = "test-token-enc-key";
+  });
+  afterAll(() => {
+    if (OLD_KEY === undefined) delete process.env.TOKEN_ENC_KEY;
+    else process.env.TOKEN_ENC_KEY = OLD_KEY;
+  });
+
+  type Conn = { id: string; provider: string; status: string; destinations: string[]; encRefreshToken: string | null };
+  function connOrch(opts: { skills?: { scope: string }[]; connections?: Conn[] }) {
+    const runsRepo = memoryRunsRepo();
+    const guard = fakeRunGuard();
+    const runtime = fakeSandboxRuntime({ lines: [nd({ type: "done", v: 2, status: "succeeded" })] });
+    const googleOAuth = fakeGoogleOAuth();
+    const dataConnectionsRepo = { list: async () => opts.connections ?? [] };
+    const o = runOrchestrator({
+      runsRepo,
+      agentsRepo: agentsRepo(agent({ skills: opts.skills })),
+      runtime,
+      guard,
+      hub: createRunHub(),
+      dataConnectionsRepo,
+      googleOAuth,
+      image: "img",
+      sandboxVolume: "vol",
+    });
+    return { o, guard, runtime };
+  }
+
+  it("provisions the allowlist + minted credential for a scoped-skill agent with a connected Gmail — token NEVER in the jobSpec (AC1, AD-10)", async () => {
+    const enc = encryptSecret("refresh-xyz");
+    const { o, guard, runtime } = connOrch({
+      skills: [{ scope: "read" }],
+      connections: [{ id: "c1", provider: "gmail", status: "connected", destinations: ["gmail.googleapis.com", "oauth2.googleapis.com"], encRefreshToken: enc }],
+    });
+    const r = await o.launch("a1", "read my mail");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+
+    // The Guard is provisioned with the allowlist + the minted access token…
+    const prov = guard.registered[0].provision;
+    expect(prov.connections).toHaveLength(1);
+    expect(prov.connections[0].destinations).toContain("gmail.googleapis.com");
+    expect(prov.connections[0].accessToken).toBe("access-for-refresh-xyz");
+    // …and the jobSpec carries only the LOGICAL handle — no token, no refresh token (AD-10).
+    const jobSpecJson = runtime.established[0].jobSpecJson;
+    expect(jobSpecJson).toContain('"id":"c1"');
+    expect(jobSpecJson).not.toContain("access-for-refresh-xyz");
+    expect(jobSpecJson).not.toContain("refresh-xyz");
+  });
+
+  it("empty provision when the agent has no scoped skill (default-deny per-agent)", async () => {
+    const { o, guard, runtime } = connOrch({
+      skills: [{ scope: "none" }],
+      connections: [{ id: "c1", provider: "gmail", status: "connected", destinations: ["gmail.googleapis.com"], encRefreshToken: encryptSecret("r") }],
+    });
+    const r = await o.launch("a1", "x");
+    expect(r.ok).toBe(true);
+    expect(guard.registered[0].provision.connections).toHaveLength(0);
+    expect(runtime.established[0].jobSpecJson).toContain('"connections":[]');
+  });
+
+  it("logical handle but NO credential when the connection isn't connected — the read will be refused (AC2)", async () => {
+    const { o, guard, runtime } = connOrch({
+      skills: [{ scope: "read" }],
+      connections: [{ id: "c1", provider: "gmail", status: "error", destinations: ["gmail.googleapis.com"], encRefreshToken: null }],
+    });
+    const r = await o.launch("a1", "x");
+    expect(r.ok).toBe(true);
+    expect(guard.registered[0].provision.connections).toHaveLength(0); // no credential provisioned
+    expect(runtime.established[0].jobSpecJson).toContain('"id":"c1"'); // but the harness still attempts → refused
+  });
+});
+
 describe("RunsRepo (memory)", () => {
   it("create/get/setStatus/appendMessage/list", async () => {
     const repo = memoryRunsRepo();
     await repo.create({ id: "r1", agentId: "a1", status: "created", taskInput: "x", transcript: [], reason: null, createdAt: new Date().toISOString(), endedAt: null });
-    await repo.appendMessage("r1", { type: "turn", v: 1, role: "user", text: "hi" });
+    await repo.appendMessage("r1", { type: "turn", v: 2, role: "user", text: "hi" });
     await repo.setStatus("r1", "succeeded", { endedAt: new Date().toISOString() });
     const got = await repo.get("r1");
     expect(got?.status).toBe("succeeded");

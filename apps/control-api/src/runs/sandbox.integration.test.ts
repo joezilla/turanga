@@ -53,5 +53,7 @@ describe.skipIf(!RUN)("sandbox integration (live stack)", () => {
     // model error in the transcript — the topology is what this proves).
     const agentTurn = run.transcript.find((m) => m.type === "turn" && m.role === "agent");
     expect(agentTurn).toBeTruthy();
+    // No credential ever crosses into the sandbox transcript (AD-10) — nothing Bearer-shaped leaks.
+    expect(JSON.stringify(run.transcript)).not.toMatch(/Bearer\s/i);
   }, 60_000);
 });
