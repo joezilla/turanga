@@ -27,25 +27,45 @@ async function readStdin(): Promise<string> {
   return Buffer.concat(chunks).toString();
 }
 
+const GUARD_TIMEOUT_MS = 90_000; // never hang the sandbox on a stalled guard/gateway
+const MAX_GUARD_RESPONSE = 4 * 1024 * 1024; // bound the response we buffer
+
 // HTTP over the per-run guard UDS. The harness never sees a URL, key, or token (AD-10).
 function guardModelCall(socketPath: string, req: GuardModelRequest): Promise<GuardModelResponse> {
   return new Promise((resolve) => {
+    let settled = false;
+    const done = (r: GuardModelResponse) => {
+      if (!settled) {
+        settled = true;
+        resolve(r);
+      }
+    };
     const payload = JSON.stringify(req);
     const r = http.request(
-      { socketPath, path: "/", method: "POST", headers: { "content-type": "application/json", "content-length": Buffer.byteLength(payload) } },
+      { socketPath, path: "/", method: "POST", headers: { "content-type": "application/json", "content-length": Buffer.byteLength(payload) }, timeout: GUARD_TIMEOUT_MS },
       (res) => {
         let raw = "";
-        res.on("data", (c) => (raw += c));
+        res.on("data", (c) => {
+          raw += c;
+          if (raw.length > MAX_GUARD_RESPONSE) {
+            res.destroy();
+            done({ v: 1, ok: false, error: "The guard response was too large." });
+          }
+        });
         res.on("end", () => {
           try {
-            resolve(GuardModelResponseSchema.parse(JSON.parse(raw)));
+            done(GuardModelResponseSchema.parse(JSON.parse(raw)));
           } catch {
-            resolve({ v: 1, ok: false, error: "The guard returned an unreadable response." });
+            done({ v: 1, ok: false, error: "The guard returned an unreadable response." });
           }
         });
       },
     );
-    r.on("error", () => resolve({ v: 1, ok: false, error: "Can't reach the guard." }));
+    r.on("timeout", () => {
+      r.destroy();
+      done({ v: 1, ok: false, error: "The guard timed out." });
+    });
+    r.on("error", () => done({ v: 1, ok: false, error: "Can't reach the guard." }));
     r.write(payload);
     r.end();
   });
@@ -69,7 +89,8 @@ export async function runHarness(): Promise<void> {
   if (spec.instructions.trim()) messages.push({ role: "system", content: spec.instructions });
   messages.push({ role: "user", content: spec.taskInput });
 
-  const socketPath = `/guard/${spec.runId}.sock`;
+  // The run's own subdir of the shared volume is mounted at /guard (per-run isolation, E4-AD-1).
+  const socketPath = `/guard/run.sock`;
   const res = await guardModelCall(socketPath, { v: 1, runId: spec.runId, model: spec.model, messages });
 
   if (res.ok) {

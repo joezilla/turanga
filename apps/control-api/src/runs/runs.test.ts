@@ -11,13 +11,13 @@ const agentsRepo = (a: Agent | null) => ({ get: async (id: string) => (a && a.id
 
 const nd = (m: ControlChannelMessage) => JSON.stringify(m);
 
-function orch(opts: { agent?: Agent; runtime?: ReturnType<typeof fakeSandboxRuntime> } = {}) {
+function orch(opts: { agent?: Agent; runtime?: ReturnType<typeof fakeSandboxRuntime>; maxConcurrent?: number; runTimeoutMs?: number } = {}) {
   const runsRepo = memoryRunsRepo();
   const guard = fakeRunGuard();
   const runtime =
     opts.runtime ??
     fakeSandboxRuntime({ lines: [nd({ type: "turn", v: 1, role: "agent", text: "hi" }), nd({ type: "done", v: 1, status: "succeeded" })] });
-  const o = runOrchestrator({ runsRepo, agentsRepo: agentsRepo(opts.agent ?? agent()), runtime, guard, image: "img", sandboxVolume: "vol" });
+  const o = runOrchestrator({ runsRepo, agentsRepo: agentsRepo(opts.agent ?? agent()), runtime, guard, image: "img", sandboxVolume: "vol", maxConcurrent: opts.maxConcurrent, runTimeoutMs: opts.runTimeoutMs });
   return { o, runsRepo, guard, runtime };
 }
 
@@ -30,7 +30,7 @@ describe("run orchestrator", () => {
     expect(r.run.status).toBe("succeeded");
     expect(r.run.transcript.map((m) => m.type)).toEqual(["turn", "done"]);
     expect(runtime.established).toHaveLength(1);
-    expect(runtime.established[0].guardSocketDir).toBe("vol"); // the sandbox binds the shared volume
+    expect(runtime.established[0].guardVolume).toBe("vol"); // the sandbox mounts its own subpath of this volume
     expect(runtime.established[0].jobSpecJson).toContain('"taskInput":"do it"');
     expect(guard.registered).toHaveLength(1);
     expect(guard.toreDown).toHaveLength(1); // registered + torn down exactly once
@@ -68,13 +68,31 @@ describe("run orchestrator", () => {
     expect(r.run.reason).toMatch(/exited 3/);
   });
 
-  it("ignores malformed control lines", async () => {
-    const { o } = orch({ runtime: fakeSandboxRuntime({ lines: ["not json", "{}", nd({ type: "done", v: 1, status: "succeeded" })] }) });
+  it("ignores malformed control lines and stops at the first done", async () => {
+    const { o } = orch({ runtime: fakeSandboxRuntime({ lines: ["not json", "{}", nd({ type: "done", v: 1, status: "succeeded" }), nd({ type: "done", v: 1, status: "failed" })] }) });
     const r = await o.launch("a1", "x");
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.run.status).toBe("succeeded");
-    expect(r.run.transcript).toHaveLength(1); // only the valid done survived
+    expect(r.run.status).toBe("succeeded"); // first terminal wins; the trailing done is ignored
+    expect(r.run.transcript).toHaveLength(1);
+  });
+
+  it("kills a hung run at the wall-clock deadline (Run=killed, reason set)", async () => {
+    const runtime = fakeSandboxRuntime({ hang: true });
+    const { o } = orch({ runtime, runTimeoutMs: 40 });
+    const r = await o.launch("a1", "x");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.run.status).toBe("killed");
+    expect(r.run.reason).toMatch(/time limit/i);
+    expect(runtime.killed).toBeGreaterThanOrEqual(1); // force-killed
+  });
+
+  it("rejects over the concurrency cap with a stated reason (429)", async () => {
+    const r = await orch({ maxConcurrent: 0 }).o.launch("a1", "x");
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.status).toBe(429);
   });
 });
 
@@ -93,9 +111,10 @@ describe("RunsRepo (memory)", () => {
 });
 
 describe("resolveSandboxRuntimeKind", () => {
-  it("defaults to dev-insecure, honors gvisor, refuses dev-insecure in production, rejects garbage", () => {
-    expect(resolveSandboxRuntimeKind({})).toBe("dev-insecure");
+  it("requires an explicit value (fail-closed), honors gvisor/dev-insecure, refuses dev-insecure in production", () => {
+    expect(() => resolveSandboxRuntimeKind({})).toThrow(/must be set/); // no silent default
     expect(resolveSandboxRuntimeKind({ SANDBOX_RUNTIME: "gvisor" })).toBe("gvisor");
+    expect(resolveSandboxRuntimeKind({ SANDBOX_RUNTIME: "dev-insecure" })).toBe("dev-insecure");
     expect(() => resolveSandboxRuntimeKind({ SANDBOX_RUNTIME: "dev-insecure", NODE_ENV: "production" })).toThrow(/refused in production/);
     expect(() => resolveSandboxRuntimeKind({ SANDBOX_RUNTIME: "bogus" })).toThrow();
   });

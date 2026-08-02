@@ -24,3 +24,9 @@
 - `costCap` PATCH is a whole-object replace (a partial writer nulls the omitted side) — document, or switch to per-side merge.
 - Dependents confirm concatenates all agent names unbounded + full agent-list scan per arm — cap/paginate at scale.
 - A `$0.00` cost cap is accepted and indistinguishable from unset — revisit when caps are enforced (Epic 4).
+
+## Deferred from: code review of 4-1 (2026-08-02)
+- egress-guard: add a reaper/TTL for orphaned per-run sockets + http.Servers (teardown can be missed on a guard/control-api crash mid-run).
+- POST /runs has no ownership/tenancy check (single-user MVP) — revisit if multi-tenant.
+- Secrets (litellm master key, guard admin token) default to well-known values — a production-refusal / required-secret pass across all services.
+- runs.transcript jsonb has no growth cap — revisit when multi-turn agent loops land (4.4).

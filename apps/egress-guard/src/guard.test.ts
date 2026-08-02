@@ -32,16 +32,24 @@ describe("guard model proxy", () => {
   });
 });
 
+const RUN = "01ARZ3NDEKTSV4RRFFQ69G5FAV"; // a valid ULID
+
 describe("guard per-run socket lifecycle", () => {
-  it("register provisions a UDS that serves the model contract; teardown removes it", async () => {
+  it("rejects a non-ULID runId (no path traversal)", async () => {
+    const guard = createGuard({ socketDir: "/tmp", litellmBaseUrl: "http://x", litellmMasterKey: "sk", fetchImpl: okFetch });
+    await expect(guard.register("../../etc/x")).rejects.toThrow(/invalid/i);
+  });
+
+  it("register provisions a UDS in the run's own subdir that serves the model contract; teardown removes it", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "guard-"));
     const guard = createGuard({ socketDir: dir, litellmBaseUrl: "http://litellm:4000", litellmMasterKey: "sk", fetchImpl: okFetch });
-    const { socketPath } = await guard.register("run1");
+    const { socketPath } = await guard.register(RUN);
     expect(fs.existsSync(socketPath)).toBe(true);
-    expect(guard.activeRuns()).toEqual(["run1"]);
+    expect(socketPath).toContain(`${RUN}/run.sock`); // per-run subdir (isolation)
+    expect(guard.activeRuns()).toEqual([RUN]);
 
     // A harness-style HTTP-over-UDS call resolves through the socket.
-    const body = JSON.stringify({ v: 1, runId: "run1", model: "m", messages: [{ role: "user", content: "hi" }] });
+    const body = JSON.stringify({ v: 1, runId: RUN, model: "m", messages: [{ role: "user", content: "hi" }] });
     const out = await new Promise<GuardModelResponse>((resolve) => {
       const req = http.request({ socketPath, path: "/", method: "POST", headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body) } }, (res) => {
         let raw = "";
@@ -53,7 +61,7 @@ describe("guard per-run socket lifecycle", () => {
     expect(out.ok).toBe(true);
     expect(out.text).toBe("hello from the model");
 
-    await guard.teardown("run1");
+    await guard.teardown(RUN);
     expect(fs.existsSync(socketPath)).toBe(false);
     expect(guard.activeRuns()).toEqual([]);
     fs.rmSync(dir, { recursive: true, force: true });

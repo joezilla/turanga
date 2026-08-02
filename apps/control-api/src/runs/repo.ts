@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import type { ControlChannelMessage } from "@turanga/contracts";
 import type { Db } from "../db/client.js";
 import { runs } from "../db/schema.js";
@@ -20,10 +20,12 @@ export interface RunRow {
 export interface RunsRepo {
   create(row: RunRow): Promise<void>;
   get(id: string): Promise<RunRow | null>;
-  list(agentId?: string): Promise<RunRow[]>; // newest first
+  list(agentId?: string, limit?: number): Promise<RunRow[]>; // newest first, bounded
   setStatus(id: string, status: RunStatus, patch?: { reason?: string | null; endedAt?: string }): Promise<void>;
   appendMessage(id: string, msg: ControlChannelMessage): Promise<void>;
 }
+
+const DEFAULT_LIST_LIMIT = 100;
 
 function toRow(r: typeof runs.$inferSelect): RunRow {
   return {
@@ -56,9 +58,9 @@ export function drizzleRunsRepo(db: Db): RunsRepo {
       const rows = await db.select().from(runs).where(eq(runs.id, id)).limit(1);
       return rows[0] ? toRow(rows[0]) : null;
     },
-    async list(agentId) {
-      const base = db.select().from(runs).orderBy(desc(runs.createdAt), desc(runs.id));
-      const rows = agentId ? await db.select().from(runs).where(eq(runs.agentId, agentId)).orderBy(desc(runs.createdAt), desc(runs.id)) : await base;
+    async list(agentId, limit = DEFAULT_LIST_LIMIT) {
+      const q = db.select().from(runs).orderBy(desc(runs.createdAt), desc(runs.id)).limit(limit);
+      const rows = agentId ? await q.where(eq(runs.agentId, agentId)) : await q;
       return rows.map(toRow);
     },
     async setStatus(id, status, patch) {
@@ -68,10 +70,11 @@ export function drizzleRunsRepo(db: Db): RunsRepo {
       await db.update(runs).set(set).where(eq(runs.id, id));
     },
     async appendMessage(id, msg) {
-      // Read-modify-write; a single orchestrator writes a given run, so no contention (AD-7).
-      const cur = await this.get(id);
-      if (!cur) return;
-      await db.update(runs).set({ transcript: [...cur.transcript, msg] }).where(eq(runs.id, id));
+      // DB-level jsonb append (avoids an O(n²) read-modify-write and a lost-update race).
+      await db
+        .update(runs)
+        .set({ transcript: sql`${runs.transcript} || ${JSON.stringify([msg])}::jsonb` })
+        .where(eq(runs.id, id));
     },
   };
 }
@@ -88,8 +91,12 @@ export function memoryRunsRepo(): RunsRepo {
       const r = rows.get(id);
       return r ? { ...r, transcript: [...r.transcript] } : null;
     },
-    async list(agentId) {
-      return order.map((id) => rows.get(id)!).filter((r) => (agentId ? r.agentId === agentId : true)).map((r) => ({ ...r, transcript: [...r.transcript] }));
+    async list(agentId, limit = DEFAULT_LIST_LIMIT) {
+      return order
+        .map((id) => rows.get(id)!)
+        .filter((r) => (agentId ? r.agentId === agentId : true))
+        .slice(0, limit)
+        .map((r) => ({ ...r, transcript: [...r.transcript] }));
     },
     async setStatus(id, status, patch) {
       const r = rows.get(id);
