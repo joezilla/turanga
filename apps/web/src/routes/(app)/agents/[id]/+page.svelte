@@ -3,12 +3,15 @@
   // sections, autosave. Model (3.2), Instructions + Variables (3.3). Skills/Cost caps are
   // later stories; the test pane is a scaffold (runs are Epic 4).
   import { page } from "$app/state";
+  import { onDestroy } from "svelte";
   import { ArrowLeft, Circle } from "@lucide/svelte";
   import { getAgent, updateAgent, type Agent, type AgentPatch, type AgentVariable, type AttachedSkill, type CostCap } from "$lib/agents";
   import { listProviders, type Provider } from "$lib/connections";
+  import { startRun, runEventsUrl, type RunMessage } from "$lib/runs";
   import { undefinedVariables } from "$lib/variables";
   import Section from "$lib/components/Section.svelte";
   import StatusDot from "$lib/components/StatusDot.svelte";
+  import RunStatusDot from "$lib/components/RunStatusDot.svelte";
   import ModelSelector from "$lib/components/ModelSelector.svelte";
   import InstructionsEditor from "$lib/components/InstructionsEditor.svelte";
   import SkillsEditor from "$lib/components/SkillsEditor.svelte";
@@ -42,6 +45,92 @@
   // Config UI state
   let showTest = $state(false); // < 1024px: the test pane collapses behind this toggle
 
+  // Test pane (Story 4.2): start a run, then stream its control-channel messages over SSE.
+  // runState drives the five UI states. `error` = couldn't start / stream dropped (a control-plane
+  // problem, not a run that executed and resolved to failed).
+  type RunUiState = "empty" | "running" | "succeeded" | "failed" | "killed" | "error";
+  let runState = $state<RunUiState>("empty");
+  let taskInput = $state("");
+  let transcript = $state<RunMessage[]>([]);
+  let runError = $state("");
+  let es: EventSource | null = null; // the live SSE stream (not reactive)
+  let doneReceived = false;
+
+  const lastMetrics = $derived(transcript.filter((m): m is Extract<RunMessage, { type: "metrics" }> => m.type === "metrics").at(-1));
+  const fmtNum = (n: number) => n.toLocaleString("en-US");
+
+  function closeStream() {
+    if (es) {
+      es.close();
+      es = null;
+    }
+  }
+
+  function runTest() {
+    if (runState === "running") return; // one test at a time
+    closeStream();
+    transcript = [];
+    runError = "";
+    doneReceived = false;
+    runState = "running";
+    const task = taskInput;
+    void (async () => {
+      const started = await startRun(id, task);
+      if (!started.ok) {
+        // Couldn't even start — cause→consequence→recovery inline (no run executed).
+        runState = "error";
+        runError = started.error;
+        return;
+      }
+      const source = new EventSource(runEventsUrl(started.value.id), { withCredentials: true });
+      es = source;
+      source.addEventListener("message", (e) => {
+        try {
+          transcript = [...transcript, JSON.parse((e as MessageEvent).data) as RunMessage];
+        } catch {
+          /* skip an unreadable frame rather than break the stream */
+        }
+      });
+      source.addEventListener("done", (e) => {
+        doneReceived = true;
+        try {
+          const { status } = JSON.parse((e as MessageEvent).data) as { status: "succeeded" | "failed" | "killed" };
+          runState = status;
+        } catch {
+          runState = "failed";
+        }
+        closeStream(); // we own the close so the browser doesn't auto-reconnect
+      });
+      source.onerror = () => {
+        // EventSource also fires error when the server closes normally — only surface it if we
+        // never received the terminal `done` (a genuine mid-stream drop).
+        if (!doneReceived) {
+          runState = "error";
+          runError = "The test stream dropped before finishing. Check the control plane, then run the test again.";
+        }
+        closeStream();
+      };
+    })();
+  }
+
+  function clearTest() {
+    closeStream();
+    transcript = [];
+    runError = "";
+    runState = "empty";
+  }
+
+  // Cmd/Ctrl+Enter runs the current test from anywhere in the editor (EXPERIENCE.md#Interaction).
+  function onEditorKeydown(e: KeyboardEvent) {
+    if (!agent) return; // only while an agent is loaded
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      runTest();
+    }
+  }
+
+  onDestroy(closeStream);
+
   const definedNames = $derived(vars.map((v) => v.name).filter((n) => VAR_NAME_RE.test(n)));
   const undefinedNames = $derived(undefinedVariables(instructions, definedNames));
 
@@ -67,6 +156,7 @@
   async function load() {
     const target = id; // guard against a fast id change resolving out of order
     cancelPendingSaves();
+    clearTest(); // a different agent starts with a fresh test pane
     loading = true;
     notFound = false;
     loadError = "";
@@ -172,6 +262,8 @@
   }
 </script>
 
+<svelte:window onkeydown={onEditorKeydown} />
+
 {#if loading}
   <p class="muted">Loading agent…</p>
 {:else if notFound}
@@ -264,7 +356,52 @@
       </Section>
     </div>
     <div class="test-pane">
-      <p class="muted">Test runs appear here.</p>
+      <div class="transcript" role="log" aria-live="polite">
+        {#if transcript.length === 0 && runState !== "error"}
+          <p class="muted">No test runs.</p>
+        {:else}
+          {#each transcript as msg, i (i)}
+            {#if msg.type === "turn"}
+              <div class="turn">
+                <span class="turn-role">{msg.role}</span>
+                <p class="turn-text">{msg.text}</p>
+              </div>
+            {:else if msg.type === "refusal"}
+              <div class="refusal">
+                <Circle size={7} fill="var(--state-failed)" color="var(--state-failed)" aria-hidden="true" />
+                <span>Refused ({msg.kind}) — {msg.detail}</span>
+              </div>
+            {/if}
+          {/each}
+
+          {#if runState === "running"}
+            <div class="resolution"><RunStatusDot status="running" /></div>
+          {:else if runState === "succeeded" || runState === "failed" || runState === "killed"}
+            <div class="resolution">
+              <RunStatusDot status={runState} />
+              {#if lastMetrics}
+                <span class="metrics mono-num">{fmtNum(lastMetrics.latencyMs)} ms · {fmtNum(lastMetrics.tokens)} tokens</span>
+              {/if}
+            </div>
+          {/if}
+        {/if}
+
+        {#if runState === "error"}
+          <p class="run-error">
+            <Circle size={7} fill="var(--state-failed)" color="var(--state-failed)" aria-hidden="true" />
+            <span>{runError}</span>
+          </p>
+        {/if}
+      </div>
+
+      <div class="composer">
+        <label class="visually-hidden" for="task-input">Task for this test run</label>
+        <textarea id="task-input" rows="2" placeholder="What should it do?" bind:value={taskInput}></textarea>
+        <div class="composer-actions">
+          <button type="button" class="ghost" onclick={clearTest} disabled={transcript.length === 0 && runState === "empty"}>Clear</button>
+          <button type="button" class="primary" onclick={runTest} disabled={runState === "running"}>Run test</button>
+        </div>
+      </div>
     </div>
   </div>
 {/if}
@@ -343,8 +480,78 @@
   }
   .test-pane {
     background: var(--bg-canvas);
-    border-left: 1px solid var(--border-subtle);
+    border-left: 1px solid var(--border-subtle); /* hairline, never shadow (DESIGN.md#Elevation) */
     padding: var(--space-5);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    min-height: 0;
+  }
+  .transcript {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    overflow-y: auto;
+    min-height: 0;
+  }
+  .turn {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+  .turn-role {
+    font-size: 11px;
+    letter-spacing: var(--tracking-micro);
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+  }
+  .turn-text {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    color: var(--text-primary);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .resolution {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+  }
+  .metrics {
+    font-size: var(--text-sm); /* ≥ 12px */
+    color: var(--text-secondary);
+  }
+  .refusal,
+  .run-error {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+    margin: 0;
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+  }
+  .composer {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+  .composer textarea {
+    width: 100%;
+    resize: vertical;
+    padding: var(--space-2) var(--space-3);
+    font-family: inherit;
+    font-size: var(--text-sm);
+    color: var(--text-primary);
+    background: var(--surface-card);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+  }
+  .composer-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-2);
   }
 
   /* Below 1024px: single-column config; the test pane collapses behind the Test toggle. */

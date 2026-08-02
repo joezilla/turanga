@@ -1,9 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import type { ControlChannelMessage } from "@turanga/contracts";
 import { runOrchestrator } from "./orchestrator.js";
 import { memoryRunsRepo } from "./repo.js";
 import { fakeSandboxRuntime, resolveSandboxRuntimeKind } from "./runtime.js";
 import { fakeRunGuard } from "./guardClient.js";
+import { createRunHub } from "./hub.js";
 
 type Agent = { id: string; model: string | null; instructions: string; state: "draft" | "active" };
 const agent = (over: Partial<Agent> = {}): Agent => ({ id: "a1", model: "openai/gpt-4o", instructions: "be nice", state: "draft", ...over });
@@ -14,11 +15,12 @@ const nd = (m: ControlChannelMessage) => JSON.stringify(m);
 function orch(opts: { agent?: Agent; runtime?: ReturnType<typeof fakeSandboxRuntime>; maxConcurrent?: number; runTimeoutMs?: number } = {}) {
   const runsRepo = memoryRunsRepo();
   const guard = fakeRunGuard();
+  const hub = createRunHub();
   const runtime =
     opts.runtime ??
     fakeSandboxRuntime({ lines: [nd({ type: "turn", v: 1, role: "agent", text: "hi" }), nd({ type: "done", v: 1, status: "succeeded" })] });
-  const o = runOrchestrator({ runsRepo, agentsRepo: agentsRepo(opts.agent ?? agent()), runtime, guard, image: "img", sandboxVolume: "vol", maxConcurrent: opts.maxConcurrent, runTimeoutMs: opts.runTimeoutMs });
-  return { o, runsRepo, guard, runtime };
+  const o = runOrchestrator({ runsRepo, agentsRepo: agentsRepo(opts.agent ?? agent()), runtime, guard, hub, image: "img", sandboxVolume: "vol", maxConcurrent: opts.maxConcurrent, runTimeoutMs: opts.runTimeoutMs });
+  return { o, runsRepo, guard, runtime, hub };
 }
 
 describe("run orchestrator", () => {
@@ -93,6 +95,49 @@ describe("run orchestrator", () => {
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.status).toBe(429);
+  });
+
+  it("start() returns a running run immediately, then completes in the background", async () => {
+    const { o, runsRepo } = orch();
+    const r = await o.start("a1", "do it");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.run.status).toBe("running"); // returned before the sandbox finishes
+    await vi.waitFor(async () => expect((await runsRepo.get(r.run.id))?.status).toBe("succeeded"));
+    const done = await runsRepo.get(r.run.id);
+    expect(done?.transcript.map((m) => m.type)).toEqual(["turn", "done"]);
+    expect(done?.endedAt).toBeTruthy();
+  });
+
+  it("publishes each control message to the hub and completes it exactly once", async () => {
+    const { o, hub } = orch();
+    const r = await o.start("a1", "x");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const types: string[] = [];
+    let doneCount = 0;
+    let terminal = "";
+    hub.subscribe(
+      r.run.id,
+      0,
+      (m) => types.push(m.type),
+      (s) => {
+        doneCount++;
+        terminal = s;
+      },
+    );
+    await vi.waitFor(() => expect(doneCount).toBe(1));
+    expect(types).toEqual(["turn", "done"]);
+    expect(terminal).toBe("succeeded");
+  });
+
+  it("start() enforces the concurrency cap up front (429, no run created)", async () => {
+    const { o, runsRepo } = orch({ maxConcurrent: 0 });
+    const r = await o.start("a1", "x");
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.status).toBe(429);
+    expect(await runsRepo.list()).toHaveLength(0);
   });
 });
 

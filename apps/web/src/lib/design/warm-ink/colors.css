@@ -99,6 +99,7 @@
   --state-succeeded: var(--positive-500);
   --state-review:    var(--caution-500);
   --state-failed:    var(--critical-500);
+  --state-killed:    var(--state-idle);
 }
 
 /* ── Semantic aliases — dark ──────────────────────────────────────── */
@@ -150,6 +151,7 @@
   --state-succeeded: var(--positive-500);
   --state-review:    var(--caution-500);
   --state-failed:    var(--critical-500);
+  --state-killed:    var(--state-idle);
 
   --viz-1: oklch(0.680 0.090 195);
   --viz-2: oklch(0.680 0.090 245);

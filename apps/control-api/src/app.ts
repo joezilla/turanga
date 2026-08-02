@@ -20,6 +20,7 @@ import { memoryRunsRepo, type RunsRepo } from "./runs/repo.js";
 import { runOrchestrator, type RunOrchestrator } from "./runs/orchestrator.js";
 import { fakeSandboxRuntime } from "./runs/runtime.js";
 import { fakeRunGuard } from "./runs/guardClient.js";
+import { createRunHub, type RunHub } from "./runs/hub.js";
 
 export const VERSION = process.env.TURANGA_VERSION ?? "0.0.0";
 export const GIT_SHA = process.env.TURANGA_GIT_SHA ?? "unknown";
@@ -33,6 +34,7 @@ export interface AppDeps {
   googleOAuth?: GoogleOAuth;
   agentsRepo?: AgentsRepo;
   runsRepo?: RunsRepo;
+  runHub?: RunHub; // the live SSE relay; MUST be the same instance the orchestrator publishes to
   orchestrator?: RunOrchestrator; // defaults to a fake-runtime orchestrator (tests / no-Docker boot)
 }
 
@@ -70,12 +72,14 @@ export function createApp(deps: AppDeps = {}) {
   app.route("/", agentRoutes(agentsRepo));
 
   const runsRepo = deps.runsRepo ?? memoryRunsRepo();
+  // The hub is the live SSE relay; the orchestrator and the routes MUST share one instance.
+  const runHub = deps.runHub ?? createRunHub();
   // Default orchestrator uses a fake runtime + fake guard so the app boots + tests run without
-  // Docker; server.ts injects the real Docker-backed orchestrator.
+  // Docker; server.ts injects the real Docker-backed orchestrator (built on the same hub).
   const orchestrator =
     deps.orchestrator ??
-    runOrchestrator({ runsRepo, agentsRepo, runtime: fakeSandboxRuntime(), guard: fakeRunGuard(), image: "turanga/agent-harness:dev", sandboxVolume: "guard-run" });
-  app.route("/", runRoutes(runsRepo, orchestrator));
+    runOrchestrator({ runsRepo, agentsRepo, runtime: fakeSandboxRuntime(), guard: fakeRunGuard(), hub: runHub, image: "turanga/agent-harness:dev", sandboxVolume: "guard-run" });
+  app.route("/", runRoutes(runsRepo, orchestrator, runHub));
 
   return app;
 }

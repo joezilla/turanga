@@ -1,12 +1,14 @@
 // run-orchestrator (E4-AD-4): a control-api module, the sole writer of Run state (AD-7). Launch
 // follows the deterministic, fail-closed establish order (E4-AD-8) — any step failing fails the
-// Run with a stated reason and NEVER falls through to unsandboxed execution (NFR-1). A run has a
-// wall-clock deadline; a hung sandbox is killed. The per-run cost key + kill-on-429 is Story 4.5.
+// Run with a stated reason and NEVER falls through to unsandboxed execution (NFR-1). Each control
+// message is published to the RunHub so the SSE endpoint can stream it live (E4-AD-7). The per-run
+// cost key + kill-on-429 is Story 4.5.
 import { ulid, type LifecycleState } from "@turanga/domain";
 import { ControlChannelMessageSchema, type JobSpec } from "@turanga/contracts";
 import type { RunsRepo, RunRow, RunStatus } from "./repo.js";
-import type { SandboxRuntime } from "./runtime.js";
+import type { SandboxRuntime, SandboxHandle } from "./runtime.js";
 import type { RunGuard } from "./guardClient.js";
+import type { RunHub } from "./hub.js";
 
 interface AgentLike {
   id: string;
@@ -23,10 +25,11 @@ export interface OrchestratorDeps {
   agentsRepo: AgentsReader;
   runtime: SandboxRuntime;
   guard: RunGuard;
-  image: string; // the agent-harness image tag
-  sandboxVolume: string; // shared volume; the run's own subpath is mounted at /guard
-  maxConcurrent?: number; // admission cap (default 5); rejects over the cap
-  runTimeoutMs?: number; // wall-clock deadline per run (default 120s)
+  hub: RunHub;
+  image: string;
+  sandboxVolume: string;
+  maxConcurrent?: number;
+  runTimeoutMs?: number;
 }
 
 export type LaunchResult = { ok: true; run: RunRow } | { ok: false; error: string; status: 400 | 404 | 429 };
@@ -41,7 +44,7 @@ function safeJson(line: string): unknown {
 }
 
 export function runOrchestrator(deps: OrchestratorDeps) {
-  const { runsRepo, agentsRepo, runtime, guard, image, sandboxVolume } = deps;
+  const { runsRepo, agentsRepo, runtime, guard, hub, image, sandboxVolume } = deps;
   const maxConcurrent = deps.maxConcurrent ?? 5;
   const runTimeoutMs = deps.runTimeoutMs ?? 120_000;
   let active = 0;
@@ -51,69 +54,91 @@ export function runOrchestrator(deps: OrchestratorDeps) {
     return (await runsRepo.get(runId))!;
   }
 
-  return {
-    async launch(agentId: string, taskInput: string): Promise<LaunchResult> {
-      const agent = await agentsRepo.get(agentId);
-      if (!agent) return { ok: false, error: "That agent doesn't exist.", status: 404 };
-      if (!agent.model) return { ok: false, error: "An agent needs a model to run.", status: 400 };
-      if (active >= maxConcurrent) return { ok: false, error: "Too many runs in progress. Try again in a moment.", status: 429 };
+  type Created = { ok: true; runId: string; jobSpec: JobSpec } | { ok: false; error: string; status: 400 | 404 | 429 };
+  async function validateAndCreate(agentId: string, taskInput: string): Promise<Created> {
+    const agent = await agentsRepo.get(agentId);
+    if (!agent) return { ok: false, error: "That agent doesn't exist.", status: 404 };
+    if (!agent.model) return { ok: false, error: "An agent needs a model to run.", status: 400 };
+    if (active >= maxConcurrent) return { ok: false, error: "Too many runs in progress. Try again in a moment.", status: 429 };
+    active++; // reserve the slot (released in execute's finally)
+    const runId = ulid(Date.now());
+    const now = new Date().toISOString();
+    const jobSpec: JobSpec = { v: 1, runId, agentId, model: agent.model, instructions: agent.instructions, skills: [], taskInput };
+    await runsRepo.create({ id: runId, agentId, status: "created", taskInput, transcript: [], reason: null, createdAt: now, endedAt: null });
+    hub.open(runId); // hub state exists before start() hands the run back — the SSE subscriber won't miss the opening
+    return { ok: true, runId, jobSpec };
+  }
 
-      // 1. Run=created + snapshot the immutable job spec (AD-9). skills=[] until Story 4.4.
-      const runId = ulid(Date.now());
-      const now = new Date().toISOString();
-      const jobSpec: JobSpec = { v: 1, runId, agentId, model: agent.model, instructions: agent.instructions, skills: [], taskInput };
-      await runsRepo.create({ id: runId, agentId, status: "created", taskInput, transcript: [], reason: null, createdAt: now, endedAt: null });
-
-      // 2. Register the run with the guard (provisions the per-run UDS). Fail-closed.
+  // Runs the sandbox to a terminal state, publishing every control message to the hub. ALWAYS
+  // reaps + tears down the guard, completes the hub, and releases the concurrency slot.
+  async function execute(runId: string, jobSpec: JobSpec): Promise<RunRow> {
+    let terminal: RunStatus = "failed";
+    let handle: SandboxHandle | undefined;
+    let timedOut = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
       try {
         await guard.registerRun(runId);
       } catch (e) {
-        await guard.teardownRun(runId); // in case a socket was half-provisioned
-        return { ok: true, run: await finish(runId, "failed", `Couldn't prepare the guard: ${msg(e)}`) };
+        return await finish(runId, (terminal = "failed"), `Couldn't prepare the guard: ${msg(e)}`);
       }
-
-      // 3. Establish the sandbox. Any failure → Run=failed with a stated reason; NEVER unsandboxed.
-      let handle;
       try {
         handle = await runtime.establish({ runId, image, jobSpecJson: JSON.stringify(jobSpec), guardVolume: sandboxVolume });
       } catch (e) {
-        await guard.teardownRun(runId);
-        return { ok: true, run: await finish(runId, "failed", `Sandbox couldn't be established: ${msg(e)}`) };
+        return await finish(runId, (terminal = "failed"), `Sandbox couldn't be established: ${msg(e)}`);
       }
 
-      // 4. Consume the control channel under a wall-clock deadline; ALWAYS reap + tear down.
-      active++;
-      let timedOut = false;
-      const timer = setTimeout(() => {
+      await runsRepo.setStatus(runId, "running");
+      timer = setTimeout(() => {
         timedOut = true;
-        void handle.kill(); // force-remove → the stream ends → the loop below exits
+        void handle!.kill();
       }, runTimeoutMs);
-      try {
-        await runsRepo.setStatus(runId, "running");
-        let terminal: RunStatus | null = null;
-        for await (const line of handle.lines) {
-          const parsed = ControlChannelMessageSchema.safeParse(safeJson(line));
-          if (!parsed.success) continue; // ignore malformed control lines
-          await runsRepo.appendMessage(runId, parsed.data);
-          if (parsed.data.type === "done") {
-            terminal = parsed.data.status; // first terminal wins
-            break;
-          }
+
+      let seen: RunStatus | null = null;
+      for await (const line of handle.lines) {
+        const parsed = ControlChannelMessageSchema.safeParse(safeJson(line));
+        if (!parsed.success) continue;
+        await runsRepo.appendMessage(runId, parsed.data);
+        hub.publish(runId, parsed.data); // live relay to the SSE endpoint
+        if (parsed.data.type === "done") {
+          seen = parsed.data.status;
+          break;
         }
-        // On a timeout we've already force-killed; don't block on `done` (it may never resolve).
-        if (timedOut) return { ok: true, run: await finish(runId, "killed", `Run exceeded the ${Math.round(runTimeoutMs / 1000)}s time limit.`) };
-        const { exitCode } = await handle.done;
-        if (timedOut) return { ok: true, run: await finish(runId, "killed", `Run exceeded the ${Math.round(runTimeoutMs / 1000)}s time limit.`) };
-        if (!terminal) terminal = exitCode === 0 ? "succeeded" : "failed";
-        return { ok: true, run: await finish(runId, terminal, terminal === "failed" && exitCode !== 0 ? `Sandbox exited ${exitCode} without a done message.` : undefined) };
-      } catch (e) {
-        return { ok: true, run: await finish(runId, timedOut ? "killed" : "failed", timedOut ? "Run exceeded the time limit." : `Run stream error: ${msg(e)}`) };
-      } finally {
-        clearTimeout(timer);
-        await handle.kill().catch(() => {});
-        await guard.teardownRun(runId);
-        active--;
       }
+      if (timedOut) return await finish(runId, (terminal = "killed"), `Run exceeded the ${Math.round(runTimeoutMs / 1000)}s time limit.`);
+      const { exitCode } = await handle.done;
+      if (timedOut) return await finish(runId, (terminal = "killed"), `Run exceeded the ${Math.round(runTimeoutMs / 1000)}s time limit.`);
+      terminal = seen ?? (exitCode === 0 ? "succeeded" : "failed");
+      return await finish(runId, terminal, !seen && exitCode !== 0 ? `Sandbox exited ${exitCode} without a done message.` : undefined);
+    } catch (e) {
+      terminal = timedOut ? "killed" : "failed";
+      return await finish(runId, terminal, timedOut ? "Run exceeded the time limit." : `Run stream error: ${msg(e)}`);
+    } finally {
+      if (timer) clearTimeout(timer);
+      if (handle) await handle.kill().catch(() => {});
+      await guard.teardownRun(runId);
+      hub.complete(runId, terminal);
+      active--;
+    }
+  }
+
+  return {
+    /** Synchronous: runs to completion and returns the terminal run (used by tests). */
+    async launch(agentId: string, taskInput: string): Promise<LaunchResult> {
+      const v = await validateAndCreate(agentId, taskInput);
+      if (!v.ok) return v;
+      return { ok: true, run: await execute(v.runId, v.jobSpec) };
+    },
+    /** Async: returns the created (running) run immediately; the sandbox runs in the background
+     *  and streams via the hub → SSE. Used by POST /runs. */
+    async start(agentId: string, taskInput: string): Promise<LaunchResult> {
+      const v = await validateAndCreate(agentId, taskInput);
+      if (!v.ok) return v;
+      const created = (await runsRepo.get(v.runId))!;
+      void execute(v.runId, v.jobSpec).catch(() => {});
+      // Report `running` immediately — execute() flips the persisted status to running once the
+      // sandbox is established; the client watches /events for the live transcript.
+      return { ok: true, run: { ...created, status: "running" } };
     },
   };
 }

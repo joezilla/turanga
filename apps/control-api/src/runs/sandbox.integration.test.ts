@@ -29,9 +29,19 @@ describe.skipIf(!RUN)("sandbox integration (live stack)", () => {
     const agentId = created.agent.id;
     await fetch(`${base}/agents/${agentId}`, { method: "PATCH", headers: { "content-type": "application/json", cookie }, body: JSON.stringify({ model: "openai/gpt-4o" }) });
 
+    // POST is async now (Story 4.2): it returns the running run immediately; poll until terminal.
     const res = await fetch(`${base}/runs`, { method: "POST", headers: { "content-type": "application/json", cookie }, body: JSON.stringify({ agentId, taskInput: "say hello" }) });
     expect(res.status).toBe(201);
-    const { run } = (await res.json()) as { run: { status: string; transcript: { type: string; role?: string; text?: string }[] } };
+    const started = (await res.json()) as { run: { id: string; status: string } };
+    expect(started.run.status).toBe("running");
+
+    let run!: { status: string; transcript: { type: string; role?: string; text?: string }[] };
+    for (let i = 0; i < 60; i++) {
+      const got = (await (await fetch(`${base}/runs/${started.run.id}`, { headers: { cookie } })).json()) as { run: typeof run };
+      run = got.run;
+      if (["succeeded", "failed", "killed"].includes(run.status)) break;
+      await new Promise((r) => setTimeout(r, 500));
+    }
 
     // The single control channel returned a transcript; the first turn is the user's task input.
     expect(["succeeded", "failed", "killed"]).toContain(run.status);

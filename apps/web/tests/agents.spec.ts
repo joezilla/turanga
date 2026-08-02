@@ -50,9 +50,10 @@ test("open an agent → two-pane surface, disabled model selector, and name auto
   await page.locator("a.agent").first().click();
   await expect(page).toHaveURL(/\/agents\/[0-9A-Z]{26}$/);
 
-  // Two-pane surface: the Model section + the test-pane scaffold. [3.2 AC1]
+  // Two-pane surface: the Model section + the test pane (empty state). [3.2 AC1 / 4.2 AC2]
   await expect(page.getByRole("button", { name: "Model" })).toBeVisible();
-  await expect(page.getByText("Test runs appear here.")).toBeVisible();
+  await expect(page.getByText("No test runs.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Run test" })).toBeVisible();
 
   // No provider connected → selector disabled state + Connect in Settings. [3.2 AC2]
   await expect(page.getByText("OpenAI · not connected")).toBeVisible();
@@ -204,4 +205,48 @@ test("removing a provider surfaces dependent agents; agents list shows state + n
   await card.getByRole("button", { name: "Remove" }).click(); // arm
   await card.getByRole("button", { name: "Remove" }).click(); // confirm
   await expect(page.getByText("No providers connected.")).toBeVisible();
+});
+
+test("test pane: stream a run → user turn, failed dot + agent turn + mono metrics; Cmd+Enter + Clear", async ({ page }) => {
+  await signIn(page);
+
+  // A fresh agent with a model set so a run can launch (no provider key → the model call fails,
+  // which still streams end-to-end and resolves to a `failed` run-status dot). [4.2 AC1]
+  await page.getByRole("button", { name: "Create agent" }).first().click();
+  await page.locator("a.agent").first().click();
+  await expect(page).toHaveURL(/\/agents\/[0-9A-Z]{26}$/);
+  const agentId = page.url().split("/").pop();
+  const patch = await page.request.patch(`${CONTROL_API}/agents/${agentId}`, {
+    data: { model: "openai/gpt-4o" },
+    headers: { "content-type": "application/json" },
+  });
+  expect(patch.ok()).toBeTruthy();
+  await page.reload();
+
+  // Empty state. [4.2 AC2]
+  await expect(page.getByText("No test runs.")).toBeVisible();
+
+  // Type a task and Run test → a user turn streams in, then the run resolves to a failed
+  // run-status dot + word with an agent turn (the model error) and a mono metrics line. [4.2 AC1]
+  await page.getByLabel("Task for this test run").fill("say hello");
+  await page.getByRole("button", { name: "Run test" }).click();
+
+  const transcript = page.locator(".transcript");
+  await expect(transcript.locator(".turn", { hasText: "say hello" })).toBeVisible({ timeout: 20000 });
+  // Resolves to a failed run-status dot + word (dot + text, never colour-only). [4.2 AC1]
+  await expect(transcript.locator(".run-status")).toContainText("failed", { timeout: 20000 });
+  // An agent turn (the model error) + a mono metrics line (latency · tokens). [4.2 AC1]
+  await expect(transcript.getByText("agent")).toBeVisible();
+  await expect(transcript.locator(".metrics")).toContainText(/ms · .*tokens/);
+
+  // Clear resets the pane to the empty state. [4.2 AC3]
+  await page.getByRole("button", { name: "Clear" }).click();
+  await expect(page.getByText("No test runs.")).toBeVisible();
+
+  // Cmd/Ctrl+Enter runs from anywhere in the editor. [4.2 AC1]
+  await page.getByLabel("Task for this test run").fill("again");
+  await page.locator(".config").click(); // move focus off the input, into the editor
+  await page.keyboard.press("ControlOrMeta+Enter");
+  await expect(transcript.locator(".turn", { hasText: "again" })).toBeVisible({ timeout: 20000 });
+  await expect(transcript.locator(".run-status")).toContainText("failed", { timeout: 20000 });
 });

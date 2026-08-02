@@ -93,6 +93,12 @@ export async function runHarness(): Promise<void> {
   const socketPath = `/guard/run.sock`;
   const res = await guardModelCall(socketPath, { v: 1, runId: spec.runId, model: spec.model, messages });
 
+  // latency + tokens originate at the Guard (E4-AD-10) — the harness relays them for display. The
+  // Guard measures latency even for a failed call, so metrics are emitted either way (tokens is 0
+  // when the call didn't complete). costMinor stays 0: cost is metered by the Guard's per-run key
+  // in Story 4.5 (0 = not-yet-metered placeholder).
+  emit({ type: "metrics", v: 1, latencyMs: res.latencyMs ?? 0, tokens: res.tokens ?? 0, costMinor: 0 });
+
   if (res.ok) {
     emit({ type: "turn", v: 1, role: "agent", text: res.text ?? "" });
     emit({ type: "done", v: 1, status: "succeeded" });
