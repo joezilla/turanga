@@ -8,10 +8,10 @@ export type RunStatus = "created" | "running" | "succeeded" | "failed" | "killed
 
 // One control-channel message — the discriminated union the harness/Guard emit (E4-AD-9/10).
 export type RunMessage =
-  | { type: "turn"; v: 2; role: "user" | "agent"; text: string }
-  | { type: "metrics"; v: 2; latencyMs: number; tokens: number; costMinor: number }
-  | { type: "refusal"; v: 2; kind: "egress" | "permission"; detail: string }
-  | { type: "done"; v: 2; status: "succeeded" | "failed" | "killed" };
+  | { type: "turn"; v: 3; role: "user" | "agent"; text: string }
+  | { type: "metrics"; v: 3; latencyMs: number; tokens: number; costMinor: number }
+  | { type: "refusal"; v: 3; kind: "egress" | "permission"; detail: string }
+  | { type: "done"; v: 3; status: "succeeded" | "failed" | "killed" };
 
 export interface Run {
   id: string;

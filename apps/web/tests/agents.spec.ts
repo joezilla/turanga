@@ -278,3 +278,54 @@ test("test pane: a scoped-skill agent's off-allowlist egress is refused inline (
   // The run still resolves terminally (a blocked egress refuses that egress; it doesn't kill the run). [4.3]
   await expect(transcript.locator(".run-status")).toContainText(/failed|succeeded/, { timeout: 20000 });
 });
+
+test("test pane: an out-of-scope skill op is refused (permission), before any credential — no OAuth", async ({ page }) => {
+  await signIn(page);
+
+  // flag-label attached at scope `read` (below the read-write its label op needs) → the Guard
+  // refuses on PERMISSION, ahead of the egress/credential check, so it's observable with no OAuth. [4.4 AC2]
+  await page.getByRole("button", { name: "Create agent" }).first().click();
+  await page.locator("a.agent").first().click();
+  await expect(page).toHaveURL(/\/agents\/[0-9A-Z]{26}$/);
+  const agentId = page.url().split("/").pop();
+  const patch = await page.request.patch(`${CONTROL_API}/agents/${agentId}`, {
+    data: { model: "openai/gpt-4o", skills: [{ skill: "flag-label", scope: "read", send: false }] },
+    headers: { "content-type": "application/json" },
+  });
+  expect(patch.ok()).toBeTruthy();
+  await page.reload();
+
+  await page.getByLabel("Task for this test run").fill("label my mail");
+  await page.getByRole("button", { name: "Run test" }).click();
+
+  const transcript = page.locator(".transcript");
+  await expect(transcript.locator(".refusal")).toContainText(/not permitted to modify|read-write skill scope/, { timeout: 20000 });
+  await expect(transcript.locator(".run-status")).toContainText(/failed|succeeded/, { timeout: 20000 });
+});
+
+test("test pane: draft-reply without a send grant → send refused, the run still produces its draft + completes", async ({ page }) => {
+  await signIn(page);
+
+  // draft-reply at read-write but with send OFF → the send op is refused (permission), while the
+  // draft (the model's agent turn) is still produced and the run completes — no auto-send. [4.4 AC3, FR-18]
+  await page.getByRole("button", { name: "Create agent" }).first().click();
+  await page.locator("a.agent").first().click();
+  await expect(page).toHaveURL(/\/agents\/[0-9A-Z]{26}$/);
+  const agentId = page.url().split("/").pop();
+  const patch = await page.request.patch(`${CONTROL_API}/agents/${agentId}`, {
+    data: { model: "openai/gpt-4o", skills: [{ skill: "draft-reply", scope: "read-write", send: false }] },
+    headers: { "content-type": "application/json" },
+  });
+  expect(patch.ok()).toBeTruthy();
+  await page.reload();
+
+  await page.getByLabel("Task for this test run").fill("draft a reply");
+  await page.getByRole("button", { name: "Run test" }).click();
+
+  const transcript = page.locator(".transcript");
+  // The send is refused (permission) with the recovery stated…
+  await expect(transcript.locator(".refusal")).toContainText(/Blocked send|Allow send/, { timeout: 20000 });
+  // …the draft artifact (the agent turn) is still produced, and the run resolves (no auto-send).
+  await expect(transcript.locator(".turn-role", { hasText: "agent" })).toBeVisible();
+  await expect(transcript.locator(".run-status")).toContainText(/failed|succeeded/, { timeout: 20000 });
+});

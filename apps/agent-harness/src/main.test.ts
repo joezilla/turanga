@@ -1,8 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { readJobSpec, readOutcome } from "./main.js";
-import { CONTRACT_VERSION, type JobConnection, type GuardConnectionResponse } from "@turanga/contracts";
-
-const gmail: JobConnection = { id: "gmail", provider: "gmail" };
+import { readJobSpec, opOutcome } from "./main.js";
+import { CONTRACT_VERSION, type GuardConnectionResponse } from "@turanga/contracts";
 
 describe("agent-harness", () => {
   it("parses a valid job spec (connections default to [])", () => {
@@ -12,22 +10,23 @@ describe("agent-harness", () => {
     expect(parsed.connections).toEqual([]);
   });
 
-  it("readOutcome: a successful read folds a summary into the model context", () => {
+  it("opOutcome: a successful read folds a summary into the model context", () => {
     const res: GuardConnectionResponse = { v: CONTRACT_VERSION, ok: true, data: { messageCount: 3 } };
-    const out = readOutcome(gmail, res);
+    const out = opOutcome("read", res);
     expect(out.refusal).toBeUndefined();
     expect(out.system).toMatch(/3 message/);
   });
 
-  it("readOutcome: a refusal maps to an egress refusal control message (relayed from the Guard)", () => {
-    const res: GuardConnectionResponse = { v: CONTRACT_VERSION, ok: false, refusal: { destination: "gmail.googleapis.com", detail: "Blocked egress to gmail.googleapis.com — not on this agent's allowlist." } };
-    const out = readOutcome(gmail, res);
-    expect(out.system).toBeUndefined();
-    expect(out.refusal).toEqual({ type: "refusal", v: CONTRACT_VERSION, kind: "egress", detail: res.refusal!.detail });
+  it("opOutcome: a refusal relays the Guard's kind (permission vs egress)", () => {
+    const permission: GuardConnectionResponse = { v: CONTRACT_VERSION, ok: false, refusal: { destination: "", detail: "Blocked send — … Allow send …", kind: "permission" } };
+    expect(opOutcome("send", permission).refusal).toEqual({ type: "refusal", v: CONTRACT_VERSION, kind: "permission", detail: permission.refusal!.detail });
+
+    const egress: GuardConnectionResponse = { v: CONTRACT_VERSION, ok: false, refusal: { destination: "gmail.googleapis.com", detail: "Blocked egress …", kind: "egress" } };
+    expect(opOutcome("read", egress).refusal).toEqual({ type: "refusal", v: CONTRACT_VERSION, kind: "egress", detail: egress.refusal!.detail });
   });
 
-  it("readOutcome: a plain (non-refusal) error is non-fatal — nothing emitted, run proceeds", () => {
+  it("opOutcome: a plain (non-refusal) error is non-fatal — nothing emitted, run proceeds", () => {
     const res: GuardConnectionResponse = { v: CONTRACT_VERSION, ok: false, error: "Can't reach the guard." };
-    expect(readOutcome(gmail, res)).toEqual({});
+    expect(opOutcome("read", res)).toEqual({});
   });
 });

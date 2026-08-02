@@ -11,8 +11,15 @@ export interface ProvisionConnection {
   destinations: string[];
   accessToken: string;
 }
+/** The agent's attached-skill grants — the authority the Guard enforces per op (Story 4.4). Also
+ *  control-plane only; the jobSpec carries skill IDs but never the authoritative scope/send. */
+export interface SkillGrant {
+  scope: "none" | "read" | "read-write";
+  send: boolean;
+}
 export interface RunProvision {
   connections: ProvisionConnection[];
+  grants: SkillGrant[];
 }
 
 export interface RunGuard {
@@ -23,7 +30,7 @@ export interface RunGuard {
 export function httpRunGuard(adminUrl: string, adminToken: string): RunGuard {
   const headers = { "content-type": "application/json", "x-guard-admin": adminToken };
   return {
-    async registerRun(runId, provision = { connections: [] }) {
+    async registerRun(runId, provision = { connections: [], grants: [] }) {
       const r = await fetch(`${adminUrl}/admin/runs/${encodeURIComponent(runId)}/register`, {
         method: "POST",
         headers,
@@ -46,7 +53,7 @@ export function fakeRunGuard(): RunGuard & { registered: { runId: string; provis
   return {
     registered,
     toreDown,
-    async registerRun(runId, provision = { connections: [] }) {
+    async registerRun(runId, provision = { connections: [], grants: [] }) {
       registered.push({ runId, provision });
     },
     async teardownRun(runId) {

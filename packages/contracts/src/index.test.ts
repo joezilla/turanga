@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { JobSpecSchema, ControlChannelMessageSchema, GuardConnectionRequestSchema, GuardConnectionResponseSchema, CONTRACT_VERSION } from "./index.js";
+import { JobSpecSchema, ControlChannelMessageSchema, GuardConnectionRequestSchema, GuardConnectionResponseSchema, authorizes, SKILL_OPS, OP_REQUIREMENTS, CONTRACT_VERSION } from "./index.js";
 
 describe("contracts", () => {
   it("job spec round-trips (with logical connection handles)", () => {
@@ -31,16 +31,36 @@ describe("contracts", () => {
     expect(msg.type).toBe("done");
   });
 
-  it("connection request: a logical read op (no URL/token)", () => {
-    const req = GuardConnectionRequestSchema.parse({ v: CONTRACT_VERSION, runId: "r1", connectionId: "gmail", op: "gmail.list", params: { maxResults: 5 } });
-    expect(req.op).toBe("gmail.list");
+  it("connection request: a provider-agnostic op (no URL/token)", () => {
+    const req = GuardConnectionRequestSchema.parse({ v: CONTRACT_VERSION, runId: "r1", connectionId: "gmail", op: "read", params: { maxResults: 5 } });
+    expect(req.op).toBe("read");
     // an unknown op is rejected (the harness can only name the vocabulary)
-    expect(GuardConnectionRequestSchema.safeParse({ v: CONTRACT_VERSION, runId: "r1", connectionId: "gmail", op: "gmail.send" }).success).toBe(false);
+    expect(GuardConnectionRequestSchema.safeParse({ v: CONTRACT_VERSION, runId: "r1", connectionId: "gmail", op: "delete" }).success).toBe(false);
   });
 
-  it("connection response: carries data on ok, a refusal on deny", () => {
+  it("connection response: carries data on ok, a kinded refusal on deny", () => {
     expect(GuardConnectionResponseSchema.parse({ v: CONTRACT_VERSION, ok: true, data: { count: 3 } }).ok).toBe(true);
-    const refused = GuardConnectionResponseSchema.parse({ v: CONTRACT_VERSION, ok: false, refusal: { destination: "gmail.googleapis.com", detail: "Blocked egress to gmail.googleapis.com — not on this agent's allowlist." } });
-    expect(refused.refusal?.destination).toBe("gmail.googleapis.com");
+    const refused = GuardConnectionResponseSchema.parse({ v: CONTRACT_VERSION, ok: false, refusal: { destination: "gmail.googleapis.com", detail: "Blocked send — …", kind: "permission" } });
+    expect(refused.refusal?.kind).toBe("permission");
+  });
+
+  it("authorizes: the skill-scope + send-gate truth table (FR-3/FR-18)", () => {
+    // read needs ≥read; label needs read-write; send needs read-write AND the send grant.
+    expect(authorizes([{ scope: "read", send: false }], "read")).toBe(true);
+    expect(authorizes([{ scope: "none", send: false }], "read")).toBe(false);
+    expect(authorizes([{ scope: "read", send: false }], "label")).toBe(false); // read < read-write
+    expect(authorizes([{ scope: "read-write", send: false }], "label")).toBe(true);
+    expect(authorizes([{ scope: "read-write", send: false }], "send")).toBe(false); // no send grant
+    expect(authorizes([{ scope: "read-write", send: true }], "send")).toBe(true);
+    // a send-capable but read-scoped grant can't authorize send (needs read-write too)
+    expect(authorizes([{ scope: "read", send: true }], "send")).toBe(false);
+    // default-deny: no grants authorizes nothing
+    expect(authorizes([], "read")).toBe(false);
+  });
+
+  it("policy tables: each built-in skill maps to ops with defined requirements", () => {
+    expect(SKILL_OPS["read-search"]).toEqual(["read"]);
+    expect(SKILL_OPS["draft-reply"]).toEqual(["send"]);
+    for (const ops of Object.values(SKILL_OPS)) for (const op of ops) expect(OP_REQUIREMENTS[op]).toBeTruthy();
   });
 });

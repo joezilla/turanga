@@ -3,11 +3,11 @@
 // Run with a stated reason and NEVER falls through to unsandboxed execution (NFR-1). Each control
 // message is published to the RunHub so the SSE endpoint can stream it live (E4-AD-7). The per-run
 // cost key + kill-on-429 is Story 4.5.
-import { ulid, type LifecycleState } from "@turanga/domain";
+import { ulid, type LifecycleState, type AttachedSkill } from "@turanga/domain";
 import { CONTRACT_VERSION, ControlChannelMessageSchema, type JobSpec, type JobConnection } from "@turanga/contracts";
 import type { RunsRepo, RunRow, RunStatus } from "./repo.js";
 import type { SandboxRuntime, SandboxHandle } from "./runtime.js";
-import type { RunGuard, RunProvision, ProvisionConnection } from "./guardClient.js";
+import type { RunGuard, RunProvision, ProvisionConnection, SkillGrant } from "./guardClient.js";
 import type { RunHub } from "./hub.js";
 import { decryptSecret } from "../secrets/crypto.js";
 import type { GoogleOAuth } from "../oauth/google.js";
@@ -17,7 +17,7 @@ interface AgentLike {
   model: string | null;
   instructions: string;
   state: LifecycleState;
-  skills?: { scope: string }[]; // Story 4.3: a scoped skill (scope !== "none") means the agent uses Gmail
+  skills?: AttachedSkill[]; // Story 4.3/4.4: scoped skills drive the connection + the Guard's grants
 }
 interface AgentsReader {
   get(id: string): Promise<AgentLike | null>;
@@ -66,35 +66,42 @@ export function runOrchestrator(deps: OrchestratorDeps) {
   const runTimeoutMs = deps.runTimeoutMs ?? 120_000;
   let active = 0;
 
-  // Story 4.3 — resolve what this run may reach. Two separate outputs (AD-10):
+  // Story 4.3/4.4 — resolve what this run may do. Three separate outputs (AD-10):
   //   • jobConnections  — LOGICAL handles the harness may attempt (sandbox-visible, NO secret).
-  //   • provision       — the Guard's allowlist + HELD credentials (control-plane only, minted here).
-  // Default-deny per-agent: only an agent with a scoped skill (scope !== "none") uses Gmail; the
-  // credential is provisioned only when a connected Gmail connection exists AND a token mints. A
-  // configured-but-unprovisionable connection still yields a logical handle → the harness attempts
-  // it → the Guard refuses (nothing registered) — that's the observable default-deny path.
-  async function resolveRunConnections(agent: AgentLike): Promise<{ jobConnections: JobConnection[]; provision: RunProvision }> {
-    const usesGmail = (agent.skills ?? []).some((s) => s.scope !== "none");
-    if (!usesGmail || !dataConnectionsRepo) return { jobConnections: [], provision: { connections: [] } };
+  //   • jobSkills       — the skill IDs the harness runs (sandbox-visible; the scope/send are NOT
+  //                       authoritative here — the Guard enforces via `grants`).
+  //   • provision       — the Guard's allowlist + HELD credentials + skill GRANTS (control-plane only).
+  // Default-deny per-agent: only skills with scope !== "none" count. The credential is provisioned
+  // only when a connected Gmail connection exists AND a token mints; but the GRANTS + logical handle
+  // are always present for scoped skills, so an out-of-scope/ungranted op refuses on permission and a
+  // credential-less connection refuses on egress — both observable without OAuth.
+  async function resolveRunConnections(agent: AgentLike): Promise<{ jobConnections: JobConnection[]; jobSkills: string[]; provision: RunProvision }> {
+    const scoped = (agent.skills ?? []).filter((s) => s.scope !== "none");
+    const jobSkills = scoped.map((s) => s.skill);
+    const grants: SkillGrant[] = scoped.map((s) => ({ scope: s.scope, send: s.send }));
+    if (scoped.length === 0 || !dataConnectionsRepo) return { jobConnections: [], jobSkills, provision: { connections: [], grants } };
 
     const gmail = (await dataConnectionsRepo.list()).find((c) => c.provider === "gmail");
-    const connectionId = gmail?.id ?? "gmail"; // stable handle even with no connection → refused read
+    const connectionId = gmail?.id ?? "gmail"; // stable handle even with no connection → refused op
     const jobConnections: JobConnection[] = [{ id: connectionId, provider: "gmail" }];
 
-    // Provision a credential ONLY for a connected connection with a mintable token (fail-closed:
-    // any miss ⇒ no credential ⇒ the Guard refuses, never grants without a held token).
-    const provision: RunProvision = { connections: [] };
+    // Mint the short-lived credential ONLY for a connected connection with a mintable token
+    // (fail-closed: any miss ⇒ empty token ⇒ the Guard refuses on egress, never grants without one).
+    let accessToken = "";
     if (gmail && gmail.status === "connected" && gmail.encRefreshToken && googleOAuth?.isConfigured()) {
       try {
         const refreshToken = decryptSecret(gmail.encRefreshToken);
-        const { accessToken } = await googleOAuth.accessTokenFromRefresh(refreshToken);
-        const conn: ProvisionConnection = { connectionId, provider: "gmail", destinations: gmail.destinations, accessToken };
-        provision.connections.push(conn);
+        ({ accessToken } = await googleOAuth.accessTokenFromRefresh(refreshToken));
       } catch {
-        /* mint/decrypt failed → omit the credential (the read will be refused, not granted) */
+        /* mint/decrypt failed → leave the token empty (the op will be refused, not granted) */
       }
     }
-    return { jobConnections, provision };
+    // Always provision the connection's metadata (provider + declared destinations) so the Guard can
+    // name the destination in a refusal even when uncredentialed (NFR-4); the TOKEN is the only
+    // conditional part. The allowlist derives from the (possibly empty) destinations — default-deny.
+    const conn: ProvisionConnection = { connectionId, provider: "gmail", destinations: gmail?.destinations ?? [], accessToken };
+    const provision: RunProvision = { connections: [conn], grants };
+    return { jobConnections, jobSkills, provision };
   }
 
   async function finish(runId: string, status: RunStatus, reason?: string): Promise<RunRow> {
@@ -112,10 +119,11 @@ export function runOrchestrator(deps: OrchestratorDeps) {
     try {
       const runId = ulid(Date.now());
       const now = new Date().toISOString();
-      const { jobConnections, provision } = await resolveRunConnections(agent);
-      // The job spec carries only LOGICAL handles — the minted access token lives in `provision`
-      // and goes to the Guard over the admin API, NEVER into the sandbox (AD-10).
-      const jobSpec: JobSpec = { v: CONTRACT_VERSION, runId, agentId, model: agent.model, instructions: agent.instructions, skills: [], connections: jobConnections, taskInput };
+      const { jobConnections, jobSkills, provision } = await resolveRunConnections(agent);
+      // The job spec carries only LOGICAL handles + skill IDs — the minted access token AND the
+      // authoritative scope/send grants live in `provision` and go to the Guard over the admin API,
+      // NEVER into the sandbox (AD-10).
+      const jobSpec: JobSpec = { v: CONTRACT_VERSION, runId, agentId, model: agent.model, instructions: agent.instructions, skills: jobSkills, connections: jobConnections, taskInput };
       const row: RunRow = { id: runId, agentId, status: "created", taskInput, transcript: [], reason: null, createdAt: now, endedAt: null };
       await runsRepo.create(row);
       hub.open(runId); // hub state exists before start() hands the run back — the SSE subscriber won't miss the opening

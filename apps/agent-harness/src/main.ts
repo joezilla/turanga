@@ -10,8 +10,10 @@ import {
   JobSpecSchema,
   GuardModelResponseSchema,
   GuardConnectionResponseSchema,
+  SKILL_OPS,
+  OP_REQUIREMENTS,
   type JobSpec,
-  type JobConnection,
+  type ConnectionOp,
   type ControlChannelMessage,
   type GuardModelRequest,
   type GuardModelResponse,
@@ -94,19 +96,27 @@ async function guardConnectionCall(socketPath: string, req: GuardConnectionReque
   }
 }
 
-// Pure mapping of a connection response to what the harness does with it (exported for unit tests):
-//  • ok      → a short read summary folded into the model context (the mode-a demonstration).
-//  • refusal → an `egress` refusal control message relayed to the transcript (E4-AD-10 provenance:
-//              the Guard decided it; the out-of-band Guard→orchestrator channel is Story 4.5).
-//  • plain error (not a refusal) → nothing; the run proceeds to its model call.
-export function readOutcome(conn: JobConnection, res: GuardConnectionResponse): { system?: string; refusal?: ControlChannelMessage } {
+// Pure mapping of a connection op's response to what the harness does with it (exported for tests):
+//  • ok      → a short summary folded into the model context (the mode-a demonstration).
+//  • refusal → a `refusal` control message carrying the GUARD's kind (egress or permission — the
+//              Guard decided it; E4-AD-10 provenance; the out-of-band channel is Story 4.5).
+//  • plain error (not a refusal) → nothing; the run proceeds.
+export function opOutcome(op: ConnectionOp, res: GuardConnectionResponse): { system?: string; refusal?: ControlChannelMessage } {
   if (res.ok) {
-    const count = (res.data as { messageCount?: number } | undefined)?.messageCount ?? 0;
-    return { system: `Connection ${conn.provider} read: ${count} message(s).` };
+    const count = (res.data as { messageCount?: number } | undefined)?.messageCount;
+    return { system: count === undefined ? `Ran ${op}.` : `Read ${count} message(s).` };
   }
-  if (res.refusal) return { refusal: { type: "refusal", v: CONTRACT_VERSION, kind: "egress", detail: res.refusal.detail } };
+  if (res.refusal) return { refusal: { type: "refusal", v: CONTRACT_VERSION, kind: res.refusal.kind, detail: res.refusal.detail } };
   return {};
 }
+
+/** The ops a run should attempt, derived from its attached skills (provider-agnostic, SM-4). */
+function opsForSkills(skills: string[]): ConnectionOp[] {
+  const ops = new Set<ConnectionOp>();
+  for (const s of skills) for (const op of SKILL_OPS[s] ?? []) ops.add(op);
+  return [...ops];
+}
+const isReadOp = (op: ConnectionOp) => OP_REQUIREMENTS[op].requiredScope === "read";
 
 export async function runHarness(): Promise<void> {
   let spec: JobSpec;
@@ -129,16 +139,24 @@ export async function runHarness(): Promise<void> {
   // The run's own subdir of the shared volume is mounted at /guard (per-run isolation, E4-AD-1).
   const socketPath = `/guard/run.sock`;
 
-  // Story 4.3: attempt each configured connection read through the Guard (mode a). Default-deny is
-  // enforced Guard-side — a read the Guard refuses becomes an `egress` refusal in the transcript; a
-  // successful read is folded into the model context. The token stays Guard-side (AD-10).
-  for (const conn of spec.connections) {
-    const cr = await guardConnectionCall(socketPath, { v: CONTRACT_VERSION, runId: spec.runId, connectionId: conn.id, op: "gmail.list" });
-    const outcome = readOutcome(conn, cr);
+  // Story 4.4: deterministic skill execution through the generic Connection interface. Each attached
+  // skill maps to provider-agnostic ops (SKILL_OPS); the Guard enforces the permission scope + send
+  // gate and the allowlist, refusing (permission or egress) what isn't allowed. Ops run in phases so
+  // the draft-reply flow reads → drafts (the model turn) → attempts send. All ops target the run's
+  // Gmail connection handle; with no handle, there's nothing to run against.
+  const gmailConn = spec.connections.find((c) => c.provider === "gmail");
+  const ops = gmailConn ? opsForSkills(spec.skills) : [];
+  async function runOp(op: ConnectionOp) {
+    const cr = await guardConnectionCall(socketPath, { v: CONTRACT_VERSION, runId: spec.runId, connectionId: gmailConn!.id, op });
+    const outcome = opOutcome(op, cr);
     if (outcome.refusal) emit(outcome.refusal);
     if (outcome.system) messages.push({ role: "system", content: outcome.system });
   }
 
+  // Phase 1 — read ops gather context for the model.
+  for (const op of ops.filter(isReadOp)) await runOp(op);
+
+  // Phase 2 — the model call → the agent turn (the response / the draft artifact for draft-reply).
   const res = await guardModelCall(socketPath, { v: CONTRACT_VERSION, runId: spec.runId, model: spec.model, messages });
 
   // latency + tokens originate at the Guard (E4-AD-10) — the harness relays them for display. The
@@ -146,14 +164,13 @@ export async function runHarness(): Promise<void> {
   // when the call didn't complete). costMinor stays 0: cost is metered by the Guard's per-run key
   // in Story 4.5 (0 = not-yet-metered placeholder).
   emit({ type: "metrics", v: CONTRACT_VERSION, latencyMs: res.latencyMs ?? 0, tokens: res.tokens ?? 0, costMinor: 0 });
+  emit({ type: "turn", v: CONTRACT_VERSION, role: "agent", text: res.ok ? (res.text ?? "") : `[model error] ${res.error ?? "unknown error"}` });
 
-  if (res.ok) {
-    emit({ type: "turn", v: CONTRACT_VERSION, role: "agent", text: res.text ?? "" });
-    emit({ type: "done", v: CONTRACT_VERSION, status: "succeeded" });
-  } else {
-    emit({ type: "turn", v: CONTRACT_VERSION, role: "agent", text: `[model error] ${res.error ?? "unknown error"}` });
-    emit({ type: "done", v: CONTRACT_VERSION, status: "failed" });
-  }
+  // Phase 3 — outbound/write ops (label, send). A blocked send is a refusal, NOT a run failure — the
+  // draft (Phase 2) stands and the run completes (AC3, AD-8).
+  for (const op of ops.filter((op) => !isReadOp(op))) await runOp(op);
+
+  emit({ type: "done", v: CONTRACT_VERSION, status: res.ok ? "succeeded" : "failed" });
 }
 
 // Run the loop only when executed as the entrypoint (not when imported by the unit test).

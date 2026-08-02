@@ -3,7 +3,7 @@ import http from "node:http";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createGuard, type ProvisionConnection } from "./guard.js";
+import { createGuard, type ProvisionConnection, type SkillGrant } from "./guard.js";
 import type { GuardModelResponse } from "@turanga/contracts";
 
 const okFetch = (async () =>
@@ -18,7 +18,7 @@ const errFetch = (async () =>
 describe("guard model proxy", () => {
   it("maps a model request to a LiteLLM call and returns the completion", async () => {
     const guard = createGuard({ socketDir: "/tmp", litellmBaseUrl: "http://litellm:4000", litellmMasterKey: "sk", fetchImpl: okFetch });
-    const res = await guard.proxyModel({ v: 2, runId: "r", model: "openai/gpt-4o", messages: [{ role: "user", content: "hi" }] });
+    const res = await guard.proxyModel({ v: 3, runId: "r", model: "openai/gpt-4o", messages: [{ role: "user", content: "hi" }] });
     expect(res.ok).toBe(true);
     expect(res.text).toBe("hello from the model");
     expect(res.tokens).toBe(12);
@@ -26,7 +26,7 @@ describe("guard model proxy", () => {
 
   it("surfaces a provider error (no fallback)", async () => {
     const guard = createGuard({ socketDir: "/tmp", litellmBaseUrl: "http://litellm:4000", litellmMasterKey: "sk", fetchImpl: errFetch });
-    const res = await guard.proxyModel({ v: 2, runId: "r", model: "openai/gpt-4o", messages: [{ role: "user", content: "hi" }] });
+    const res = await guard.proxyModel({ v: 3, runId: "r", model: "openai/gpt-4o", messages: [{ role: "user", content: "hi" }] });
     expect(res.ok).toBe(false);
     expect(res.error).toMatch(/401/);
   });
@@ -49,7 +49,7 @@ describe("guard per-run socket lifecycle", () => {
     expect(guard.activeRuns()).toEqual([RUN]);
 
     // A harness-style HTTP-over-UDS call resolves through the socket.
-    const body = JSON.stringify({ v: 2, runId: RUN, model: "m", messages: [{ role: "user", content: "hi" }] });
+    const body = JSON.stringify({ v: 3, runId: RUN, model: "m", messages: [{ role: "user", content: "hi" }] });
     const out = await new Promise<GuardModelResponse>((resolve) => {
       const req = http.request({ socketPath, path: "/", method: "POST", headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body) } }, (res) => {
         let raw = "";
@@ -69,7 +69,8 @@ describe("guard per-run socket lifecycle", () => {
 });
 
 const gmailConn: ProvisionConnection = { connectionId: "gmail", provider: "gmail", destinations: ["gmail.googleapis.com", "oauth2.googleapis.com"], accessToken: "tok-secret-123" };
-const req = { v: 2 as const, runId: RUN, connectionId: "gmail", op: "gmail.list" as const, params: { maxResults: 5 } };
+const FULL_GRANT: SkillGrant[] = [{ scope: "read-write", send: true }]; // authorizes any op — used to reach the egress stage
+const readReq = { v: 3 as const, runId: RUN, connectionId: "gmail", op: "read" as const, params: { maxResults: 5 } };
 
 // A fetch spy that captures the outbound request and returns a Gmail-style message list.
 function captureGmailFetch() {
@@ -82,18 +83,18 @@ function captureGmailFetch() {
   return { impl, calls };
 }
 
-describe("guard credentialed-connection gateway (mode a) + default-deny allowlist", () => {
-  async function withGuard(provision: { connections: ProvisionConnection[] }, fetchImpl: typeof fetch) {
+describe("guard credentialed-connection gateway (mode a) + default-deny allowlist (4.3)", () => {
+  async function withGuard(provision: { connections: ProvisionConnection[]; grants?: SkillGrant[] }, fetchImpl: typeof fetch) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "guard-"));
     const guard = createGuard({ socketDir: dir, litellmBaseUrl: "http://x", litellmMasterKey: "sk", fetchImpl });
-    await guard.register(RUN, provision);
+    await guard.register(RUN, { connections: provision.connections, grants: provision.grants ?? FULL_GRANT });
     return { guard, dir, cleanup: async () => { await guard.teardown(RUN); fs.rmSync(dir, { recursive: true, force: true }); } };
   }
 
   it("forwards an allowlisted read with the HELD credential; the token never returns to the sandbox (AC1)", async () => {
     const { impl, calls } = captureGmailFetch();
     const { guard, cleanup } = await withGuard({ connections: [gmailConn] }, impl);
-    const res = await guard.forwardConnection(RUN, req);
+    const res = await guard.forwardConnection(RUN, readReq);
     expect(res.ok).toBe(true);
     expect((res.data as { messageCount: number }).messageCount).toBe(2);
     // The Guard terminated TLS and attached the held token itself (AD-5)…
@@ -107,21 +108,20 @@ describe("guard credentialed-connection gateway (mode a) + default-deny allowlis
   it("refuses a read when the allowlist is empty — reaches nothing (AC3)", async () => {
     const { impl, calls } = captureGmailFetch();
     const { guard, cleanup } = await withGuard({ connections: [] }, impl);
-    const res = await guard.forwardConnection(RUN, req);
+    const res = await guard.forwardConnection(RUN, readReq);
     expect(res.ok).toBe(false);
-    expect(res.refusal?.destination).toBe("gmail.googleapis.com");
+    expect(res.refusal?.kind).toBe("egress");
     expect(res.refusal?.detail).toMatch(/not on this agent's allowlist/);
     expect(calls).toHaveLength(0); // never forwarded
     await cleanup();
   });
 
-  it("refuses a read for a connection whose credential the run doesn't hold (AC2)", async () => {
+  it("refuses a read for a connection whose credential the run doesn't hold (egress)", async () => {
     const { impl, calls } = captureGmailFetch();
-    // Allowlist has the destination but no credential for the requested connectionId.
     const { guard, cleanup } = await withGuard({ connections: [{ ...gmailConn, connectionId: "other" }] }, impl);
-    const res = await guard.forwardConnection(RUN, req); // asks for connectionId "gmail"
+    const res = await guard.forwardConnection(RUN, readReq); // asks for connectionId "gmail"
     expect(res.ok).toBe(false);
-    expect(res.refusal).toBeTruthy();
+    expect(res.refusal?.kind).toBe("egress");
     expect(calls).toHaveLength(0);
     await cleanup();
   });
@@ -129,24 +129,75 @@ describe("guard credentialed-connection gateway (mode a) + default-deny allowlis
   it("fails closed — a forward error becomes a refusal, never a permitted egress (NFR-2)", async () => {
     const throwing = (async () => { throw new Error("network down"); }) as unknown as typeof fetch;
     const { guard, cleanup } = await withGuard({ connections: [gmailConn] }, throwing);
-    const res = await guard.forwardConnection(RUN, req);
+    const res = await guard.forwardConnection(RUN, readReq);
     expect(res.ok).toBe(false);
     expect(res.refusal?.destination).toBe("gmail.googleapis.com");
     await cleanup();
   });
 
-  it("a registered no-op filter block refuses; teardown zeroes the held credentials", async () => {
+  it("a no-op filter block refuses; teardown zeroes the held credentials", async () => {
     const { impl } = captureGmailFetch();
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "guard-"));
     const guard = createGuard({ socketDir: dir, litellmBaseUrl: "http://x", litellmMasterKey: "sk", fetchImpl: impl, filterHook: () => ({ allow: false, reason: "blocked by test sentinel" }) });
-    await guard.register(RUN, { connections: [gmailConn] });
-    const blocked = await guard.forwardConnection(RUN, req);
+    await guard.register(RUN, { connections: [gmailConn], grants: FULL_GRANT });
+    const blocked = await guard.forwardConnection(RUN, readReq);
     expect(blocked.ok).toBe(false);
     expect(blocked.refusal?.detail).toMatch(/blocked by test sentinel/);
     await guard.teardown(RUN);
-    // After teardown the run is unknown → any read refuses (no lingering credential).
-    const afterTeardown = await guard.forwardConnection(RUN, req);
+    const afterTeardown = await guard.forwardConnection(RUN, readReq);
     expect(afterTeardown.ok).toBe(false);
     fs.rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe("guard skill-permission enforcement (4.4, permission-first)", () => {
+  async function withGrants(grants: SkillGrant[], connections: ProvisionConnection[], fetchImpl: typeof fetch) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "guard-"));
+    const guard = createGuard({ socketDir: dir, litellmBaseUrl: "http://x", litellmMasterKey: "sk", fetchImpl });
+    await guard.register(RUN, { connections, grants });
+    return { guard, cleanup: async () => { await guard.teardown(RUN); fs.rmSync(dir, { recursive: true, force: true }); } };
+  }
+  const op = (o: "read" | "label" | "send") => ({ v: 3 as const, runId: RUN, connectionId: "gmail", op: o });
+
+  it("refuses an out-of-scope op with kind=permission BEFORE any credential is consulted (AC2)", async () => {
+    const { impl, calls } = captureGmailFetch();
+    // read-only grant + a fully credentialed connection: a `label` (write) op must still refuse on
+    // permission, and must NOT reach the adapter (fetch never called).
+    const { guard, cleanup } = await withGrants([{ scope: "read", send: false }], [gmailConn], impl);
+    const res = await guard.forwardConnection(RUN, op("label"));
+    expect(res.ok).toBe(false);
+    expect(res.refusal?.kind).toBe("permission");
+    expect(calls).toHaveLength(0); // permission-first: no forward, no credential use
+    await cleanup();
+  });
+
+  it("refuses send when the send grant is off — kind=permission (AC3)", async () => {
+    const { impl, calls } = captureGmailFetch();
+    const { guard, cleanup } = await withGrants([{ scope: "read-write", send: false }], [gmailConn], impl);
+    const res = await guard.forwardConnection(RUN, op("send"));
+    expect(res.ok).toBe(false);
+    expect(res.refusal?.kind).toBe("permission");
+    expect(res.refusal?.detail).toMatch(/Allow send/);
+    expect(calls).toHaveLength(0);
+    await cleanup();
+  });
+
+  it("send passes permission (grant on) then refuses on egress when no credential is held", async () => {
+    const { impl } = captureGmailFetch();
+    const { guard, cleanup } = await withGrants([{ scope: "read-write", send: true }], [], impl); // no connection provisioned
+    const res = await guard.forwardConnection(RUN, op("send"));
+    expect(res.ok).toBe(false);
+    expect(res.refusal?.kind).toBe("egress"); // permission passed, egress failed
+    await cleanup();
+  });
+
+  it("no grants (default-deny) refuses even a read on permission, ahead of egress", async () => {
+    const { impl, calls } = captureGmailFetch();
+    const { guard, cleanup } = await withGrants([], [gmailConn], impl);
+    const res = await guard.forwardConnection(RUN, op("read"));
+    expect(res.ok).toBe(false);
+    expect(res.refusal?.kind).toBe("permission");
+    expect(calls).toHaveLength(0);
+    await cleanup();
   });
 });
