@@ -11,6 +11,10 @@ import { httpModelGateway } from "./litellm/gateway.js";
 import { drizzleDataConnectionsRepo } from "./connections/dataRepo.js";
 import { googleOAuth } from "./oauth/google.js";
 import { drizzleAgentsRepo } from "./agents/repo.js";
+import { drizzleRunsRepo } from "./runs/repo.js";
+import { runOrchestrator } from "./runs/orchestrator.js";
+import { dockerRuntime, resolveSandboxRuntimeKind } from "./runs/runtime.js";
+import { httpRunGuard } from "./runs/guardClient.js";
 
 const port = Number(process.env.PORT ?? 8080);
 const SESSION_SWEEP_MS = 1000 * 60 * 60; // reap expired sessions hourly
@@ -55,6 +59,22 @@ async function main() {
   const google = googleOAuth();
   const agentsRepo = drizzleAgentsRepo(db);
 
+  // Run-orchestrator wiring (Epic 4). Runtime kind is explicit (fail-closed; dev-insecure refused
+  // in production). The Docker socket is available only here (control plane), never a sandbox.
+  const runsRepo = drizzleRunsRepo(db);
+  const runtimeKind = resolveSandboxRuntimeKind();
+  const runtime = dockerRuntime(runtimeKind);
+  const guard = httpRunGuard(process.env.GUARD_ADMIN_URL ?? "http://egress-guard:8081", process.env.GUARD_ADMIN_TOKEN ?? "dev-guard-admin");
+  const orchestrator = runOrchestrator({
+    runsRepo,
+    agentsRepo,
+    runtime,
+    guard,
+    image: process.env.AGENT_HARNESS_IMAGE ?? "turanga/agent-harness:dev",
+    sandboxVolume: process.env.GUARD_SANDBOX_VOLUME ?? "turanga_guard-run",
+  });
+  console.log(`[control-api] sandbox runtime: ${runtimeKind}`);
+
   const app = createApp({
     authRepo,
     secureCookie: process.env.COOKIE_SECURE === "true",
@@ -63,6 +83,8 @@ async function main() {
     dataConnectionsRepo,
     googleOAuth: google,
     agentsRepo,
+    runsRepo,
+    orchestrator,
   });
   serve({ fetch: app.fetch, port }, (info) => {
     console.log(`[control-api] listening on :${info.port}`);

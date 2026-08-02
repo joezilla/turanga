@@ -32,3 +32,24 @@ export const ControlChannelMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("done"), v: z.literal(CONTRACT_VERSION), status: z.enum(["succeeded", "failed", "killed"]) }),
 ]);
 export type ControlChannelMessage = z.infer<typeof ControlChannelMessageSchema>;
+
+/** The harness↔Guard logical-request protocol (E4-AD-9). A model call is the chat-completions
+ *  shape the Guard proxies to LiteLLM. The harness never sees a URL, key, or token (AD-5/AD-10).
+ *  Connection reads + plain egress are added in Story 4.3. */
+export const GuardModelRequestSchema = z.object({
+  v: z.literal(CONTRACT_VERSION),
+  runId: z.string(),
+  model: z.string(),
+  messages: z.array(z.object({ role: z.enum(["system", "user", "assistant"]), content: z.string() })),
+});
+export type GuardModelRequest = z.infer<typeof GuardModelRequestSchema>;
+
+export const GuardModelResponseSchema = z.object({
+  v: z.literal(CONTRACT_VERSION),
+  ok: z.boolean(),
+  text: z.string().optional(),
+  error: z.string().optional(),
+  tokens: z.number().optional(),
+  latencyMs: z.number().optional(),
+});
+export type GuardModelResponse = z.infer<typeof GuardModelResponseSchema>;

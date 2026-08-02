@@ -79,8 +79,19 @@ services:
       GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
       GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
       GOOGLE_OAUTH_REDIRECT_URI: ${GOOGLE_OAUTH_REDIRECT_URI:-http://localhost:8080/oauth/google/callback}
+      # Run-orchestrator (Epic 4). dev-insecure on macOS (no gVisor); refused in production.
+      SANDBOX_RUNTIME: ${SANDBOX_RUNTIME:-dev-insecure}
+      GUARD_ADMIN_URL: http://egress-guard:8081
+      GUARD_ADMIN_TOKEN: ${GUARD_ADMIN_TOKEN:-dev-guard-admin}
+      AGENT_HARNESS_IMAGE: ${AGENT_HARNESS_IMAGE:-turanga/agent-harness:dev}
+      # The named volume the guard's per-run sockets live on (docker-compose prefixes with the project name).
+      GUARD_SANDBOX_VOLUME: turanga_guard-run
     ports:
       - "8080:8080"
+    volumes:
+      # The orchestrator spawns per-run sandboxes via the Docker API. The socket is mounted ONLY
+      # here (control plane), NEVER into a sandbox (E4-AD-4).
+      - /var/run/docker.sock:/var/run/docker.sock
     healthcheck:
       test: ["CMD-SHELL", "node -e \"fetch('http://localhost:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 5s
@@ -96,11 +107,31 @@ services:
       redis: { condition: service_healthy }
     environment:
       PORT: "8081"
+      GUARD_SOCKET_DIR: /run/guard
+      GUARD_ADMIN_TOKEN: ${GUARD_ADMIN_TOKEN:-dev-guard-admin}
+      LITELLM_BASE_URL: http://litellm:4000
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-turanga-dev}
+    volumes:
+      # Shared with each sandbox (bound to /guard there): the per-run UDS lives here (E4-AD-1).
+      - guard-run:/run/guard
     healthcheck:
       test: ["CMD-SHELL", "node -e \"fetch('http://localhost:8081/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 5s
       timeout: 3s
       retries: 20
 
+  # Build-only: produces the turanga/agent-harness:dev image the orchestrator runs per-run.
+  # It is NOT a long-lived service (AD-4) — `no-op` keeps it from staying up. Build with
+  # `docker compose build agent-harness-image` (or `--build` brings it along).
+  agent-harness-image:
+    build:
+      context: ..
+      dockerfile: apps/agent-harness/Dockerfile
+    image: turanga/agent-harness:dev
+    entrypoint: ["true"]
+    restart: "no"
+    profiles: ["build"]
+
 volumes:
   pgdata:
+  guard-run:

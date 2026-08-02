@@ -67,3 +67,16 @@ export const agents = pgTable("agents", {
     .default({ perRun: null, perDay: null }), // Story 3.5
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+// Runs (Epic 4). Written ONLY by the run-orchestrator (AD-7). The transcript is the merged
+// control-channel event stream; spend + refusal detail fill in as Stories 4.4/4.5 land.
+export const runs = pgTable("runs", {
+  id: text("id").primaryKey(), // ULID
+  agentId: text("agent_id").notNull(),
+  status: text("status").notNull(), // created | running | succeeded | failed | killed
+  taskInput: text("task_input").notNull().default(""),
+  transcript: jsonb("transcript").$type<unknown[]>().notNull().default([]), // ControlChannelMessage[]
+  reason: text("reason"), // the stated fail/kill reason
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  endedAt: timestamp("ended_at", { withTimezone: true }),
+});

@@ -20,6 +20,11 @@ pnpm install
 [ -f deploy/.env ] || cp deploy/.env.example deploy/.env
 ( cd deploy && docker compose up -d --build )
 
+# 2b. Build the per-run sandbox image the orchestrator launches (Epic 4). Not a long-lived
+#     service — built here + tagged turanga/agent-harness:dev. On macOS the sandbox runtime is
+#     SANDBOX_RUNTIME=dev-insecure (no gVisor); the guarantee is topological locally.
+( cd deploy && docker compose --profile build build agent-harness-image )
+
 cat <<'EOF'
 
 ──────────────────────────────────────────────────────────────

@@ -3,7 +3,12 @@ packages:
   - "packages/*"
 
 allowBuilds:
+  # dockerode's ssh transport pulls these native deps; we use the unix socket, so skip their
+  # optional native builds (control-api talks to /var/run/docker.sock).
+  cpu-features: false
   esbuild: true
+  protobufjs: false
+  ssh2: false
 
 # esbuild ships a postinstall that fetches its native binary; vite/SvelteKit need it.
 onlyBuiltDependencies:

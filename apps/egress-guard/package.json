@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.13.2",
+    "@turanga/contracts": "workspace:*",
     "hono": "^4.12.0"
   },
   "devDependencies": {

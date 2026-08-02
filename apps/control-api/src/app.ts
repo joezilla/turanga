@@ -15,6 +15,11 @@ import { memoryDataConnectionsRepo, type DataConnectionsRepo } from "./connectio
 import { googleOAuth, type GoogleOAuth } from "./oauth/google.js";
 import { agentRoutes } from "./agents/routes.js";
 import { memoryAgentsRepo, type AgentsRepo } from "./agents/repo.js";
+import { runRoutes } from "./runs/routes.js";
+import { memoryRunsRepo, type RunsRepo } from "./runs/repo.js";
+import { runOrchestrator, type RunOrchestrator } from "./runs/orchestrator.js";
+import { fakeSandboxRuntime } from "./runs/runtime.js";
+import { fakeRunGuard } from "./runs/guardClient.js";
 
 export const VERSION = process.env.TURANGA_VERSION ?? "0.0.0";
 export const GIT_SHA = process.env.TURANGA_GIT_SHA ?? "unknown";
@@ -27,6 +32,8 @@ export interface AppDeps {
   dataConnectionsRepo?: DataConnectionsRepo;
   googleOAuth?: GoogleOAuth;
   agentsRepo?: AgentsRepo;
+  runsRepo?: RunsRepo;
+  orchestrator?: RunOrchestrator; // defaults to a fake-runtime orchestrator (tests / no-Docker boot)
 }
 
 export function createApp(deps: AppDeps = {}) {
@@ -49,6 +56,8 @@ export function createApp(deps: AppDeps = {}) {
   app.use("/oauth/*", requireSession(authRepo));
   app.use("/agents", requireSession(authRepo));
   app.use("/agents/*", requireSession(authRepo));
+  app.use("/runs", requireSession(authRepo));
+  app.use("/runs/*", requireSession(authRepo));
   const agentsRepo = deps.agentsRepo ?? memoryAgentsRepo();
   const connectionsRepo = deps.connectionsRepo ?? memoryConnectionsRepo();
   const gateway = deps.modelGateway ?? fakeModelGateway();
@@ -59,6 +68,14 @@ export function createApp(deps: AppDeps = {}) {
   app.route("/", dataConnectionRoutes(dataConnectionsRepo, google, webOrigin));
 
   app.route("/", agentRoutes(agentsRepo));
+
+  const runsRepo = deps.runsRepo ?? memoryRunsRepo();
+  // Default orchestrator uses a fake runtime + fake guard so the app boots + tests run without
+  // Docker; server.ts injects the real Docker-backed orchestrator.
+  const orchestrator =
+    deps.orchestrator ??
+    runOrchestrator({ runsRepo, agentsRepo, runtime: fakeSandboxRuntime(), guard: fakeRunGuard(), image: "turanga/agent-harness:dev", sandboxVolume: "guard-run" });
+  app.route("/", runRoutes(runsRepo, orchestrator));
 
   return app;
 }

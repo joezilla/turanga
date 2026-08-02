@@ -60,10 +60,10 @@ The sandbox has **exactly two wires**: `stdout` (control channel out → orchest
 - **Prevents:** a network interface on the sandbox; one run reaching another run's Guard context; the `--network=none`-vs-"Guard is the way out" contradiction.
 - **Rule:** the sandbox runs with **no network** (`--network=none`) and its **only** egress is a **per-run bind-mounted UDS** to `egress-guard`. The harness speaks HTTP-over-UDS; the Guard classifies each logical request (AD-2/AD-5). At run start the orchestrator **registers the run** with the Guard over the compose network (Guard admin API), which provisions the per-run socket + the run's allowlist + per-run LLM key; the orchestrator bind-mounts that socket into the sandbox; the Guard tears it down on run end. One socket per run — isolation is by socket, not a shared socket + token.
 
-### E4-AD-2 — Job spec on `stdin`, the single control channel on `stdout`
+### E4-AD-2 — Immutable job spec injected at create time; the single control channel on `stdout`
 - **Binds:** AD-9; the orchestrator↔harness contract.
-- **Prevents:** a second control path; conflating egress with the control channel.
-- **Rule:** the orchestrator injects the immutable job spec on the container's **`stdin`**; the harness emits the **one** control channel as **newline-delimited JSON on `stdout`**, which the orchestrator streams and validates against `ControlChannelMessageSchema` (`turn | metrics | refusal | done`). The Guard UDS is **egress-only**; `stderr` is diagnostic logging, never control. The harness has no other I/O (AD-9).
+- **Prevents:** a second control path; conflating egress with the control channel; a self-mutating agent.
+- **Rule:** the orchestrator injects the immutable job spec at **container-create time as the `JOB_SPEC` env var** (revised from stdin in Story 4.1 — dockerode's attach-stdin hangs; an env var is equally immutable, create-time, and carries no secret and no network side-channel, so the AD-9 intent holds; the harness still falls back to stdin for a manual `docker run -i`). The harness emits the **one** control channel as **newline-delimited JSON on `stdout`**, which the orchestrator streams and validates against `ControlChannelMessageSchema` (`turn | metrics | refusal | done`). The Guard UDS is **egress-only**; `stderr` is diagnostic logging, never control. The harness has no other I/O (AD-9).
 
 ### E4-AD-3 — One `SandboxRuntime` interface, runtime chosen by explicit config, fail-closed
 - **Binds:** AD-4; NFR-1, NFR-2; every environment the platform runs in.
