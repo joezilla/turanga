@@ -47,6 +47,12 @@ export function runRoutes(repo: RunsRepo, orchestrator: RunOrchestrator, hub: Ru
     return c.json({ todayMicros: await repo.sumTodayMicros(c.req.param("id")) });
   });
 
+  // Per-tool invocation statistics for the agent (Story 6.5) — count/latency/outcome/refusals derived
+  // from its runs' recorded `tool` messages. Observed only (no cost). Session-guarded via /agents/*.
+  app.get("/agents/:id/tool-stats", async (c) => {
+    return c.json({ stats: await repo.aggregateToolStats(c.req.param("id")) });
+  });
+
   app.post("/runs", async (c) => {
     const body = ((await c.req.json().catch(() => ({}))) ?? {}) as { agentId?: unknown; taskInput?: unknown };
     if (typeof body.agentId !== "string" || !body.agentId) {

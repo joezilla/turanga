@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import { JobSpecSchema, JobToolSchema, ToolCallRequestSchema, ToolCallResponseSchema, ControlChannelMessageSchema, GuardConnectionRequestSchema, GuardConnectionResponseSchema, GuardRunEventSchema, authorizes, SKILL_OPS, OP_REQUIREMENTS, CONTRACT_VERSION } from "./index.js";
 
 describe("contracts", () => {
-  it("contract version is 5 (Story 6.1 — tools)", () => {
-    expect(CONTRACT_VERSION).toBe(5);
+  it("contract version is 6 (Story 6.5 — tool invocation records)", () => {
+    expect(CONTRACT_VERSION).toBe(6);
   });
 
   it("job spec round-trips (with logical connection + tool handles)", () => {
@@ -56,6 +56,21 @@ describe("contracts", () => {
   it("parses a control-channel done message", () => {
     const msg = ControlChannelMessageSchema.parse({ type: "done", v: CONTRACT_VERSION, status: "succeeded" });
     expect(msg.type).toBe("done");
+  });
+
+  it("parses a structured `tool` invocation record (Story 6.5) — all three outcomes, no cost field", () => {
+    for (const outcome of ["ok", "error", "refused"] as const) {
+      const msg = ControlChannelMessageSchema.parse({ type: "tool", v: CONTRACT_VERSION, toolId: "t1", toolName: "Weather", operation: "get_time", outcome, latencyMs: 12, detail: outcome === "ok" ? undefined : "why" });
+      expect(msg.type).toBe("tool");
+      if (msg.type === "tool") {
+        expect(msg.outcome).toBe(outcome);
+        expect(msg.latencyMs).toBe(12);
+        // observed only (AC2): a tool record carries no cost.
+        expect(msg).not.toHaveProperty("costMicros");
+      }
+    }
+    // a v5 tool message is rejected by the current (v6) schema — mixed-version guard.
+    expect(ControlChannelMessageSchema.safeParse({ type: "tool", v: 5, toolId: "t1", toolName: "W", operation: "x", outcome: "ok", latencyMs: 1 }).success).toBe(false);
   });
 
   it("connection request: a provider-agnostic op (no URL/token)", () => {

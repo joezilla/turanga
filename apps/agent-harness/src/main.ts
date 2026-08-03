@@ -127,15 +127,21 @@ async function guardToolCall(socketPath: string, req: ToolCallRequest): Promise<
   }
 }
 
-// Pure mapping of a tool call's response to what the harness does with it (exported for tests):
-//  • ok      → a short summary folded into the model context (isError = the tool's own execution error,
-//              distinct from a Guard refusal — noted but not a run failure).
-//  • refusal → a `refusal` control message carrying the GUARD's kind (permission or egress).
-//  • plain error (transport / unreachable) → nothing; the run proceeds.
-export function toolOutcome(operation: string, res: ToolCallResponse): { system?: string; refusal?: ControlChannelMessage } {
-  if (res.ok) return { system: `Called ${operation}${res.isError ? " (the tool reported an error)" : ""}.` };
-  if (res.refusal) return { refusal: { type: "refusal", v: CONTRACT_VERSION, kind: res.refusal.kind, detail: res.refusal.detail } };
-  return {};
+// Pure mapping of a tool call's response to a RECORDED observability event (Story 6.5) — exported for
+// tests. EVERY tool call emits a structured `tool` control message (count/latency/outcome/refusals),
+// so a successful call is no longer invisible. Observed only: the message carries no cost (AC2).
+//  • ok (success)              → outcome "ok"    + a context note for the model.
+//  • ok but isError            → outcome "error" (the tool's OWN execution error) + a context note.
+//  • refusal (Guard denial)    → outcome "refused" + the detail; no context note (a blocked call isn't context).
+//  • transport / plain error   → outcome "error" + the detail.
+// A refused/errored tool call is NOT a run failure (same posture as a blocked send).
+export function toolRecord(toolId: string, toolName: string, operation: string, res: ToolCallResponse): { message: ControlChannelMessage; system?: string } {
+  const latencyMs = res.latencyMs ?? 0;
+  const base = { type: "tool" as const, v: CONTRACT_VERSION, toolId, toolName, operation, latencyMs };
+  if (res.ok && !res.isError) return { message: { ...base, outcome: "ok" }, system: `Called ${operation}.` };
+  if (res.ok && res.isError) return { message: { ...base, outcome: "error", detail: "the tool reported an error" }, system: `Called ${operation} (the tool reported an error).` };
+  if (res.refusal) return { message: { ...base, outcome: "refused", detail: res.refusal.detail } };
+  return { message: { ...base, outcome: "error", detail: res.error } };
 }
 
 /** The ops a run should attempt, derived from its attached skills (provider-agnostic, SM-4). */
@@ -192,9 +198,9 @@ export async function runHarness(): Promise<void> {
     const operation = tool.operations[0];
     if (!operation) continue; // an attached-but-ungranted tool has nothing to call
     const tr = await guardToolCall(socketPath, { v: CONTRACT_VERSION, runId: spec.runId, toolId: tool.id, operation, arguments: {} });
-    const outcome = toolOutcome(operation, tr);
-    if (outcome.refusal) emit(outcome.refusal);
-    if (outcome.system) messages.push({ role: "system", content: outcome.system });
+    const rec = toolRecord(tool.id, tool.name, operation, tr);
+    emit(rec.message); // a RECORDED tool event for EVERY call (Story 6.5) — success is no longer invisible
+    if (rec.system) messages.push({ role: "system", content: rec.system });
   }
 
   // Phase 2 — the model call → the agent turn (the response / the draft artifact for draft-reply).

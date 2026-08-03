@@ -17,7 +17,7 @@ describe("control-api", () => {
 
   it("the Guard callback route rejects a bad token (constant-time) and is NOT web-session-guarded", async () => {
     const app2 = createApp({ guardCallbackToken: "secret-cb" });
-    const event = JSON.stringify({ type: "metrics", v: 5, latencyMs: 1, tokens: 1, costMicros: 1 });
+    const event = JSON.stringify({ type: "metrics", v: 6, latencyMs: 1, tokens: 1, costMicros: 1 });
     // No token → 403 (not 401/redirect — it's control-plane, token-authenticated, not session).
     const bad = await app2.request("/internal/guard/runs/R1/events", { method: "POST", headers: { "content-type": "application/json" }, body: event });
     expect(bad.status).toBe(403);
@@ -29,6 +29,11 @@ describe("control-api", () => {
   it("GET /agents/cost (agents-list daily meter, Story 5.2) is session-guarded via /agents/*", async () => {
     // No session cookie → 401 (it sits under the same requireSession as the rest of /agents/*).
     const res = await app.request("/agents/cost");
+    expect(res.status).toBe(401);
+  });
+
+  it("GET /agents/:id/tool-stats (Story 6.5) is session-guarded via /agents/*", async () => {
+    const res = await app.request("/agents/a1/tool-stats");
     expect(res.status).toBe(401);
   });
 });

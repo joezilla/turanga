@@ -21,6 +21,49 @@ export interface RunRow {
 // The review view fetches the full RunRow (with transcript) via get(id).
 export type RunSummary = Omit<RunRow, "transcript">;
 
+// Per-tool invocation statistics for an agent (Story 6.5) — derived from the `tool` control messages
+// recorded on the agent's run transcripts. Observed only: NO cost here (AC2). `lastUsedAt` is the
+// run's createdAt (per-run granularity — the tool message carries no timestamp of its own).
+export interface ToolStat {
+  toolId: string;
+  toolName: string;
+  invocations: number;
+  ok: number;
+  errors: number;
+  refusals: number;
+  avgLatencyMs: number;
+  lastUsedAt: string | null;
+}
+
+// Reduce `tool` control messages across runs into per-tool stats (pure — shared by both repo impls).
+export function reduceToolStats(runs: { transcript: ControlChannelMessage[]; createdAt: string }[]): ToolStat[] {
+  const acc = new Map<string, { toolName: string; invocations: number; ok: number; errors: number; refusals: number; totalLatency: number; lastUsedAt: string | null }>();
+  for (const run of runs) {
+    for (const m of run.transcript) {
+      if (m.type !== "tool") continue;
+      const e = acc.get(m.toolId) ?? { toolName: m.toolName, invocations: 0, ok: 0, errors: 0, refusals: 0, totalLatency: 0, lastUsedAt: null };
+      e.toolName = m.toolName; // keep the freshest display name
+      e.invocations++;
+      if (m.outcome === "ok") e.ok++;
+      else if (m.outcome === "refused") e.refusals++;
+      else e.errors++;
+      e.totalLatency += m.latencyMs;
+      if (!e.lastUsedAt || run.createdAt > e.lastUsedAt) e.lastUsedAt = run.createdAt;
+      acc.set(m.toolId, e);
+    }
+  }
+  return [...acc.entries()].map(([toolId, e]) => ({
+    toolId,
+    toolName: e.toolName,
+    invocations: e.invocations,
+    ok: e.ok,
+    errors: e.errors,
+    refusals: e.refusals,
+    avgLatencyMs: e.invocations ? Math.round(e.totalLatency / e.invocations) : 0,
+    lastUsedAt: e.lastUsedAt,
+  }));
+}
+
 // Written only by the run-orchestrator (AD-7). No `update(patch)` surface beyond these. LiteLLM owns
 // spend; this `costMicros` summary is the summed run metrics the Guard reported (AD-7 — read, not recomputed).
 export interface RunsRepo {
@@ -33,7 +76,10 @@ export interface RunsRepo {
   appendMessage(id: string, msg: ControlChannelMessage): Promise<void>;
   sumTodayMicros(agentId: string): Promise<number>; // agent's summed run cost since UTC midnight (daily meter)
   sumTodayMicrosByAgent(): Promise<Record<string, number>>; // every agent's summed run cost since UTC midnight (agents-list meter, Story 5.2) — same window/source as sumTodayMicros
+  aggregateToolStats(agentId: string): Promise<ToolStat[]>; // per-tool invocation stats from the agent's run transcripts (Story 6.5, observed only)
 }
+
+const TOOL_STATS_RUN_WINDOW = 500; // bound the aggregation to recent runs (tool messages are sparse)
 
 const DEFAULT_LIST_LIMIT = 100;
 const startOfUtcToday = (): Date => {
@@ -140,6 +186,17 @@ export function drizzleRunsRepo(db: Db): RunsRepo {
       for (const r of rows) out[r.agentId] = Number(r.total);
       return out;
     },
+    async aggregateToolStats(agentId) {
+      // Read the agent's recent run transcripts + times, reduce the `tool` messages in JS (they're
+      // sparse; a windowed scan is fine — no cost, no write, observed only). Story 6.5.
+      const rows = await db
+        .select({ transcript: runs.transcript, createdAt: runs.createdAt })
+        .from(runs)
+        .where(eq(runs.agentId, agentId))
+        .orderBy(desc(runs.createdAt), desc(runs.id))
+        .limit(TOOL_STATS_RUN_WINDOW);
+      return reduceToolStats(rows.map((r) => ({ transcript: (r.transcript as ControlChannelMessage[]) ?? [], createdAt: r.createdAt.toISOString() })));
+    },
   };
 }
 
@@ -200,6 +257,13 @@ export function memoryRunsRepo(): RunsRepo {
         if (r.createdAt >= midnight) out[r.agentId] = (out[r.agentId] ?? 0) + r.costMicros;
       }
       return out;
+    },
+    async aggregateToolStats(agentId) {
+      const agentRuns = order
+        .map((id) => rows.get(id)!)
+        .filter((r) => r.agentId === agentId)
+        .slice(0, TOOL_STATS_RUN_WINDOW);
+      return reduceToolStats(agentRuns.map((r) => ({ transcript: r.transcript, createdAt: r.createdAt })));
     },
   };
 }

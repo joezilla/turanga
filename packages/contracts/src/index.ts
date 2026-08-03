@@ -3,13 +3,15 @@
 // they harden in Epic 4. The `v` field is the contract version — bump on any change.
 import { z } from "zod";
 
+// v6 (Story 6.5): structured `tool` invocation records on the control channel — a recorded,
+// per-tool observability event (outcome + latency); observed only, never metered/killed (AC2).
 // v5 (Story 6.1): tools — a logical JobTool handle on the job spec + the harness↔Guard tool-invoke
 // protocol (ToolCallRequest/Response). No endpoint/credential in either (AD-10).
 // v4 (Story 4.5): metrics cost is real (micro-USD `costMicros`); the Guard→orchestrator event
 // channel (metrics + kill) is defined here (E4-AD-10, out-of-band control-plane).
 // v3 (Story 4.4): provider-agnostic connection ops (read | label | send), refusal `kind`, skill policy.
 // v2 (Story 4.3): connection-read entries + logical connection handles.
-export const CONTRACT_VERSION = 5 as const;
+export const CONTRACT_VERSION = 6 as const;
 
 /** A logical connection handle the agent is configured to use. NO token, URL, or destination —
  *  the Guard holds the credential + allowlist per-run (AD-10); the sandbox names only the handle. */
@@ -58,6 +60,19 @@ export const ControlChannelMessageSchema = z.discriminatedUnion("type", [
     costMicros: z.number(), // cost in micro-USD (1e-6 USD) — fine enough for sub-cent per-call costs
   }),
   z.object({ type: z.literal("refusal"), v: z.literal(CONTRACT_VERSION), kind: z.enum(["egress", "permission"]), detail: z.string() }),
+  // A recorded tool invocation (Story 6.5) — observed ONLY: carries NO cost and never touches the
+  // breach/kill path (AC2). `outcome` is ok (success) | error (tool isError / transport) | refused
+  // (a Guard denial); `detail` is the refusal/error reason (never a secret — the Guard composed it).
+  z.object({
+    type: z.literal("tool"),
+    v: z.literal(CONTRACT_VERSION),
+    toolId: z.string(),
+    toolName: z.string(),
+    operation: z.string(),
+    outcome: z.enum(["ok", "error", "refused"]),
+    latencyMs: z.number(),
+    detail: z.string().optional(),
+  }),
   z.object({ type: z.literal("done"), v: z.literal(CONTRACT_VERSION), status: z.enum(["succeeded", "failed", "killed"]) }),
 ]);
 export type ControlChannelMessage = z.infer<typeof ControlChannelMessageSchema>;

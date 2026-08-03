@@ -38,7 +38,7 @@
     load();
   });
 
-  const isRenderable = (m: RunMessage) => m.type === "turn" || m.type === "refusal" || m.type === "metrics";
+  const isRenderable = (m: RunMessage) => m.type === "turn" || m.type === "refusal" || m.type === "metrics" || m.type === "tool";
   const cause = $derived(run ? runCause(run.status, run.reason) : null);
   const inProgress = $derived(run ? run.status === "running" || run.status === "created" : false);
 </script>

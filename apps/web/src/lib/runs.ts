@@ -8,10 +8,24 @@ export type RunStatus = "created" | "running" | "succeeded" | "failed" | "killed
 
 // One control-channel message — the discriminated union the harness/Guard emit (E4-AD-9/10).
 export type RunMessage =
-  | { type: "turn"; v: 5; role: "user" | "agent"; text: string }
-  | { type: "metrics"; v: 5; latencyMs: number; tokens: number; costMicros: number }
-  | { type: "refusal"; v: 5; kind: "egress" | "permission"; detail: string }
-  | { type: "done"; v: 5; status: "succeeded" | "failed" | "killed" };
+  | { type: "turn"; v: 6; role: "user" | "agent"; text: string }
+  | { type: "metrics"; v: 6; latencyMs: number; tokens: number; costMicros: number }
+  | { type: "refusal"; v: 6; kind: "egress" | "permission"; detail: string }
+  | { type: "tool"; v: 6; toolId: string; toolName: string; operation: string; outcome: "ok" | "error" | "refused"; latencyMs: number; detail?: string } // Story 6.5
+  | { type: "done"; v: 6; status: "succeeded" | "failed" | "killed" };
+
+/** Per-tool invocation statistics for an agent (Story 6.5) — observed only, no cost. Mirrors the
+ *  control-api ToolStat. */
+export interface ToolStat {
+  toolId: string;
+  toolName: string;
+  invocations: number;
+  ok: number;
+  errors: number;
+  refusals: number;
+  avgLatencyMs: number;
+  lastUsedAt: string | null;
+}
 
 export interface Run {
   id: string;
@@ -67,6 +81,19 @@ export async function getAgentCost(agentId: string): Promise<{ todayMicros: numb
     return (await r.json()) as { todayMicros: number };
   } catch {
     return null;
+  }
+}
+
+/** The agent's per-tool invocation stats (Story 6.5) — count/latency/outcome/refusals from its runs'
+ *  recorded tool calls. Best-effort — a read failure returns [] so the Tools section still renders. */
+export async function getAgentToolStats(agentId: string): Promise<ToolStat[]> {
+  try {
+    const r = await fetch(`${base}/agents/${encodeURIComponent(agentId)}/tool-stats`, { credentials: "include" });
+    if (!r.ok) return [];
+    const body = (await r.json()) as { stats?: ToolStat[] };
+    return Array.isArray(body.stats) ? body.stats : [];
+  } catch {
+    return [];
   }
 }
 

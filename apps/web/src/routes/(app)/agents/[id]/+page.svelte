@@ -8,7 +8,7 @@
   import { getAgent, updateAgent, activateAgent, deactivateAgent, activationBlockers, type Agent, type AgentPatch, type AgentVariable, type AttachedSkill, type AttachedTool, type CostCap } from "$lib/agents";
   import { listProviders, type Provider } from "$lib/connections";
   import { listTools, type Tool } from "$lib/tools";
-  import { startRun, runEventsUrl, getAgentCost, getRun, type RunMessage } from "$lib/runs";
+  import { startRun, runEventsUrl, getAgentCost, getAgentToolStats, getRun, type RunMessage, type ToolStat } from "$lib/runs";
   import { formatMinor, formatMicros } from "$lib/money";
   import { undefinedVariables } from "$lib/variables";
   import Section from "$lib/components/Section.svelte";
@@ -45,6 +45,7 @@
   let skills = $state<AttachedSkill[]>([]);
   let attachedTools = $state<AttachedTool[]>([]);
   let connectedTools = $state<Tool[]>([]); // the tools the builder can attach (Story 6.3)
+  let toolStats = $state<ToolStat[]>([]); // per-tool invocation stats across this agent's runs (Story 6.5)
   let costCap = $state<CostCap>({ perRun: null, perDay: null });
   let capsTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -231,6 +232,7 @@
     costCap = { perRun: a.value.costCap.perRun, perDay: a.value.costCap.perDay };
     providers = p.ok ? p.value : []; // a provider outage shouldn't block editing the agent
     connectedTools = t.ok ? t.value : []; // a tools outage shouldn't block editing the agent
+    void getAgentToolStats(target).then((s) => { if (target === id) toolStats = s; }); // Story 6.5 — best-effort
   }
   $effect(() => {
     // re-run when the route id changes
@@ -408,6 +410,20 @@
 
       <Section label="Tools">
         <ToolsEditor value={attachedTools} tools={connectedTools} onchange={onToolsChange} />
+        {#if toolStats.length > 0}
+          <!-- Per-tool activity across this agent's runs (Story 6.5) — observed only, no cost. -->
+          <ul class="tool-activity">
+            {#each toolStats as s (s.toolId)}
+              <li>
+                <span class="ta-name">{s.toolName}</span>
+                <span class="ta-stat mono-num">{s.invocations.toLocaleString("en-US")} call{s.invocations === 1 ? "" : "s"}</span>
+                {#if s.refusals > 0}<span class="ta-stat mono-num">· {s.refusals.toLocaleString("en-US")} refused</span>{/if}
+                {#if s.errors > 0}<span class="ta-stat mono-num">· {s.errors.toLocaleString("en-US")} error{s.errors === 1 ? "" : "s"}</span>{/if}
+                <span class="ta-stat mono-num">· {s.avgLatencyMs.toLocaleString("en-US")} ms avg</span>
+              </li>
+            {/each}
+          </ul>
+        {/if}
       </Section>
 
       <div id="variables-section">
@@ -503,6 +519,30 @@
 {/if}
 
 <style>
+  /* Per-tool activity readout (Story 6.5) */
+  .tool-activity {
+    list-style: none;
+    margin: var(--space-3) 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    max-width: 560px;
+  }
+  .tool-activity li {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--space-2);
+    font-size: var(--text-xs);
+  }
+  .ta-name {
+    color: var(--text-secondary);
+    font-weight: var(--weight-medium);
+  }
+  .ta-stat {
+    color: var(--text-tertiary);
+  }
   .head {
     display: flex;
     align-items: center;

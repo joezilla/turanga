@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readJobSpec, opOutcome, toolOutcome } from "./main.js";
+import { readJobSpec, opOutcome, toolRecord } from "./main.js";
 import { CONTRACT_VERSION, type GuardConnectionResponse, type ToolCallResponse } from "@turanga/contracts";
 
 describe("agent-harness", () => {
@@ -35,20 +35,31 @@ describe("agent-harness", () => {
     expect(readJobSpec(spec).tools).toEqual([{ id: "t1", name: "Weather", operations: ["get_time"] }]);
   });
 
-  it("toolOutcome: a successful tool call folds a note into context; isError is noted (Story 6.4)", () => {
-    const ok: ToolCallResponse = { v: CONTRACT_VERSION, ok: true, content: [{ type: "text", text: "ok" }], isError: false };
-    expect(toolOutcome("get_time", ok)).toEqual({ system: "Called get_time." });
-    const errored: ToolCallResponse = { v: CONTRACT_VERSION, ok: true, content: [], isError: true };
-    expect(toolOutcome("get_time", errored).system).toMatch(/the tool reported an error/);
+  it("toolRecord: a successful call emits a `tool` record (outcome ok) + a context note (Story 6.5)", () => {
+    const ok: ToolCallResponse = { v: CONTRACT_VERSION, ok: true, content: [{ type: "text", text: "ok" }], isError: false, latencyMs: 12 };
+    const rec = toolRecord("t1", "Weather", "get_time", ok);
+    expect(rec.message).toEqual({ type: "tool", v: CONTRACT_VERSION, toolId: "t1", toolName: "Weather", operation: "get_time", outcome: "ok", latencyMs: 12 });
+    expect(rec.system).toBe("Called get_time.");
   });
 
-  it("toolOutcome: a permission refusal relays the Guard's kind (Story 6.4, AC2)", () => {
-    const refused: ToolCallResponse = { v: CONTRACT_VERSION, ok: false, refusal: { kind: "permission", detail: "Blocked — operation isn't granted." } };
-    expect(toolOutcome("get_time", refused).refusal).toEqual({ type: "refusal", v: CONTRACT_VERSION, kind: "permission", detail: "Blocked — operation isn't granted." });
+  it("toolRecord: a tool-execution error → outcome error, still a context note (Story 6.5)", () => {
+    const errored: ToolCallResponse = { v: CONTRACT_VERSION, ok: true, content: [], isError: true, latencyMs: 5 };
+    const rec = toolRecord("t1", "Weather", "get_time", errored);
+    expect(rec.message).toMatchObject({ type: "tool", outcome: "error", latencyMs: 5 });
+    expect(rec.system).toMatch(/the tool reported an error/);
   });
 
-  it("toolOutcome: a plain (non-refusal) error is non-fatal — nothing emitted (Story 6.4)", () => {
+  it("toolRecord: a refusal → outcome refused with the detail, NO context note (Story 6.5, AC1)", () => {
+    const refused: ToolCallResponse = { v: CONTRACT_VERSION, ok: false, refusal: { kind: "permission", detail: "Blocked — operation isn't granted." }, latencyMs: 1 };
+    const rec = toolRecord("t1", "Weather", "get_time", refused);
+    expect(rec.message).toEqual({ type: "tool", v: CONTRACT_VERSION, toolId: "t1", toolName: "Weather", operation: "get_time", outcome: "refused", latencyMs: 1, detail: "Blocked — operation isn't granted." });
+    expect(rec.system).toBeUndefined();
+  });
+
+  it("toolRecord: a transport error → outcome error with the detail; latency defaults to 0 (Story 6.5)", () => {
     const res: ToolCallResponse = { v: CONTRACT_VERSION, ok: false, error: "Can't reach the guard." };
-    expect(toolOutcome("get_time", res)).toEqual({});
+    const rec = toolRecord("t1", "Weather", "get_time", res);
+    expect(rec.message).toMatchObject({ type: "tool", outcome: "error", latencyMs: 0, detail: "Can't reach the guard." });
+    expect(rec.system).toBeUndefined();
   });
 });

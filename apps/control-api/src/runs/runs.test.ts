@@ -22,7 +22,7 @@ function orch(opts: { agent?: Agent; runtime?: ReturnType<typeof fakeSandboxRunt
   const hub = createRunHub();
   const runtime =
     opts.runtime ??
-    fakeSandboxRuntime({ lines: [nd({ type: "turn", v: 5, role: "agent", text: "hi" }), nd({ type: "done", v: 5, status: "succeeded" })] });
+    fakeSandboxRuntime({ lines: [nd({ type: "turn", v: 6, role: "agent", text: "hi" }), nd({ type: "done", v: 6, status: "succeeded" })] });
   const o = runOrchestrator({ runsRepo, agentsRepo: agentsRepo(opts.agent ?? agent()), runtime, guard, hub, image: "img", sandboxVolume: "vol", maxConcurrent: opts.maxConcurrent, runTimeoutMs: opts.runTimeoutMs });
   return { o, runsRepo, guard, runtime, hub };
 }
@@ -75,7 +75,7 @@ describe("run orchestrator", () => {
   });
 
   it("ignores malformed control lines and stops at the first done", async () => {
-    const { o } = orch({ runtime: fakeSandboxRuntime({ lines: ["not json", "{}", nd({ type: "done", v: 5, status: "succeeded" }), nd({ type: "done", v: 5, status: "failed" })] }) });
+    const { o } = orch({ runtime: fakeSandboxRuntime({ lines: ["not json", "{}", nd({ type: "done", v: 6, status: "succeeded" }), nd({ type: "done", v: 6, status: "failed" })] }) });
     const r = await o.launch("a1", "x");
     expect(r.ok).toBe(true);
     if (!r.ok) return;
@@ -142,7 +142,7 @@ describe("run orchestrator", () => {
       if (failNext) { failNext = false; throw new Error("db blip"); }
       return base.create(row);
     } };
-    const runtime = fakeSandboxRuntime({ lines: [nd({ type: "done", v: 5, status: "succeeded" })] });
+    const runtime = fakeSandboxRuntime({ lines: [nd({ type: "done", v: 6, status: "succeeded" })] });
     const o = runOrchestrator({ runsRepo: flaky, agentsRepo: agentsRepo(agent()), runtime, guard: fakeRunGuard(), hub: createRunHub(), image: "img", sandboxVolume: "vol", maxConcurrent: 1 });
     await expect(o.launch("a1", "x")).rejects.toThrow("db blip"); // create() threw before execute()
     const r = await o.launch("a1", "x"); // slot was released → not stuck at the cap
@@ -173,7 +173,7 @@ describe("run orchestrator — connections + credentialed provisioning (4.3)", (
   function connOrch(opts: { skills?: AttachedSkill[]; connections?: Conn[] }) {
     const runsRepo = memoryRunsRepo();
     const guard = fakeRunGuard();
-    const runtime = fakeSandboxRuntime({ lines: [nd({ type: "done", v: 5, status: "succeeded" })] });
+    const runtime = fakeSandboxRuntime({ lines: [nd({ type: "done", v: 6, status: "succeeded" })] });
     const googleOAuth = fakeGoogleOAuth();
     const dataConnectionsRepo = { list: async () => opts.connections ?? [] };
     const o = runOrchestrator({
@@ -248,7 +248,7 @@ describe("run orchestrator — connections + credentialed provisioning (4.3)", (
   function toolOrch(opts: { attachedTools?: AttachedTool[]; tools?: ToolRec[] }) {
     const runsRepo = memoryRunsRepo();
     const guard = fakeRunGuard();
-    const runtime = fakeSandboxRuntime({ lines: [nd({ type: "done", v: 5, status: "succeeded" })] });
+    const runtime = fakeSandboxRuntime({ lines: [nd({ type: "done", v: 6, status: "succeeded" })] });
     const byId = new Map((opts.tools ?? []).map((t) => [t.id, t]));
     const toolsRepo = { getTool: async (id: string) => byId.get(id) ?? null };
     const o = runOrchestrator({
@@ -330,7 +330,7 @@ describe("run orchestrator — cost keys + kill-on-breach (4.5)", () => {
     const modelGateway = fakeModelGateway();
     const runtime = opts.hang
       ? fakeSandboxRuntime({ hang: true })
-      : fakeSandboxRuntime({ lines: [nd({ type: "done", v: 5, status: "succeeded" })] });
+      : fakeSandboxRuntime({ lines: [nd({ type: "done", v: 6, status: "succeeded" })] });
     const o = runOrchestrator({ runsRepo, agentsRepo: agentsRepo(agent({ costCap: cap })), runtime, guard, hub: createRunHub(), modelGateway, image: "img", sandboxVolume: "vol" });
     return { o, runsRepo, guard, runtime, modelGateway };
   }
@@ -357,8 +357,8 @@ describe("run orchestrator — cost keys + kill-on-breach (4.5)", () => {
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     await vi.waitFor(async () => expect((await runsRepo.get(r.run.id))?.status).toBe("running")); // controller registered
-    await o.handleGuardEvent(r.run.id, { type: "metrics", v: 5, latencyMs: 12, tokens: 100, costMicros: 4100 });
-    await o.handleGuardEvent(r.run.id, { type: "kill", v: 5, scope: "run" });
+    await o.handleGuardEvent(r.run.id, { type: "metrics", v: 6, latencyMs: 12, tokens: 100, costMicros: 4100 });
+    await o.handleGuardEvent(r.run.id, { type: "kill", v: 6, scope: "run" });
     await vi.waitFor(async () => expect((await runsRepo.get(r.run.id))?.status).toBe("killed"));
     const run = await runsRepo.get(r.run.id);
     expect(run?.reason).toMatch(/per-run cost cap reached \(\$0\.50\)/);
@@ -373,6 +373,37 @@ describe("run orchestrator — cost keys + kill-on-breach (4.5)", () => {
     await repo.create({ id: "r2", agentId: "a1", status: "succeeded", taskInput: "", transcript: [], reason: null, costMicros: 900, createdAt: now, endedAt: now });
     await repo.create({ id: "r3", agentId: "other", status: "succeeded", taskInput: "", transcript: [], reason: null, costMicros: 5000, createdAt: now, endedAt: now });
     expect(await repo.sumTodayMicros("a1")).toBe(5000);
+  });
+
+  // Story 6.5 — per-tool invocation stats derived from the recorded `tool` messages.
+  const toolMsg = (toolId: string, toolName: string, operation: string, outcome: "ok" | "error" | "refused", latencyMs: number): ControlChannelMessage =>
+    ({ type: "tool", v: 6, toolId, toolName, operation, outcome, latencyMs });
+
+  it("aggregateToolStats reduces tool messages per tool (count, outcomes, avg latency) — observed only, no cost (AC1/AC2)", async () => {
+    const repo = memoryRunsRepo();
+    const t0 = "2026-08-03T00:00:00.000Z";
+    const t1 = "2026-08-03T01:00:00.000Z";
+    await repo.create({ id: "r1", agentId: "a1", status: "succeeded", taskInput: "", reason: null, costMicros: 0, createdAt: t0, endedAt: t0,
+      transcript: [toolMsg("t-weather", "Weather", "get_time", "ok", 10), toolMsg("t-weather", "Weather", "get_time", "refused", 2), toolMsg("t-db", "DB", "query", "error", 30)] });
+    await repo.create({ id: "r2", agentId: "a1", status: "failed", taskInput: "", reason: null, costMicros: 0, createdAt: t1, endedAt: t1,
+      transcript: [toolMsg("t-weather", "Weather", "get_time", "ok", 20)] });
+    await repo.create({ id: "r3", agentId: "other", status: "succeeded", taskInput: "", reason: null, costMicros: 0, createdAt: t1, endedAt: t1,
+      transcript: [toolMsg("t-weather", "Weather", "get_time", "ok", 99)] }); // different agent — excluded
+
+    const stats = await repo.aggregateToolStats("a1");
+    const weather = stats.find((s) => s.toolId === "t-weather")!;
+    expect(weather).toEqual({ toolId: "t-weather", toolName: "Weather", invocations: 3, ok: 2, errors: 0, refusals: 1, avgLatencyMs: 11, lastUsedAt: t1 }); // (10+2+20)/3 = 10.67 → 11
+    const db = stats.find((s) => s.toolId === "t-db")!;
+    expect(db).toMatchObject({ invocations: 1, ok: 0, errors: 1, refusals: 0, avgLatencyMs: 30 });
+    // AC2 — observed only: the tool messages contributed NOTHING to run cost.
+    expect(await repo.sumTodayMicros("a1")).toBe(0);
+  });
+
+  it("aggregateToolStats returns [] for an agent with no tool calls", async () => {
+    const repo = memoryRunsRepo();
+    const now = new Date().toISOString();
+    await repo.create({ id: "r1", agentId: "a1", status: "succeeded", taskInput: "", transcript: [{ type: "done", v: 6, status: "succeeded" }], reason: null, costMicros: 0, createdAt: now, endedAt: now });
+    expect(await repo.aggregateToolStats("a1")).toEqual([]);
   });
 });
 
@@ -401,9 +432,9 @@ describe("Story 5.2 — operate active agents (live status + spend)", () => {
     // the refusal is persisted on the Run (observability).
     const runtime = fakeSandboxRuntime({
       lines: [
-        nd({ type: "turn", v: 5, role: "agent", text: "trying to reach the internet" }),
-        nd({ type: "refusal", v: 5, kind: "egress", detail: "blocked evil.example.com" }),
-        nd({ type: "done", v: 5, status: "succeeded" }),
+        nd({ type: "turn", v: 6, role: "agent", text: "trying to reach the internet" }),
+        nd({ type: "refusal", v: 6, kind: "egress", detail: "blocked evil.example.com" }),
+        nd({ type: "done", v: 6, status: "succeeded" }),
       ],
     });
     const { o, guard } = orch({ agent: agent({ state: "active" }), runtime });
@@ -436,8 +467,8 @@ describe("Story 5.2 — operate active agents (live status + spend)", () => {
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     await vi.waitFor(async () => expect((await runsRepo.get(r.run.id))?.status).toBe("running"));
-    await o.handleGuardEvent(r.run.id, { type: "metrics", v: 5, latencyMs: 12, tokens: 100, costMicros: 4100 });
-    await o.handleGuardEvent(r.run.id, { type: "kill", v: 5, scope: "run" });
+    await o.handleGuardEvent(r.run.id, { type: "metrics", v: 6, latencyMs: 12, tokens: 100, costMicros: 4100 });
+    await o.handleGuardEvent(r.run.id, { type: "kill", v: 6, scope: "run" });
     await vi.waitFor(async () => expect((await runsRepo.get(r.run.id))?.status).toBe("killed"));
     const run = await runsRepo.get(r.run.id);
     expect(run?.costMicros).toBe(4100); // metrics recorded on the Run (NFR-4)
@@ -450,7 +481,7 @@ describe("RunsRepo (memory)", () => {
   it("create/get/setStatus/appendMessage/list", async () => {
     const repo = memoryRunsRepo();
     await repo.create({ id: "r1", agentId: "a1", status: "created", taskInput: "x", transcript: [], reason: null, createdAt: new Date().toISOString(), endedAt: null });
-    await repo.appendMessage("r1", { type: "turn", v: 5, role: "user", text: "hi" });
+    await repo.appendMessage("r1", { type: "turn", v: 6, role: "user", text: "hi" });
     await repo.setStatus("r1", "succeeded", { endedAt: new Date().toISOString() });
     const got = await repo.get("r1");
     expect(got?.status).toBe("succeeded");
@@ -463,8 +494,8 @@ describe("RunsRepo (memory)", () => {
     const repo = memoryRunsRepo();
     const t0 = "2026-08-01T00:00:00.000Z";
     const t1 = "2026-08-02T00:00:00.000Z";
-    await repo.create({ id: "r1", agentId: "a1", status: "succeeded", taskInput: "first", transcript: [{ type: "turn", v: 5, role: "user", text: "hi" }], reason: null, costMicros: 4100, createdAt: t0, endedAt: t0 });
-    await repo.create({ id: "r2", agentId: "a1", status: "killed", taskInput: "second", transcript: [{ type: "turn", v: 5, role: "agent", text: "bye" }], reason: "Killed — per-run cost cap reached ($0.50).", costMicros: 900, createdAt: t1, endedAt: t1 });
+    await repo.create({ id: "r1", agentId: "a1", status: "succeeded", taskInput: "first", transcript: [{ type: "turn", v: 6, role: "user", text: "hi" }], reason: null, costMicros: 4100, createdAt: t0, endedAt: t0 });
+    await repo.create({ id: "r2", agentId: "a1", status: "killed", taskInput: "second", transcript: [{ type: "turn", v: 6, role: "agent", text: "bye" }], reason: "Killed — per-run cost cap reached ($0.50).", costMicros: 900, createdAt: t1, endedAt: t1 });
     await repo.create({ id: "r3", agentId: "other", status: "failed", taskInput: "x", transcript: [], reason: "boom", costMicros: 0, createdAt: t1, endedAt: t1 });
 
     const hist = await repo.listSummary("a1");

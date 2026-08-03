@@ -13,6 +13,10 @@
 
   const fmtNum = (n: number) => n.toLocaleString("en-US");
   const refusalLabel = (kind: "egress" | "permission") => (kind === "egress" ? "Blocked egress" : "Permission denied");
+  // Tool-call outcome → dot colour + word (Story 6.5; NFR-6/UX-DR15 — never colour-only).
+  const toolDot = (outcome: "ok" | "error" | "refused") =>
+    outcome === "ok" ? "var(--state-succeeded)" : outcome === "refused" ? "var(--state-killed)" : "var(--state-failed)";
+  const toolWord = (outcome: "ok" | "error" | "refused") => (outcome === "ok" ? "ok" : outcome === "refused" ? "refused" : "error");
 </script>
 
 {#each transcript as msg, i (i)}
@@ -27,6 +31,16 @@
       <Circle size={7} fill="var(--state-killed)" color="var(--state-killed)" aria-hidden="true" />
       <span class="refusal-kind">{refusalLabel(msg.kind)}</span>
       <span>{msg.detail}</span>
+    </div>
+  {:else if msg.type === "tool"}
+    <!-- A recorded tool call (Story 6.5): tool · operation · outcome (dot + word) · latency. -->
+    <div class="tool">
+      <Circle size={7} fill={toolDot(msg.outcome)} color={toolDot(msg.outcome)} aria-hidden="true" />
+      <span class="tool-name">{msg.toolName}</span>
+      <span class="tool-op mono-num">{msg.operation}</span>
+      <span class="tool-outcome">· {toolWord(msg.outcome)}</span>
+      <span class="tool-latency mono-num">· {fmtNum(msg.latencyMs)} ms</span>
+      {#if msg.detail && msg.outcome !== "ok"}<span class="tool-detail">— {msg.detail}</span>{/if}
     </div>
   {:else if msg.type === "metrics" && showMetrics}
     <p class="metrics mono-num">{fmtNum(msg.latencyMs)} ms · {fmtNum(msg.tokens)} tokens · {formatMicros(msg.costMicros)}</p>
@@ -71,5 +85,24 @@
     margin: 0;
     font-size: var(--text-sm);
     color: var(--text-secondary);
+  }
+  .tool {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin: 0;
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+  }
+  .tool-name {
+    color: var(--text-primary);
+    font-weight: var(--weight-medium);
+  }
+  .tool-op {
+    color: var(--text-primary);
+  }
+  .tool-detail {
+    color: var(--text-tertiary);
   }
 </style>
