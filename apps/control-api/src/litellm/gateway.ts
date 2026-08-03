@@ -122,10 +122,13 @@ export function httpModelGateway(litellmBaseUrl: string, masterKey: string): Mod
     async register(input) {
       if (input.provider === "openai") return [await addModel("openai/*", "openai/*", input.apiKey)];
       if (input.provider === "anthropic") return [await addModel("anthropic/*", "anthropic/*", input.apiKey)];
-      // openai-compatible: namespaced model_name avoids colliding with the real openai/* wildcard
+      // openai-compatible: register the LiteLLM model_name under the KIND prefix (`openai-compatible/<id>`)
+      // — this is exactly how the agent references it (ModelSelector builds `<kind>/<id>`), so a run
+      // resolves. The `openai-compatible/` prefix still avoids colliding with the real `openai/*`
+      // wildcard. litellm_params keeps `openai/<id>` + the base_url to make the actual upstream call.
       const models = input.models ?? [];
       const ids: string[] = [];
-      for (const m of models) ids.push(await addModel(`${input.name}/${m}`, `openai/${m}`, input.apiKey, input.baseUrl));
+      for (const m of models) ids.push(await addModel(`openai-compatible/${m}`, `openai/${m}`, input.apiKey, input.baseUrl));
       return ids;
     },
     async unregister(ids) {

@@ -85,3 +85,26 @@ describe("litellm gateway — cost keys (Story 4.5)", () => {
     expect(await gw().teamSpendMicros("team-xyz")).toBe(41300);
   });
 });
+
+describe("litellm gateway — model registration", () => {
+  it("registers openai/anthropic as wildcards", async () => {
+    const calls = stub(() => new Response(JSON.stringify({ model_info: { id: "m1" } }), { status: 200 }));
+    await gw().register({ provider: "openai", name: "OpenAI", apiKey: "sk-x" });
+    expect((calls[0].body as { model_name: string }).model_name).toBe("openai/*");
+  });
+
+  it("registers an openai-compatible model under the KIND prefix so the agent's model resolves (2.4 fix)", async () => {
+    // A local server that advertises the model file path as its id (leading slash) — the case that broke.
+    const calls = stub((url) => (url.endsWith("/model/new") ? new Response(JSON.stringify({ model_info: { id: "m1" } }), { status: 200 }) : new Response("{}", { status: 200 })));
+    const ids = await gw().register({ provider: "openai-compatible", name: "My Local Box", apiKey: "sk-x", baseUrl: "http://host:8080/v1", models: ["/models/gpt-oss-20b-MXFP4.gguf"] });
+    expect(ids).toEqual(["m1"]);
+    const add = calls.find((c) => c.url.endsWith("/model/new"))!;
+    const body = add.body as { model_name: string; litellm_params: { model: string; api_base: string } };
+    // model_name is `openai-compatible/<id>` (matches ModelSelector's `<kind>/<id>`), NOT `<name>/<id>`.
+    expect(body.model_name).toBe("openai-compatible//models/gpt-oss-20b-MXFP4.gguf");
+    expect(body.model_name).not.toContain("My Local Box");
+    // litellm_params calls the upstream via the openai provider + the base URL with the raw id.
+    expect(body.litellm_params.model).toBe("openai//models/gpt-oss-20b-MXFP4.gguf");
+    expect(body.litellm_params.api_base).toBe("http://host:8080/v1");
+  });
+});
