@@ -1,6 +1,6 @@
 import { serve } from "@hono/node-server";
 import { createApp } from "./app.js";
-import { createGuard } from "./guard.js";
+import { createGuard, sentinelFilterHook } from "./guard.js";
 
 const port = Number(process.env.PORT ?? 8081);
 
@@ -18,6 +18,9 @@ const guard = createGuard({
   // Out-of-band Guard→orchestrator channel (Story 4.5, E4-AD-10): cost metrics + breach kill.
   controlCallbackUrl: process.env.CONTROL_API_URL ?? "http://control-api:8080",
   callbackToken: process.env.GUARD_CALLBACK_TOKEN ?? "dev-guard-callback",
+  // Filter Hook (Story 4.6, FR-10/E4-AD-6): no inspector ships in MVP — the default is a no-op.
+  // Setting GUARD_FILTER_SENTINEL registers a trivial sentinel-blocking hook to demonstrate the seam.
+  filterHook: process.env.GUARD_FILTER_SENTINEL ? sentinelFilterHook(process.env.GUARD_FILTER_SENTINEL) : undefined,
 });
 
 const app = createApp({ guard, adminToken });

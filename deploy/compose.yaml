@@ -116,6 +116,8 @@ services:
       # The Guard→orchestrator cost/kill callback (Story 4.5, E4-AD-10).
       CONTROL_API_URL: http://control-api:8080
       GUARD_CALLBACK_TOKEN: ${GUARD_CALLBACK_TOKEN:-dev-guard-callback}
+      # Optional Filter Hook demo (Story 4.6, FR-10) — unset ⇒ the default no-op (no inspector ships).
+      GUARD_FILTER_SENTINEL: ${GUARD_FILTER_SENTINEL:-}
     volumes:
       # Shared with each sandbox (bound to /guard there): the per-run UDS lives here (E4-AD-1).
       - guard-run:/run/guard

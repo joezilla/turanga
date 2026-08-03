@@ -46,11 +46,25 @@ export interface RunProvision {
   costKey?: string; // the per-run LiteLLM cost key (Story 4.5) — held by the Guard, never the sandbox
 }
 
-/** The Filter Hook (E4-AD-6): a synchronous inspection point invoked before a credentialed
- *  forward. A no-op hook is registered by default and MUST NOT alter behavior; the real
- *  content-scanning hook lands in Story 4.6. */
-export type FilterHook = (direction: "egress", meta: { destination: string; op: string }) => { allow: true } | { allow: false; reason: string };
+/** The Filter Hook (E4-AD-6, Story 4.6): a synchronous inspection seam in the Guard —
+ *  `inspect(direction, meta, body?) → allow | block(reason)` — invoked on the connection gateway's
+ *  egress request AND its ingress response (AD-2 / FR-10, "ingress/egress payloads"). It is an
+ *  interface + registration point, NOT scanning logic. A no-op hook is registered by default and
+ *  MUST NOT alter behavior; the real content/PII inspector is the deferred roadmap reference monitor.
+ *  (It never runs on the model-provider path — that's cost-metered, AD-2. Mode-b plain-egress
+ *  connect is deferred with mode-b; the same hook serves it when it lands.) */
+export type FilterDirection = "egress" | "ingress";
+export type FilterHook = (direction: FilterDirection, meta: { destination: string; op: string }, body?: unknown) => { allow: true } | { allow: false; reason: string };
 const NOOP_HOOK: FilterHook = () => ({ allow: true });
+
+/** A trivial test filter that blocks when the serialized meta/body contains `sentinel` (Story 4.6).
+ *  It proves the seam end-to-end; it is NOT a real inspector. */
+export function sentinelFilterHook(sentinel: string): FilterHook {
+  return (_direction, meta, body) => {
+    if (sentinel && JSON.stringify({ meta, body }).includes(sentinel)) return { allow: false, reason: "the payload matched the content filter." };
+    return { allow: true };
+  };
+}
 
 // ── Connection adapters (SM-4) ───────────────────────────────────────────────────────────────────
 // The ONLY place provider (Gmail) specifics live. `forwardConnection` and the enforcement above stay
@@ -257,16 +271,24 @@ export function createGuard(cfg: GuardConfig) {
       return refuse(adapter.host, `Blocked egress to ${adapter.host} — no connection credential is available for this run.`, "egress", started);
     }
 
-    // 3. Filter Hook (no-op by default, E4-AD-6). A block becomes an egress refusal.
-    const verdict = filterHook("egress", { destination: adapter.host, op: req.op });
-    if (!verdict.allow) return refuse(adapter.host, `Blocked egress to ${adapter.host} — ${verdict.reason}`, "egress", started);
+    // 3. Filter Hook — EGRESS (no-op by default, E4-AD-6). Inspect the outbound request body; a
+    //    block becomes a refusal (never a silent pass). The hook runs only on otherwise-permitted
+    //    egress, and never sees the held credential (attached below, after this point).
+    const meta = { destination: adapter.host, op: req.op };
+    const egressVerdict = filterHook("egress", meta, req.params);
+    if (!egressVerdict.allow) return refuse(adapter.host, `Blocked egress to ${adapter.host} — ${egressVerdict.reason}`, "egress", started);
 
     // 4. Forward through the provider adapter with the HELD token (never returned to the sandbox).
     try {
       const params = (req.params ?? {}) as Record<string, unknown>;
       const result = await adapter.forward(req.op, params, cred.accessToken, doFetch, connectionTimeoutMs);
       const latencyMs = Date.now() - started;
-      return result.ok ? { v: CONTRACT_VERSION, ok: true, data: result.data, latencyMs } : { v: CONTRACT_VERSION, ok: false, error: result.error, latencyMs };
+      if (!result.ok) return { v: CONTRACT_VERSION, ok: false, error: result.error, latencyMs };
+      // 5. Filter Hook — INGRESS (no-op by default). Inspect the returned data before it re-enters
+      //    the sandbox; a block withholds the data as a refusal (the sandbox gets a refusal, not it).
+      const ingressVerdict = filterHook("ingress", meta, result.data);
+      if (!ingressVerdict.allow) return refuse(adapter.host, `Blocked ingress from ${adapter.host} — ${ingressVerdict.reason}`, "egress", started);
+      return { v: CONTRACT_VERSION, ok: true, data: result.data, latencyMs };
     } catch (e) {
       const timedOut = e instanceof Error && e.name === "TimeoutError";
       return refuse(adapter.host, `Blocked egress to ${adapter.host} — ${timedOut ? "the connection timed out." : "the connection couldn't be reached."}`, "egress", started);

@@ -3,7 +3,7 @@ import http from "node:http";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createGuard, type ProvisionConnection, type SkillGrant } from "./guard.js";
+import { createGuard, sentinelFilterHook, type ProvisionConnection, type SkillGrant } from "./guard.js";
 import type { GuardModelResponse } from "@turanga/contracts";
 
 const okFetch = (async () =>
@@ -198,6 +198,56 @@ describe("guard skill-permission enforcement (4.4, permission-first)", () => {
     expect(res.ok).toBe(false);
     expect(res.refusal?.kind).toBe("permission");
     expect(calls).toHaveLength(0);
+    await cleanup();
+  });
+});
+
+describe("guard filter hook seam (4.6)", () => {
+  const gmailWithLabel: ProvisionConnection = { ...gmailConn };
+  async function withFilter(fetchImpl: typeof fetch, filterHook?: ReturnType<typeof sentinelFilterHook>) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "guard-"));
+    const guard = createGuard({ socketDir: dir, litellmBaseUrl: "http://x", litellmMasterKey: "sk", fetchImpl, filterHook });
+    await guard.register(RUN, { connections: [gmailWithLabel], grants: FULL_GRANT });
+    return { guard, cleanup: async () => { await guard.teardown(RUN); fs.rmSync(dir, { recursive: true, force: true }); } };
+  }
+
+  it("the default (no-op) hook does not alter behavior — an allowed read forwards unchanged (AC1)", async () => {
+    const { impl, calls } = captureGmailFetch();
+    const { guard, cleanup } = await withFilter(impl); // no filterHook ⇒ NOOP default
+    const res = await guard.forwardConnection(RUN, readReq);
+    expect(res.ok).toBe(true);
+    expect((res.data as { messageCount: number }).messageCount).toBe(2);
+    expect(calls).toHaveLength(1); // forwarded, same as without the hook
+    await cleanup();
+  });
+
+  it("a registered sentinel hook blocks a matching EGRESS payload + records it (adapter never called) (AC2)", async () => {
+    const { impl, calls } = captureGmailFetch();
+    const { guard, cleanup } = await withFilter(impl, sentinelFilterHook("BLOCKME"));
+    const res = await guard.forwardConnection(RUN, { ...readReq, params: { note: "please BLOCKME now" } });
+    expect(res.ok).toBe(false);
+    expect(res.refusal?.detail).toMatch(/matched the content filter/i);
+    expect(calls).toHaveLength(0); // blocked before the forward — nothing egressed
+    await cleanup();
+  });
+
+  it("a registered sentinel hook blocks a matching INGRESS response — the data is withheld (AC2)", async () => {
+    // The Gmail response carries the sentinel (a message id); the ingress hook must withhold it.
+    const impl = (async () => new Response(JSON.stringify({ messages: [{ id: "BLOCKME-123" }] }), { status: 200, headers: { "content-type": "application/json" } })) as unknown as typeof fetch;
+    const { guard, cleanup } = await withFilter(impl, sentinelFilterHook("BLOCKME"));
+    const res = await guard.forwardConnection(RUN, readReq);
+    expect(res.ok).toBe(false);
+    expect(res.refusal?.detail).toMatch(/Blocked ingress/i);
+    expect(JSON.stringify(res)).not.toContain("BLOCKME-123"); // the blocked data never reaches the sandbox
+    await cleanup();
+  });
+
+  it("a sentinel hook passes a non-matching payload through unchanged (AC1/AC2)", async () => {
+    const { impl, calls } = captureGmailFetch();
+    const { guard, cleanup } = await withFilter(impl, sentinelFilterHook("BLOCKME"));
+    const res = await guard.forwardConnection(RUN, { ...readReq, params: { note: "nothing to see" } });
+    expect(res.ok).toBe(true);
+    expect(calls).toHaveLength(1);
     await cleanup();
   });
 });
