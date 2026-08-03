@@ -3,8 +3,9 @@ import http from "node:http";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createGuard, sentinelFilterHook, type ProvisionConnection, type SkillGrant } from "./guard.js";
-import type { GuardModelResponse } from "@turanga/contracts";
+import { createGuard, sentinelFilterHook, type ProvisionConnection, type SkillGrant, type ProvisionTool } from "./guard.js";
+import { fakeMcpToolCaller } from "./mcp.js";
+import type { GuardModelResponse, ToolCallRequest } from "@turanga/contracts";
 
 const okFetch = (async () =>
   new Response(JSON.stringify({ choices: [{ message: { content: "hello from the model" } }], usage: { total_tokens: 12 } }), {
@@ -323,6 +324,118 @@ describe("guard cost metering + kill-on-breach (4.5)", () => {
     expect(res.ok).toBe(false);
     expect(res.error).toMatch(/no cost key/i);
     expect(calls).toHaveLength(0); // never called LiteLLM (no unmetered master-key run)
+    await guard.teardown(RUN);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe("guard tool broker (Story 6.4)", () => {
+  const tool: ProvisionTool = { toolId: "t1", url: "https://mcp.example/mcp", credential: "sk-tool-secret", operations: ["get_time"] };
+  const toolReq = (over: Partial<ToolCallRequest> = {}): ToolCallRequest => ({ v: 5, runId: RUN, toolId: "t1", operation: "get_time", arguments: {}, ...over });
+
+  async function withTool(mcpCall: ReturnType<typeof fakeMcpToolCaller>, provisionTools: ProvisionTool[] = [tool]) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "guard-"));
+    const guard = createGuard({ socketDir: dir, litellmBaseUrl: "http://x", litellmMasterKey: "sk", fetchImpl: okFetch, mcpCall });
+    await guard.register(RUN, { connections: [], grants: [], tools: provisionTools });
+    return { guard, cleanup: async () => { await guard.teardown(RUN); fs.rmSync(dir, { recursive: true, force: true }); } };
+  }
+
+  it("a granted op → the Guard performs the MCP call with the HELD credential + operation + arguments; the credential never returns (AC1, AD-10)", async () => {
+    const mcp = fakeMcpToolCaller({ content: [{ type: "text", text: "2026-01-01T00:00:00Z" }] });
+    const { guard, cleanup } = await withTool(mcp);
+    const res = await guard.forwardTool(RUN, toolReq({ arguments: { tz: "UTC" } }));
+    expect(res.ok).toBe(true);
+    expect(res.isError).toBe(false);
+    expect(res.content).toEqual([{ type: "text", text: "2026-01-01T00:00:00Z" }]);
+    // The Guard attached the held credential + operation + arguments (Guard-side custody).
+    expect(mcp.calls).toHaveLength(1);
+    expect(mcp.calls[0]).toMatchObject({ url: "https://mcp.example/mcp", credential: "sk-tool-secret", operation: "get_time", arguments: { tz: "UTC" } });
+    // AD-10: the credential is NEVER in the response the sandbox receives.
+    expect(JSON.stringify(res)).not.toContain("sk-tool-secret");
+    await cleanup();
+  });
+
+  it("an UNGRANTED operation → a permission refusal, and the MCP call is NOT made (default-deny, AC2)", async () => {
+    const mcp = fakeMcpToolCaller();
+    const { guard, cleanup } = await withTool(mcp);
+    const res = await guard.forwardTool(RUN, toolReq({ operation: "delete_everything" }));
+    expect(res.ok).toBe(false);
+    expect(res.refusal?.kind).toBe("permission");
+    expect(mcp.calls).toHaveLength(0); // fail-closed — nothing egressed
+    await cleanup();
+  });
+
+  it("an unprovisioned/unknown tool → a permission refusal (fail-closed)", async () => {
+    const mcp = fakeMcpToolCaller();
+    const { guard, cleanup } = await withTool(mcp);
+    const res = await guard.forwardTool(RUN, toolReq({ toolId: "nope" }));
+    expect(res.ok).toBe(false);
+    expect(res.refusal?.kind).toBe("permission");
+    expect(mcp.calls).toHaveLength(0);
+    await cleanup();
+  });
+
+  it("a tool whose endpoint host isn't on the allowlist → an egress refusal", async () => {
+    // Provision the grant but with a url whose host was NOT added (simulate by a tool the register
+    // step couldn't parse → host absent from the allowlist).
+    const mcp = fakeMcpToolCaller();
+    const bad: ProvisionTool = { toolId: "t1", url: "not-a-url", credential: "", operations: ["get_time"] };
+    const { guard, cleanup } = await withTool(mcp, [bad]);
+    const res = await guard.forwardTool(RUN, toolReq());
+    expect(res.ok).toBe(false);
+    expect(res.refusal?.kind).toBe("egress");
+    expect(mcp.calls).toHaveLength(0);
+    await cleanup();
+  });
+
+  it("a tool-EXECUTION error (isError) passes through as ok:true, isError:true — NOT a Guard refusal", async () => {
+    const mcp = fakeMcpToolCaller({ isError: true, content: [{ type: "text", text: "boom" }] });
+    const { guard, cleanup } = await withTool(mcp);
+    const res = await guard.forwardTool(RUN, toolReq());
+    expect(res.ok).toBe(true);
+    expect(res.isError).toBe(true);
+    expect(res.refusal).toBeUndefined();
+    await cleanup();
+  });
+
+  it("a transport failure from the caller → an error response, never a permitted call", async () => {
+    const mcp = fakeMcpToolCaller({ ok: false, error: "Couldn't reach the tool endpoint." });
+    const { guard, cleanup } = await withTool(mcp);
+    const res = await guard.forwardTool(RUN, toolReq());
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/couldn't reach/i);
+    await cleanup();
+  });
+
+  it("teardown clears the held tool credential (AD-10) — after teardown the tool is gone (permission refusal)", async () => {
+    const mcp = fakeMcpToolCaller();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "guard-"));
+    const guard = createGuard({ socketDir: dir, litellmBaseUrl: "http://x", litellmMasterKey: "sk", fetchImpl: okFetch, mcpCall: mcp });
+    await guard.register(RUN, { connections: [], grants: [], tools: [tool] });
+    expect((await guard.forwardTool(RUN, toolReq())).ok).toBe(true);
+    await guard.teardown(RUN);
+    const after = await guard.forwardTool(RUN, toolReq());
+    expect(after.ok).toBe(false);
+    expect(after.refusal?.kind).toBe("permission"); // state (incl. the held credential) is gone
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("dispatch routes a ToolCallRequest to forwardTool over the UDS (not the model/connection path)", async () => {
+    const mcp = fakeMcpToolCaller({ content: [{ type: "text", text: "ok" }] });
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "guard-"));
+    const guard = createGuard({ socketDir: dir, litellmBaseUrl: "http://x", litellmMasterKey: "sk", fetchImpl: okFetch, mcpCall: mcp });
+    const { socketPath } = await guard.register(RUN, { connections: [], grants: [], tools: [tool] });
+    const body = JSON.stringify(toolReq());
+    const out = await new Promise<{ ok: boolean; content?: unknown[] }>((resolve) => {
+      const req = http.request({ socketPath, path: "/", method: "POST", headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body) } }, (res) => {
+        let raw = "";
+        res.on("data", (c) => (raw += c));
+        res.on("end", () => resolve(JSON.parse(raw)));
+      });
+      req.end(body);
+    });
+    expect(out.ok).toBe(true);
+    expect(mcp.calls).toHaveLength(1); // reached forwardTool
     await guard.teardown(RUN);
     fs.rmSync(dir, { recursive: true, force: true });
   });

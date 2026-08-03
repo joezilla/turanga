@@ -17,9 +17,19 @@ export interface SkillGrant {
   scope: "none" | "read" | "read-write";
   send: boolean;
 }
+/** A granted tool the Guard holds for a run (Story 6.4). `credential` is the DECRYPTED bearer token
+ *  (from Tool.encCredential, "" for a no-auth tool); `operations` is the per-op allow-list. Like
+ *  ProvisionConnection, this is control-plane data — it travels only over the admin API, never the jobSpec. */
+export interface ProvisionTool {
+  toolId: string;
+  url: string;
+  credential: string;
+  operations: string[];
+}
 export interface RunProvision {
   connections: ProvisionConnection[];
   grants: SkillGrant[];
+  tools?: ProvisionTool[]; // Story 6.4 — granted tools + held credentials (control-plane only)
   costKey?: string; // the per-run LiteLLM cost key (Story 4.5) — control-plane only, never the jobSpec
 }
 

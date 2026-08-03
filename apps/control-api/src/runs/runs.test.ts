@@ -291,6 +291,34 @@ describe("run orchestrator — connections + credentialed provisioning (4.3)", (
     expect(r.ok).toBe(true);
     expect(runtime.established[0].jobSpecJson).toContain('"tools":[]');
   });
+
+  it("provisions the granted tool + DECRYPTED credential to the Guard — never into the jobSpec (Story 6.4, AD-10)", async () => {
+    const enc = encryptSecret("tool-bearer-xyz");
+    const { o, guard, runtime } = toolOrch({
+      attachedTools: [{ toolId: "t-weather", operations: ["get_weather"] }],
+      tools: [{ id: "t-weather", name: "Weather", url: "https://mcp.example/mcp", encCredential: enc, operations: [{ name: "get_weather" }, { name: "get_forecast" }] }],
+    });
+    const r = await o.launch("a1", "weather?");
+    expect(r.ok).toBe(true);
+    // The Guard is provisioned with the tool endpoint + the DECRYPTED credential + the granted ops…
+    const provTools = guard.registered[0].provision.tools;
+    expect(provTools).toEqual([{ toolId: "t-weather", url: "https://mcp.example/mcp", credential: "tool-bearer-xyz", operations: ["get_weather"] }]);
+    // …and NONE of that (url, decrypted or encrypted credential) is on the sandbox wire (AD-10).
+    const jobSpecJson = runtime.established[0].jobSpecJson;
+    expect(jobSpecJson).not.toContain("mcp.example");
+    expect(jobSpecJson).not.toContain("tool-bearer-xyz");
+    expect(jobSpecJson).not.toContain(enc);
+  });
+
+  it("a no-auth tool (null encCredential) provisions an empty credential", async () => {
+    const { o, guard } = toolOrch({
+      attachedTools: [{ toolId: "t-open", operations: ["ping"] }],
+      tools: [{ id: "t-open", name: "Open", url: "https://open.example/mcp", encCredential: null, operations: [{ name: "ping" }] }],
+    });
+    const r = await o.launch("a1", "x");
+    expect(r.ok).toBe(true);
+    expect(guard.registered[0].provision.tools).toEqual([{ toolId: "t-open", url: "https://open.example/mcp", credential: "", operations: ["ping"] }]);
+  });
 });
 
 describe("run orchestrator — cost keys + kill-on-breach (4.5)", () => {

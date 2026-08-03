@@ -7,7 +7,7 @@ import { ulid, type LifecycleState, type AttachedSkill, type AttachedTool, type 
 import { CONTRACT_VERSION, ControlChannelMessageSchema, type JobSpec, type JobConnection, type JobTool, type GuardRunEvent } from "@turanga/contracts";
 import type { RunsRepo, RunRow, RunStatus } from "./repo.js";
 import type { SandboxRuntime, SandboxHandle } from "./runtime.js";
-import type { RunGuard, RunProvision, ProvisionConnection, SkillGrant } from "./guardClient.js";
+import type { RunGuard, RunProvision, ProvisionConnection, ProvisionTool, SkillGrant } from "./guardClient.js";
 import type { RunHub } from "./hub.js";
 import { decryptSecret } from "../secrets/crypto.js";
 import type { GoogleOAuth } from "../oauth/google.js";
@@ -26,11 +26,14 @@ interface AgentsReader {
   get(id: string): Promise<AgentLike | null>;
 }
 
-// Minimal reader over tools (Story 6.3 — resolve a granted tool's name for the sandbox-visible JobTool).
-// NO url/credential is read here; the JobSpec never carries a secret (AD-10). Guard-side custody is 6.4.
+// Minimal reader over tools (Story 6.3/6.4). The `name` + `operations` resolve the sandbox-visible
+// JobTool (no secret — AD-10); the `url` + `encCredential` resolve the Guard-only ProvisionTool (the
+// credential is decrypted control-side and handed to the Guard, NEVER the jobSpec — Story 6.4, AD-10).
 interface ToolLike {
   id: string;
   name: string;
+  url: string | null;
+  encCredential: string | null;
   operations: { name: string }[];
 }
 interface ToolsReader {
@@ -130,23 +133,41 @@ export function runOrchestrator(deps: OrchestratorDeps) {
     return { jobConnections, jobSkills, provision };
   }
 
-  // Story 6.3 — the granted tools the harness may invoke, as SANDBOX-VISIBLE logical handles. Default-deny:
-  // an attached tool with no granted operations is omitted. Each handle carries only { id, name, operations }
-  // — never the endpoint URL or credential (AD-10); the Guard resolves the endpoint + holds the credential
-  // at runtime (Story 6.4). A grant whose tool was deleted is skipped rather than crashing the run.
-  async function resolveRunTools(agent: AgentLike): Promise<JobTool[]> {
+  // Story 6.3/6.4 — the granted tools, split two ways (the connection pattern, AD-10):
+  //   • jobTools       — SANDBOX-VISIBLE logical handles { id, name, operations } (NO url/credential).
+  //   • provisionTools — GUARD-ONLY { toolId, url, credential, operations } — the credential DECRYPTED
+  //                      here in the control plane and handed to the Guard, never into the jobSpec.
+  // Default-deny: an attached tool with no granted operations is omitted. A grant whose tool was deleted
+  // is skipped rather than crashing the run. A tool with no url is sandbox-visible but not provisioned
+  // (nothing for the Guard to reach → the call refuses on egress).
+  async function resolveRunTools(agent: AgentLike): Promise<{ jobTools: JobTool[]; provisionTools: ProvisionTool[] }> {
     const granted = (agent.attachedTools ?? []).filter((t) => t.operations.length > 0);
-    if (granted.length === 0 || !toolsRepo) return [];
-    const out: JobTool[] = [];
+    if (granted.length === 0 || !toolsRepo) return { jobTools: [], provisionTools: [] };
+    const jobTools: JobTool[] = [];
+    const provisionTools: ProvisionTool[] = [];
     for (const g of granted) {
       const tool = await toolsRepo.getTool(g.toolId);
       if (!tool) continue; // deleted tool — skip, don't fail the run
       // Grants were validated at save-time against the tool's operations; re-narrow to what it still offers.
       const offered = new Set(tool.operations.map((o) => o.name));
       const operations = g.operations.filter((op) => offered.has(op));
-      if (operations.length > 0) out.push({ id: tool.id, name: tool.name, operations });
+      if (operations.length === 0) continue;
+      jobTools.push({ id: tool.id, name: tool.name, operations }); // sandbox-visible — no secret
+      if (tool.url) {
+        // Decrypt the held bearer token control-side; it goes ONLY into the provision (→ the Guard),
+        // never the jobSpec (AD-10). A decrypt failure → an empty credential (the call refuses, not grants).
+        let credential = "";
+        if (tool.encCredential) {
+          try {
+            credential = decryptSecret(tool.encCredential);
+          } catch {
+            /* leave empty → the tool call is refused, never granted with a bad credential */
+          }
+        }
+        provisionTools.push({ toolId: tool.id, url: tool.url, credential, operations });
+      }
     }
-    return out;
+    return { jobTools, provisionTools };
   }
 
   async function finish(runId: string, status: RunStatus, reason: string | undefined, costMicros: number): Promise<RunRow> {
@@ -173,10 +194,11 @@ export function runOrchestrator(deps: OrchestratorDeps) {
       const runId = ulid(Date.now());
       const now = new Date().toISOString();
       const { jobConnections, jobSkills, provision } = await resolveRunConnections(agent);
-      const jobTools = await resolveRunTools(agent); // Story 6.3 — granted tools as logical handles (no secret)
+      const { jobTools, provisionTools } = await resolveRunTools(agent); // Story 6.3/6.4 — sandbox handles + Guard-held creds
+      provision.tools = provisionTools; // Story 6.4 — the granted tools + decrypted credentials go to the Guard (never the jobSpec)
       // The job spec carries only LOGICAL handles + skill/tool IDs — the minted access token, the cost key,
-      // AND the authoritative scope/send grants live in `provision` and go to the Guard over the admin
-      // API, NEVER into the sandbox (AD-10).
+      // AND the authoritative scope/send grants + tool credentials live in `provision` and go to the Guard
+      // over the admin API, NEVER into the sandbox (AD-10).
       const jobSpec: JobSpec = { v: CONTRACT_VERSION, runId, agentId, model: agent.model, instructions: agent.instructions, skills: jobSkills, connections: jobConnections, tools: jobTools, taskInput };
       const row: RunRow = { id: runId, agentId, status: "created", taskInput, transcript: [], reason: null, costMicros: 0, createdAt: now, endedAt: null };
       await runsRepo.create(row);

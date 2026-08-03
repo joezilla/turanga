@@ -10,6 +10,7 @@ import {
   JobSpecSchema,
   GuardModelResponseSchema,
   GuardConnectionResponseSchema,
+  ToolCallResponseSchema,
   SKILL_OPS,
   OP_REQUIREMENTS,
   type JobSpec,
@@ -19,6 +20,8 @@ import {
   type GuardModelResponse,
   type GuardConnectionRequest,
   type GuardConnectionResponse,
+  type ToolCallRequest,
+  type ToolCallResponse,
 } from "@turanga/contracts";
 
 export function readJobSpec(raw: unknown): JobSpec {
@@ -110,6 +113,31 @@ export function opOutcome(op: ConnectionOp, res: GuardConnectionResponse): { sys
   return {};
 }
 
+// A logical tool call over the same per-run UDS (Story 6.4). The harness names a LOGICAL tool +
+// operation + arguments; the Guard resolves the endpoint, enforces the per-op grant, attaches the held
+// credential, performs the MCP `tools/call`, and returns the result — the harness never sees the URL
+// or the token (AD-10).
+async function guardToolCall(socketPath: string, req: ToolCallRequest): Promise<ToolCallResponse> {
+  const t = await guardTransport(socketPath, req);
+  if ("error" in t) return { v: CONTRACT_VERSION, ok: false, error: t.error };
+  try {
+    return ToolCallResponseSchema.parse(JSON.parse(t.raw));
+  } catch {
+    return { v: CONTRACT_VERSION, ok: false, error: "The guard returned an unreadable response." };
+  }
+}
+
+// Pure mapping of a tool call's response to what the harness does with it (exported for tests):
+//  • ok      → a short summary folded into the model context (isError = the tool's own execution error,
+//              distinct from a Guard refusal — noted but not a run failure).
+//  • refusal → a `refusal` control message carrying the GUARD's kind (permission or egress).
+//  • plain error (transport / unreachable) → nothing; the run proceeds.
+export function toolOutcome(operation: string, res: ToolCallResponse): { system?: string; refusal?: ControlChannelMessage } {
+  if (res.ok) return { system: `Called ${operation}${res.isError ? " (the tool reported an error)" : ""}.` };
+  if (res.refusal) return { refusal: { type: "refusal", v: CONTRACT_VERSION, kind: res.refusal.kind, detail: res.refusal.detail } };
+  return {};
+}
+
 /** The ops a run should attempt, derived from its attached skills (provider-agnostic, SM-4). */
 function opsForSkills(skills: string[]): ConnectionOp[] {
   const ops = new Set<ConnectionOp>();
@@ -155,6 +183,19 @@ export async function runHarness(): Promise<void> {
 
   // Phase 1 — read ops gather context for the model.
   for (const op of ops.filter(isReadOp)) await runOp(op);
+
+  // Phase 1b — tool calls (Story 6.4). Deterministic stub: for each granted tool, invoke its FIRST
+  // granted operation through the Guard (a real model-driven tool loop is a later concern). The Guard
+  // enforces the per-op grant + attaches the held credential; a refusal is relayed (recorded on the
+  // Run), a success folds a note into context. A blocked/errored tool call is NOT a run failure.
+  for (const tool of spec.tools) {
+    const operation = tool.operations[0];
+    if (!operation) continue; // an attached-but-ungranted tool has nothing to call
+    const tr = await guardToolCall(socketPath, { v: CONTRACT_VERSION, runId: spec.runId, toolId: tool.id, operation, arguments: {} });
+    const outcome = toolOutcome(operation, tr);
+    if (outcome.refusal) emit(outcome.refusal);
+    if (outcome.system) messages.push({ role: "system", content: outcome.system });
+  }
 
   // Phase 2 — the model call → the agent turn (the response / the draft artifact for draft-reply).
   const res = await guardModelCall(socketPath, { v: CONTRACT_VERSION, runId: spec.runId, model: spec.model, messages });

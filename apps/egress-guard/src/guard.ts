@@ -17,6 +17,7 @@ import {
   CONTRACT_VERSION,
   GuardModelRequestSchema,
   GuardConnectionRequestSchema,
+  ToolCallRequestSchema,
   authorizes,
   type ConnectionOp,
   type SkillScope,
@@ -24,8 +25,11 @@ import {
   type GuardModelResponse,
   type GuardConnectionRequest,
   type GuardConnectionResponse,
+  type ToolCallRequest,
+  type ToolCallResponse,
   type GuardRunEvent,
 } from "@turanga/contracts";
+import { httpMcpToolCaller, type McpToolCaller } from "./mcp.js";
 
 /** A credential the Guard holds for the life of a run (AD-10) — never crosses the UDS to the
  *  sandbox, never persisted. `accessToken` is a short-lived token minted by control-api. */
@@ -40,9 +44,19 @@ export interface SkillGrant {
   scope: SkillScope;
   send: boolean;
 }
+/** A granted tool the Guard holds for the life of a run (Story 6.4, AD-10). `operations` is the
+ *  per-operation allow-list (default-deny); `credential` is the HELD bearer token (decrypted
+ *  control-side, "" for a no-auth tool) — attached only inside the MCP call, never crossing the UDS. */
+export interface ProvisionTool {
+  toolId: string;
+  url: string;
+  credential: string;
+  operations: string[];
+}
 export interface RunProvision {
   connections: ProvisionConnection[];
   grants: SkillGrant[];
+  tools?: ProvisionTool[]; // Story 6.4 — granted tools + held credentials (control-plane only, never the jobSpec)
   costKey?: string; // the per-run LiteLLM cost key (Story 4.5) — held by the Guard, never the sandbox
 }
 
@@ -133,6 +147,7 @@ export interface GuardConfig {
   litellmBaseUrl: string;
   litellmMasterKey: string;
   fetchImpl?: typeof fetch; // injectable for tests (model + connection forwards)
+  mcpCall?: McpToolCaller; // Story 6.4 — the Guard-side tool `tools/call`; injectable for tests (default: real SDK)
   modelTimeoutMs?: number;
   connectionTimeoutMs?: number;
   filterHook?: FilterHook; // defaults to the no-op (4.6 swaps in the real one)
@@ -146,9 +161,10 @@ export interface GuardConfig {
 
 interface RunState {
   server: http.Server;
-  allowlist: Set<string>; // union of the run's Connections' declared destinations (default-deny)
+  allowlist: Set<string>; // union of the run's Connections' + tools' destinations (default-deny)
   credentials: Map<string, ProvisionConnection>; // by connectionId — the held tokens (AD-10)
   grants: SkillGrant[]; // the agent's attached-skill grants — the authority to run an op (4.4)
+  tools: Map<string, ProvisionTool>; // by toolId — granted ops + the held tool credential (Story 6.4, AD-10)
   costKey?: string; // the per-run LiteLLM cost key (Story 4.5) — held here, never in the sandbox (AD-10)
 }
 
@@ -174,6 +190,7 @@ function safeJson(raw: string): unknown {
 
 export function createGuard(cfg: GuardConfig) {
   const doFetch = cfg.fetchImpl ?? fetch;
+  const mcpCall = cfg.mcpCall ?? httpMcpToolCaller();
   const modelTimeoutMs = cfg.modelTimeoutMs ?? 60_000;
   const connectionTimeoutMs = cfg.connectionTimeoutMs ?? 30_000;
   const filterHook = cfg.filterHook ?? NOOP_HOOK;
@@ -302,12 +319,72 @@ export function createGuard(cfg: GuardConfig) {
     }
   }
 
-  // Dispatch one UDS request: a CONNECTION op (has `op`) or a MODEL call (has `messages`). Anything
-  // else is malformed. Fail-closed — an unparseable request is rejected, never forwarded.
+  // A tool refusal (Story 6.4). Same fail-closed record as a connection refusal, but the tool refusal
+  // shape carries only { kind, detail } (no `destination` — contracts).
+  function refuseTool(kind: "permission" | "egress", detail: string, started: number): ToolCallResponse {
+    return { v: CONTRACT_VERSION, ok: false, refusal: { kind, detail }, latencyMs: Date.now() - started };
+  }
+
+  // Broker a tool call (Story 6.4) — the runtime twin of forwardConnection. Enforced fail-closed:
+  // (1) PERMISSION — the tool must be provisioned for this run AND the operation must be in its
+  //     granted allow-list (default-deny, per-operation) — checked BEFORE the endpoint/credential.
+  // (2) EGRESS — the tool endpoint host must be on the run's allowlist (default-deny).
+  // (3) FORWARD — the MCP `tools/call` with the HELD credential (attached Guard-side, never returned
+  //     to the sandbox — AD-10). `isError` is the tool's own execution error, passed through as-is
+  //     (distinct from a Guard refusal). `runId` comes from the socket, not the body.
+  async function forwardTool(runId: string, req: ToolCallRequest): Promise<ToolCallResponse> {
+    const started = Date.now();
+    const state = runs.get(runId);
+    const tool = state?.tools.get(req.toolId);
+
+    // 1. PERMISSION (default-deny, AC2) — no provisioned tool, or an ungranted operation, refuses
+    //    before any endpoint/credential is consulted.
+    if (!state || !tool) {
+      return refuseTool("permission", "That tool isn't attached to this run.", started);
+    }
+    if (!tool.operations.includes(req.operation)) {
+      return refuseTool("permission", `Blocked — operation "${req.operation}" isn't granted for this tool. Grant it in the agent's Tools section.`, started);
+    }
+
+    // 2. EGRESS (default-deny) — the tool endpoint host must be on the allowlist (added at register).
+    let host: string;
+    try {
+      host = new URL(tool.url).host;
+    } catch {
+      return refuseTool("egress", "Blocked — the tool endpoint isn't a valid URL.", started);
+    }
+    if (!state.allowlist.has(host)) {
+      return refuseTool("egress", `Blocked egress to ${host} — not on this agent's allowlist.`, started);
+    }
+
+    // 3. Filter Hook — EGRESS (no-op by default, E4-AD-6). Inspect the outbound arguments; a block
+    //    becomes a refusal (never a silent pass). Runs on otherwise-permitted egress; never sees the
+    //    held credential (attached below).
+    const meta = { destination: host, op: req.operation };
+    const egressVerdict = filterHook("egress", meta, req.arguments);
+    if (!egressVerdict.allow) return refuseTool("egress", `Blocked egress to ${host} — ${egressVerdict.reason}`, started);
+
+    // 4. Forward the MCP tools/call with the HELD credential (never returned to the sandbox).
+    const r = await mcpCall({ url: tool.url, credential: tool.credential || undefined, operation: req.operation, arguments: req.arguments, timeoutMs: connectionTimeoutMs });
+    const latencyMs = Date.now() - started;
+    if (!r.ok) return { v: CONTRACT_VERSION, ok: false, error: r.error, latencyMs };
+    // 5. Filter Hook — INGRESS (no-op by default). Inspect the returned content before it re-enters
+    //    the sandbox; a block withholds it as a refusal.
+    const ingressVerdict = filterHook("ingress", meta, r.content);
+    if (!ingressVerdict.allow) return refuseTool("egress", `Blocked ingress from ${host} — ${ingressVerdict.reason}`, started);
+    return { v: CONTRACT_VERSION, ok: true, content: r.content, isError: r.isError, latencyMs };
+  }
+
+  // Dispatch one UDS request: a CONNECTION op (has `op`), a TOOL call (has `toolId`), or a MODEL call
+  // (has `messages`). Anything else is malformed. Fail-closed — an unparseable request is rejected,
+  // never forwarded. Tool is checked before model because both carry `operation`-ish fields; the
+  // discriminating keys (`connectionId`/`toolId`/`messages`) keep the safeParse branches disjoint.
   async function handle(runId: string, raw: string): Promise<{ status: number; body: unknown }> {
     const json = safeJson(raw);
     const conn = GuardConnectionRequestSchema.safeParse(json);
     if (conn.success) return { status: 200, body: await forwardConnection(runId, conn.data) };
+    const tool = ToolCallRequestSchema.safeParse(json);
+    if (tool.success) return { status: 200, body: await forwardTool(runId, tool.data) };
     const model = GuardModelRequestSchema.safeParse(json);
     if (model.success) return { status: 200, body: await proxyModel(runId, model.data) };
     return { status: 400, body: { v: CONTRACT_VERSION, ok: false, error: "Malformed guard request." } };
@@ -316,6 +393,7 @@ export function createGuard(cfg: GuardConfig) {
   return {
     proxyModel, // exported for unit tests
     forwardConnection, // exported for unit tests
+    forwardTool, // exported for unit tests (Story 6.4)
     async register(runId: string, provision: RunProvision = { connections: [], grants: [] }): Promise<{ socketPath: string }> {
       const dir = runDir(runId);
       if (runs.has(runId)) await this.teardown(runId); // a re-register must not leak the old server/creds
@@ -335,6 +413,17 @@ export function createGuard(cfg: GuardConfig) {
         credentials.set(c.connectionId, c);
       }
       const grants = provision.grants ?? [];
+      // Story 6.4 — hold the granted tools + their credentials, and add each tool endpoint's host to
+      // the allowlist (default-deny egress, exactly like a connection's destinations).
+      const tools = new Map<string, ProvisionTool>();
+      for (const t of provision.tools ?? []) {
+        tools.set(t.toolId, t);
+        try {
+          allowlist.add(new URL(t.url).host);
+        } catch {
+          /* a bad url just won't be reachable — the egress check refuses it */
+        }
+      }
       const server = http.createServer((httpReq, httpRes) => {
         let raw = "";
         let aborted = false;
@@ -369,14 +458,15 @@ export function createGuard(cfg: GuardConfig) {
         server.once("error", reject);
         server.listen(socketPath, resolve);
       });
-      runs.set(runId, { server, allowlist, credentials, grants, costKey: provision.costKey });
+      runs.set(runId, { server, allowlist, credentials, grants, tools, costKey: provision.costKey });
       return { socketPath };
     },
     async teardown(runId: string): Promise<void> {
       if (!ULID_RE.test(runId)) return; // never touch the FS for a bad id
       const state = runs.get(runId);
       if (state) {
-        state.credentials.clear(); // drop the held tokens the instant the run ends (AD-10)
+        state.credentials.clear(); // drop the held connection tokens the instant the run ends (AD-10)
+        state.tools.clear(); // …and the held tool credentials (Story 6.4, AD-10)
         await new Promise<void>((resolve) => state.server.close(() => resolve()));
         runs.delete(runId);
       }

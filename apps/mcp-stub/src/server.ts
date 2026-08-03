@@ -38,6 +38,7 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(404, { "content-type": "application/json" }).end(rpcError("Not found.", -32601));
     return;
   }
+  console.log(`[mcp-stub] ${req.method} /mcp`); // dev/e2e observability — confirms the Guard reached the tool
   if (token) {
     const auth = req.headers["authorization"];
     if (auth !== `Bearer ${token}`) {
