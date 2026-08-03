@@ -1,7 +1,8 @@
 import { Hono } from "hono";
 import { ulid, activationBlockers } from "@turanga/domain";
-import type { AgentsRepo, AgentRow, AgentPatch, AgentVariable, AttachedSkill, CostCap, Money } from "./repo.js";
+import type { AgentsRepo, AgentRow, AgentPatch, AgentVariable, AttachedSkill, AttachedTool, CostCap, Money } from "./repo.js";
 import type { ConnectionsRepo } from "../connections/repo.js";
+import type { ToolsRepo } from "../tools/repo.js";
 
 // Story 5.1: is the agent's model ("<prefix>/<id>") served by a currently-connected provider? The
 // prefix is the provider kind (openai/anthropic) or the connection name (openai-compatible).
@@ -103,7 +104,40 @@ function parseSkills(input: unknown): { ok: true; value: AttachedSkill[] } | { o
   return { ok: true, value: out };
 }
 
-export function agentRoutes(repo: AgentsRepo, connectionsRepo: ConnectionsRepo) {
+// Attached tools (Story 6.3). The Skills analogue, but a grant is an operation ALLOW-LIST, not a scope
+// enum — and it's validated against what the tool actually offers (its discovered `operations`), not a
+// static set. Default-deny: an empty `operations` is valid (attached but ungranted) and grants nothing.
+// Enforcement lands in 6.4 (the Guard). Async because each toolId is resolved via the tools repo.
+const MAX_ATTACHED_TOOLS = 50;
+async function parseTools(input: unknown, toolsRepo: ToolsRepo): Promise<{ ok: true; value: AttachedTool[] } | { ok: false; error: string }> {
+  if (!Array.isArray(input)) return { ok: false, error: "Tools must be a list." };
+  if (input.length > MAX_ATTACHED_TOOLS) return { ok: false, error: "Too many tools." };
+  const seen = new Set<string>();
+  const out: AttachedTool[] = [];
+  for (const item of input) {
+    if (item === null || typeof item !== "object") {
+      return { ok: false, error: "Each attached tool must be an object." };
+    }
+    const t = item as { toolId?: unknown; operations?: unknown };
+    if (typeof t.toolId !== "string" || !t.toolId) return { ok: false, error: "Each attached tool needs a toolId." };
+    if (seen.has(t.toolId)) return { ok: false, error: "A tool is attached more than once." };
+    seen.add(t.toolId);
+    const tool = await toolsRepo.getTool(t.toolId);
+    if (!tool) return { ok: false, error: "Unknown tool." };
+    if (!Array.isArray(t.operations)) return { ok: false, error: "A tool's operations must be a list." };
+    const offered = new Set(tool.operations.map((o) => o.name));
+    const ops: string[] = [];
+    for (const op of t.operations) {
+      if (typeof op !== "string") return { ok: false, error: "An operation grant must be a name." };
+      if (!offered.has(op)) return { ok: false, error: `Operation "${op}" isn't offered by tool "${tool.name}".` };
+      if (!ops.includes(op)) ops.push(op); // de-dupe within a tool
+    }
+    out.push({ toolId: t.toolId, operations: ops });
+  }
+  return { ok: true, value: out };
+}
+
+export function agentRoutes(repo: AgentsRepo, connectionsRepo: ConnectionsRepo, toolsRepo: ToolsRepo) {
   const app = new Hono();
 
   app.get("/agents", async (c) => c.json({ agents: await repo.list() }));
@@ -113,7 +147,7 @@ export function agentRoutes(repo: AgentsRepo, connectionsRepo: ConnectionsRepo) 
     const body = ((await c.req.json().catch(() => ({}))) ?? {}) as { name?: unknown };
     const trimmed = typeof body.name === "string" ? body.name.trim() : "";
     const name = (trimmed || "Untitled agent").slice(0, MAX_NAME_LEN);
-    const row: AgentRow = { id: ulid(Date.now()), name, state: "draft", model: null, instructions: "", variables: [], skills: [], costCap: { perRun: null, perDay: null }, createdAt: new Date().toISOString() };
+    const row: AgentRow = { id: ulid(Date.now()), name, state: "draft", model: null, instructions: "", variables: [], skills: [], attachedTools: [], costCap: { perRun: null, perDay: null }, createdAt: new Date().toISOString() };
     await repo.create(row);
     return c.json({ agent: row }, 201);
   });
@@ -132,6 +166,7 @@ export function agentRoutes(repo: AgentsRepo, connectionsRepo: ConnectionsRepo) 
       instructions?: unknown;
       variables?: unknown;
       skills?: unknown;
+      attachedTools?: unknown;
       costCap?: unknown;
     };
     const patch: AgentPatch = {};
@@ -179,6 +214,11 @@ export function agentRoutes(repo: AgentsRepo, connectionsRepo: ConnectionsRepo) 
       const parsed = parseSkills(body.skills);
       if (!parsed.ok) return c.json({ error: parsed.error }, 400);
       patch.skills = parsed.value;
+    }
+    if (body.attachedTools !== undefined) {
+      const parsed = await parseTools(body.attachedTools, toolsRepo);
+      if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+      patch.attachedTools = parsed.value;
     }
     if (body.costCap !== undefined) {
       const parsed = parseCostCap(body.costCap);

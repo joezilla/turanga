@@ -3,6 +3,7 @@ import { createApp } from "../app.js";
 import { memoryAuthRepo, type AuthRepo } from "../auth/repo.js";
 import { memoryAgentsRepo } from "./repo.js";
 import { memoryConnectionsRepo, type ConnectionsRepo } from "../connections/repo.js";
+import { memoryToolsRepo, type ToolsRepo } from "../tools/repo.js";
 import { hashPassword } from "../auth/password.js";
 import { ulid } from "@turanga/domain";
 
@@ -20,11 +21,11 @@ async function createAgent(app: Awaited<ReturnType<typeof appWithSession>>["app"
 // so give each test session a distinct client IP — otherwise many logins in one run trip the
 // per-client limit (a real deployment sees distinct clients).
 let clientSeq = 0;
-async function appWithSession(opts: { connectionsRepo?: ConnectionsRepo } = {}) {
+async function appWithSession(opts: { connectionsRepo?: ConnectionsRepo; toolsRepo?: ToolsRepo } = {}) {
   const authRepo: AuthRepo = memoryAuthRepo();
   await authRepo.createUser({ id: ulid(1), email: EMAIL, passwordHash: await hashPassword(PW) });
   const agentsRepo = memoryAgentsRepo();
-  const app = createApp({ authRepo, agentsRepo, connectionsRepo: opts.connectionsRepo });
+  const app = createApp({ authRepo, agentsRepo, connectionsRepo: opts.connectionsRepo, toolsRepo: opts.toolsRepo });
   const ip = `10.0.0.${clientSeq++}`;
   const login = await app.request("/auth/login", {
     ...jsonPost({ email: EMAIL, password: PW }),
@@ -32,6 +33,24 @@ async function appWithSession(opts: { connectionsRepo?: ConnectionsRepo } = {}) 
   });
   const cookie = (login.headers.get("set-cookie") ?? "").split(";")[0];
   return { app, cookie, agentsRepo };
+}
+
+// A tools repo with one connected tool exposing two operations (so per-operation grant validation
+// has a real target — Story 6.3).
+async function connectedTools(): Promise<ToolsRepo> {
+  const repo = memoryToolsRepo();
+  await repo.createTool({
+    id: "tool-weather",
+    name: "Weather",
+    endpoint: "remote",
+    status: "connected",
+    lastError: null,
+    url: "https://mcp.example/mcp",
+    encCredential: null,
+    operations: [{ name: "get_weather" }, { name: "get_forecast" }],
+    createdAt: new Date().toISOString(),
+  });
+  return repo;
 }
 
 // A connections repo with one CONNECTED openai provider (so a model "openai/..." passes the
@@ -304,6 +323,61 @@ describe("agent skills + permissions (PATCH, Story 3.4)", () => {
   it("401 without a session", async () => {
     const { app } = await appWithSession();
     expect((await app.request("/agents/x", jsonPatch({ skills: [] }))).status).toBe(401);
+  });
+});
+
+describe("agent attached tools + per-operation grants (PATCH, Story 6.3)", () => {
+  const patchReq = (app: Awaited<ReturnType<typeof appWithSession>>["app"], cookie: string, id: string, body: unknown) =>
+    app.request(`/agents/${id}`, { ...jsonPatch(body), headers: { "content-type": "application/json", cookie } });
+
+  it("persists per-operation grants and round-trips them (durable, AD-7)", async () => {
+    const { app, cookie } = await appWithSession({ toolsRepo: await connectedTools() });
+    const created = await createAgent(app, cookie);
+    const attachedTools = [{ toolId: "tool-weather", operations: ["get_weather"] }];
+    const set = ((await (await patchReq(app, cookie, created.id, { attachedTools })).json()) as { agent: any }).agent;
+    expect(set.attachedTools).toEqual(attachedTools);
+    const got = ((await (await app.request(`/agents/${created.id}`, { headers: { cookie } })).json()) as { agent: any }).agent;
+    expect(got.attachedTools).toEqual(attachedTools);
+  });
+
+  it("defaults new agents to no attached tools", async () => {
+    const { app, cookie } = await appWithSession({ toolsRepo: await connectedTools() });
+    const created = await createAgent(app, cookie);
+    const got = ((await (await app.request(`/agents/${created.id}`, { headers: { cookie } })).json()) as { agent: any }).agent;
+    expect(got.attachedTools).toEqual([]);
+  });
+
+  it("accepts an attached-but-ungranted tool (empty operations = default-deny)", async () => {
+    const { app, cookie } = await appWithSession({ toolsRepo: await connectedTools() });
+    const created = await createAgent(app, cookie);
+    const res = await patchReq(app, cookie, created.id, { attachedTools: [{ toolId: "tool-weather", operations: [] }] });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { agent: any }).agent.attachedTools).toEqual([{ toolId: "tool-weather", operations: [] }]);
+  });
+
+  it("de-dupes repeated operation names within a tool", async () => {
+    const { app, cookie } = await appWithSession({ toolsRepo: await connectedTools() });
+    const created = await createAgent(app, cookie);
+    const set = ((await (await patchReq(app, cookie, created.id, { attachedTools: [{ toolId: "tool-weather", operations: ["get_weather", "get_weather"] }] })).json()) as { agent: any }).agent;
+    expect(set.attachedTools).toEqual([{ toolId: "tool-weather", operations: ["get_weather"] }]);
+  });
+
+  it("rejects unknown tool / unoffered operation / duplicate tool / non-array (400)", async () => {
+    const { app, cookie } = await appWithSession({ toolsRepo: await connectedTools() });
+    const created = await createAgent(app, cookie);
+    // unknown toolId
+    expect((await patchReq(app, cookie, created.id, { attachedTools: [{ toolId: "nope", operations: [] }] })).status).toBe(400);
+    // an operation the tool doesn't offer
+    expect((await patchReq(app, cookie, created.id, { attachedTools: [{ toolId: "tool-weather", operations: ["delete_everything"] }] })).status).toBe(400);
+    // same tool attached twice
+    expect((await patchReq(app, cookie, created.id, { attachedTools: [{ toolId: "tool-weather", operations: [] }, { toolId: "tool-weather", operations: ["get_weather"] }] })).status).toBe(400);
+    // not a list / bad shapes
+    expect((await patchReq(app, cookie, created.id, { attachedTools: "nope" })).status).toBe(400);
+    expect((await patchReq(app, cookie, created.id, { attachedTools: [null] })).status).toBe(400);
+    expect((await patchReq(app, cookie, created.id, { attachedTools: [{ toolId: "tool-weather", operations: "get_weather" }] })).status).toBe(400);
+    // the failed patches persisted nothing
+    const got = ((await (await app.request(`/agents/${created.id}`, { headers: { cookie } })).json()) as { agent: any }).agent;
+    expect(got.attachedTools).toEqual([]);
   });
 });
 

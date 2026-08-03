@@ -61,6 +61,7 @@ export interface Agent {
   instructions: string;
   variables?: AgentVariable[];
   skills: AttachedSkill[];
+  attachedTools: AttachedTool[]; // Story 6.3 — tools granted to this agent, per-operation (default-deny)
   costCap: CostCap; // Story 3.5 — always present; sides default null until set
   state: LifecycleState;
   createdAt: string; // UTC ISO-8601

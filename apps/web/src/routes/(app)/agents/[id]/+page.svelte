@@ -5,8 +5,9 @@
   import { page } from "$app/state";
   import { onDestroy } from "svelte";
   import { ArrowLeft, Circle } from "@lucide/svelte";
-  import { getAgent, updateAgent, activateAgent, deactivateAgent, activationBlockers, type Agent, type AgentPatch, type AgentVariable, type AttachedSkill, type CostCap } from "$lib/agents";
+  import { getAgent, updateAgent, activateAgent, deactivateAgent, activationBlockers, type Agent, type AgentPatch, type AgentVariable, type AttachedSkill, type AttachedTool, type CostCap } from "$lib/agents";
   import { listProviders, type Provider } from "$lib/connections";
+  import { listTools, type Tool } from "$lib/tools";
   import { startRun, runEventsUrl, getAgentCost, getRun, type RunMessage } from "$lib/runs";
   import { formatMinor, formatMicros } from "$lib/money";
   import { undefinedVariables } from "$lib/variables";
@@ -17,6 +18,7 @@
   import ModelSelector from "$lib/components/ModelSelector.svelte";
   import InstructionsEditor from "$lib/components/InstructionsEditor.svelte";
   import SkillsEditor from "$lib/components/SkillsEditor.svelte";
+  import ToolsEditor from "$lib/components/ToolsEditor.svelte";
   import CostCapsEditor from "$lib/components/CostCapsEditor.svelte";
 
   const VAR_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_]{0,63}$/;
@@ -41,6 +43,8 @@
   let vars = $state<AgentVariable[]>([]);
   let varsTimer: ReturnType<typeof setTimeout> | null = null;
   let skills = $state<AttachedSkill[]>([]);
+  let attachedTools = $state<AttachedTool[]>([]);
+  let connectedTools = $state<Tool[]>([]); // the tools the builder can attach (Story 6.3)
   let costCap = $state<CostCap>({ perRun: null, perDay: null });
   let capsTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -210,7 +214,7 @@
     loading = true;
     notFound = false;
     loadError = "";
-    const [a, p] = await Promise.all([getAgent(target), listProviders()]);
+    const [a, p, t] = await Promise.all([getAgent(target), listProviders(), listTools()]);
     if (target !== id) return; // navigated away before this resolved — drop it
     loading = false;
     if (!a.ok) {
@@ -223,8 +227,10 @@
     instructions = a.value.instructions;
     vars = a.value.variables.map((v) => ({ ...v }));
     skills = a.value.skills.map((s) => ({ ...s }));
+    attachedTools = a.value.attachedTools.map((at) => ({ ...at, operations: [...at.operations] }));
     costCap = { perRun: a.value.costCap.perRun, perDay: a.value.costCap.perDay };
     providers = p.ok ? p.value : []; // a provider outage shouldn't block editing the agent
+    connectedTools = t.ok ? t.value : []; // a tools outage shouldn't block editing the agent
   }
   $effect(() => {
     // re-run when the route id changes
@@ -263,6 +269,11 @@
   function onSkillsChange(next: AttachedSkill[]) {
     skills = next;
     persist({ skills: next }); // discrete change → save immediately
+  }
+
+  function onToolsChange(next: AttachedTool[]) {
+    attachedTools = next;
+    persist({ attachedTools: next }); // discrete change → save immediately
   }
 
   function onCapsChange(next: CostCap) {
@@ -393,6 +404,10 @@
 
       <Section label="Skills">
         <SkillsEditor value={skills} onchange={onSkillsChange} />
+      </Section>
+
+      <Section label="Tools">
+        <ToolsEditor value={attachedTools} tools={connectedTools} onchange={onToolsChange} />
       </Section>
 
       <div id="variables-section">

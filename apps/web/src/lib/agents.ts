@@ -18,6 +18,13 @@ export interface AttachedSkill {
   send: boolean;
 }
 
+/** A tool attached to an agent with the operations it may call (Story 6.3). Default-deny: an empty
+ *  `operations` grants nothing. The control-api validates each operation against what the tool offers. */
+export interface AttachedTool {
+  toolId: string;
+  operations: string[];
+}
+
 export interface Money {
   minor: number; // integer minor units (e.g. cents)
   currency: string; // ISO-4217, e.g. "USD"
@@ -35,6 +42,7 @@ export interface Agent {
   instructions: string; // Story 3.3
   variables: AgentVariable[]; // Story 3.3
   skills: AttachedSkill[]; // Story 3.4
+  attachedTools: AttachedTool[]; // Story 6.3
   costCap: CostCap; // Story 3.5
   createdAt: string;
 }
@@ -45,6 +53,7 @@ export interface AgentPatch {
   instructions?: string;
   variables?: AgentVariable[];
   skills?: AttachedSkill[];
+  attachedTools?: AttachedTool[];
   costCap?: CostCap;
 }
 

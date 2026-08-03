@@ -3,8 +3,8 @@
 // Run with a stated reason and NEVER falls through to unsandboxed execution (NFR-1). Each control
 // message is published to the RunHub so the SSE endpoint can stream it live (E4-AD-7). The per-run
 // cost key + kill-on-429 is Story 4.5.
-import { ulid, type LifecycleState, type AttachedSkill, type CostCap, type Money } from "@turanga/domain";
-import { CONTRACT_VERSION, ControlChannelMessageSchema, type JobSpec, type JobConnection, type GuardRunEvent } from "@turanga/contracts";
+import { ulid, type LifecycleState, type AttachedSkill, type AttachedTool, type CostCap, type Money } from "@turanga/domain";
+import { CONTRACT_VERSION, ControlChannelMessageSchema, type JobSpec, type JobConnection, type JobTool, type GuardRunEvent } from "@turanga/contracts";
 import type { RunsRepo, RunRow, RunStatus } from "./repo.js";
 import type { SandboxRuntime, SandboxHandle } from "./runtime.js";
 import type { RunGuard, RunProvision, ProvisionConnection, SkillGrant } from "./guardClient.js";
@@ -19,10 +19,22 @@ interface AgentLike {
   instructions: string;
   state: LifecycleState;
   skills?: AttachedSkill[]; // Story 4.3/4.4: scoped skills drive the connection + the Guard's grants
+  attachedTools?: AttachedTool[]; // Story 6.3: per-operation tool grants → the sandbox-visible JobSpec.tools
   costCap?: CostCap; // Story 4.5: the per-run + per-day caps → the LiteLLM key hierarchy
 }
 interface AgentsReader {
   get(id: string): Promise<AgentLike | null>;
+}
+
+// Minimal reader over tools (Story 6.3 — resolve a granted tool's name for the sandbox-visible JobTool).
+// NO url/credential is read here; the JobSpec never carries a secret (AD-10). Guard-side custody is 6.4.
+interface ToolLike {
+  id: string;
+  name: string;
+  operations: { name: string }[];
+}
+interface ToolsReader {
+  getTool(id: string): Promise<ToolLike | null>;
 }
 
 // A live run's control handle, so a Guard callback (E4-AD-10) can act on it — merge cost metrics or
@@ -55,6 +67,7 @@ export interface OrchestratorDeps {
   image: string;
   sandboxVolume: string;
   dataConnectionsRepo?: DataConnectionsReader; // Story 4.3 — absent ⇒ no connections (empty allowlist)
+  toolsRepo?: ToolsReader; // Story 6.3 — resolve granted-tool names for JobSpec.tools; absent ⇒ no tools
   googleOAuth?: GoogleOAuth; // Story 4.3 — mints the short-lived access token handed to the Guard
   modelGateway?: ModelGateway; // Story 4.5 — mints the per-run cost key; absent ⇒ Guard uses the master key (unmetered)
   maxConcurrent?: number;
@@ -73,7 +86,7 @@ function safeJson(line: string): unknown {
 }
 
 export function runOrchestrator(deps: OrchestratorDeps) {
-  const { runsRepo, agentsRepo, runtime, guard, hub, image, sandboxVolume, dataConnectionsRepo, googleOAuth, modelGateway } = deps;
+  const { runsRepo, agentsRepo, runtime, guard, hub, image, sandboxVolume, dataConnectionsRepo, toolsRepo, googleOAuth, modelGateway } = deps;
   const maxConcurrent = deps.maxConcurrent ?? 5;
   const runTimeoutMs = deps.runTimeoutMs ?? 120_000;
   let active = 0;
@@ -117,6 +130,25 @@ export function runOrchestrator(deps: OrchestratorDeps) {
     return { jobConnections, jobSkills, provision };
   }
 
+  // Story 6.3 — the granted tools the harness may invoke, as SANDBOX-VISIBLE logical handles. Default-deny:
+  // an attached tool with no granted operations is omitted. Each handle carries only { id, name, operations }
+  // — never the endpoint URL or credential (AD-10); the Guard resolves the endpoint + holds the credential
+  // at runtime (Story 6.4). A grant whose tool was deleted is skipped rather than crashing the run.
+  async function resolveRunTools(agent: AgentLike): Promise<JobTool[]> {
+    const granted = (agent.attachedTools ?? []).filter((t) => t.operations.length > 0);
+    if (granted.length === 0 || !toolsRepo) return [];
+    const out: JobTool[] = [];
+    for (const g of granted) {
+      const tool = await toolsRepo.getTool(g.toolId);
+      if (!tool) continue; // deleted tool — skip, don't fail the run
+      // Grants were validated at save-time against the tool's operations; re-narrow to what it still offers.
+      const offered = new Set(tool.operations.map((o) => o.name));
+      const operations = g.operations.filter((op) => offered.has(op));
+      if (operations.length > 0) out.push({ id: tool.id, name: tool.name, operations });
+    }
+    return out;
+  }
+
   async function finish(runId: string, status: RunStatus, reason: string | undefined, costMicros: number): Promise<RunRow> {
     // Persist the run-cost summary = the summed metrics the Guard reported (AC3, no drift by construction).
     await runsRepo.setStatus(runId, status, { reason: reason ?? null, endedAt: new Date().toISOString(), costMicros });
@@ -141,10 +173,11 @@ export function runOrchestrator(deps: OrchestratorDeps) {
       const runId = ulid(Date.now());
       const now = new Date().toISOString();
       const { jobConnections, jobSkills, provision } = await resolveRunConnections(agent);
-      // The job spec carries only LOGICAL handles + skill IDs — the minted access token, the cost key,
+      const jobTools = await resolveRunTools(agent); // Story 6.3 — granted tools as logical handles (no secret)
+      // The job spec carries only LOGICAL handles + skill/tool IDs — the minted access token, the cost key,
       // AND the authoritative scope/send grants live in `provision` and go to the Guard over the admin
       // API, NEVER into the sandbox (AD-10).
-      const jobSpec: JobSpec = { v: CONTRACT_VERSION, runId, agentId, model: agent.model, instructions: agent.instructions, skills: jobSkills, connections: jobConnections, tools: [], taskInput }; // tools: agent tool grants land in 6.3
+      const jobSpec: JobSpec = { v: CONTRACT_VERSION, runId, agentId, model: agent.model, instructions: agent.instructions, skills: jobSkills, connections: jobConnections, tools: jobTools, taskInput };
       const row: RunRow = { id: runId, agentId, status: "created", taskInput, transcript: [], reason: null, costMicros: 0, createdAt: now, endedAt: null };
       await runsRepo.create(row);
       hub.open(runId); // hub state exists before start() hands the run back — the SSE subscriber won't miss the opening

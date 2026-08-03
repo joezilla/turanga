@@ -1,9 +1,9 @@
 import { desc, eq } from "drizzle-orm";
-import type { AgentVariable, AttachedSkill, CostCap, LifecycleState, Money } from "@turanga/domain";
+import type { AgentVariable, AttachedSkill, AttachedTool, CostCap, LifecycleState, Money } from "@turanga/domain";
 import type { Db } from "../db/client.js";
 import { agents } from "../db/schema.js";
 
-export type { AgentVariable, AttachedSkill, CostCap, Money };
+export type { AgentVariable, AttachedSkill, AttachedTool, CostCap, Money };
 
 export interface AgentRow {
   id: string;
@@ -13,6 +13,7 @@ export interface AgentRow {
   instructions: string; // Story 3.3
   variables: AgentVariable[]; // Story 3.3
   skills: AttachedSkill[]; // Story 3.4
+  attachedTools: AttachedTool[]; // Story 6.3 — per-operation tool grants (default-deny)
   costCap: CostCap; // Story 3.5 — sides default null until set
   createdAt: string; // UTC ISO-8601
 }
@@ -25,6 +26,7 @@ export interface AgentPatch {
   instructions?: string;
   variables?: AgentVariable[];
   skills?: AttachedSkill[];
+  attachedTools?: AttachedTool[]; // Story 6.3
   costCap?: CostCap;
   state?: LifecycleState; // Story 5.1 — written ONLY by the gated activate/deactivate routes, never the general PATCH
 }
@@ -45,6 +47,7 @@ function toRow(r: typeof agents.$inferSelect): AgentRow {
     instructions: r.instructions,
     variables: r.variables,
     skills: r.skills as AttachedSkill[],
+    attachedTools: (r.attachedTools ?? []) as AttachedTool[],
     costCap: r.costCap as CostCap,
     createdAt: r.createdAt.toISOString(),
   };
@@ -59,6 +62,7 @@ function applyPatch(row: AgentRow, patch: AgentPatch): AgentRow {
     ...(patch.instructions !== undefined ? { instructions: patch.instructions } : {}),
     ...(patch.variables !== undefined ? { variables: patch.variables } : {}),
     ...(patch.skills !== undefined ? { skills: patch.skills } : {}),
+    ...(patch.attachedTools !== undefined ? { attachedTools: patch.attachedTools } : {}),
     ...(patch.costCap !== undefined ? { costCap: patch.costCap } : {}),
     ...(patch.state !== undefined ? { state: patch.state } : {}),
   };
@@ -85,6 +89,7 @@ export function drizzleAgentsRepo(db: Db): AgentsRepo {
         instructions: row.instructions,
         variables: row.variables,
         skills: row.skills,
+        attachedTools: row.attachedTools,
         costCap: row.costCap,
         createdAt: new Date(row.createdAt),
       });
@@ -96,6 +101,7 @@ export function drizzleAgentsRepo(db: Db): AgentsRepo {
       if (patch.instructions !== undefined) set.instructions = patch.instructions;
       if (patch.variables !== undefined) set.variables = patch.variables;
       if (patch.skills !== undefined) set.skills = patch.skills;
+      if (patch.attachedTools !== undefined) set.attachedTools = patch.attachedTools;
       if (patch.costCap !== undefined) set.costCap = patch.costCap;
       if (patch.state !== undefined) set.state = patch.state;
       if (Object.keys(set).length === 0) return this.get(id); // nothing to change

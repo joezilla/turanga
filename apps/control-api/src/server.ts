@@ -83,6 +83,7 @@ async function main() {
     guard,
     hub: runHub,
     dataConnectionsRepo, // Story 4.3 — resolve the run's Gmail connection + allowlist
+    toolsRepo, // Story 6.3 — resolve granted-tool names for the sandbox-visible JobSpec.tools
     googleOAuth: google, // Story 4.3 — mint the short-lived access token handed to the Guard
     modelGateway, // Story 4.5 — mint the per-run cost key under the agent's daily-budget team
     image: process.env.AGENT_HARNESS_IMAGE ?? "turanga/agent-harness:dev",

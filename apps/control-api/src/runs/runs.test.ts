@@ -8,9 +8,9 @@ import { createRunHub } from "./hub.js";
 import { encryptSecret } from "../secrets/crypto.js";
 import { fakeGoogleOAuth } from "../oauth/google.js";
 import { fakeModelGateway } from "../litellm/gateway.js";
-import type { AttachedSkill, CostCap } from "@turanga/domain";
+import type { AttachedSkill, AttachedTool, CostCap } from "@turanga/domain";
 
-type Agent = { id: string; model: string | null; instructions: string; state: "draft" | "active"; skills?: AttachedSkill[]; costCap?: CostCap };
+type Agent = { id: string; model: string | null; instructions: string; state: "draft" | "active"; skills?: AttachedSkill[]; attachedTools?: AttachedTool[]; costCap?: CostCap };
 const agent = (over: Partial<Agent> = {}): Agent => ({ id: "a1", model: "openai/gpt-4o", instructions: "be nice", state: "draft", ...over });
 const agentsRepo = (a: Agent | null) => ({ get: async (id: string) => (a && a.id === id ? a : null) });
 
@@ -241,6 +241,55 @@ describe("run orchestrator — connections + credentialed provisioning (4.3)", (
     expect(guard.registered[0].provision.connections[0].accessToken).toBe("");
     expect(runtime.established[0].jobSpecJson).toContain('"draft-reply"');
     expect(runtime.established[0].jobSpecJson).not.toContain('accessToken'); // never in the jobSpec (AD-10)
+  });
+
+  // Story 6.3 — granted tools land on the sandbox-visible JobSpec.tools as logical handles.
+  type ToolRec = { id: string; name: string; url: string | null; encCredential: string | null; operations: { name: string }[] };
+  function toolOrch(opts: { attachedTools?: AttachedTool[]; tools?: ToolRec[] }) {
+    const runsRepo = memoryRunsRepo();
+    const guard = fakeRunGuard();
+    const runtime = fakeSandboxRuntime({ lines: [nd({ type: "done", v: 5, status: "succeeded" })] });
+    const byId = new Map((opts.tools ?? []).map((t) => [t.id, t]));
+    const toolsRepo = { getTool: async (id: string) => byId.get(id) ?? null };
+    const o = runOrchestrator({
+      runsRepo,
+      agentsRepo: agentsRepo(agent({ attachedTools: opts.attachedTools })),
+      runtime,
+      guard,
+      hub: createRunHub(),
+      toolsRepo,
+      image: "img",
+      sandboxVolume: "vol",
+    });
+    return { o, guard, runtime };
+  }
+
+  it("puts granted tools on the jobSpec as { id, name, operations } — omits ungranted tools, never leaks url/credential (AC2, AD-10)", async () => {
+    const { o, runtime } = toolOrch({
+      attachedTools: [
+        { toolId: "t-weather", operations: ["get_weather"] }, // granted → on the spec
+        { toolId: "t-empty", operations: [] }, // attached but ungranted → omitted (default-deny)
+      ],
+      tools: [
+        { id: "t-weather", name: "Weather", url: "https://mcp.example/mcp", encCredential: "enc-secret-blob", operations: [{ name: "get_weather" }, { name: "get_forecast" }] },
+        { id: "t-empty", name: "Empty", url: "https://empty.example/mcp", encCredential: null, operations: [{ name: "noop" }] },
+      ],
+    });
+    const r = await o.launch("a1", "weather?");
+    expect(r.ok).toBe(true);
+    const jobSpecJson = runtime.established[0].jobSpecJson;
+    const spec = JSON.parse(jobSpecJson) as { tools: { id: string; name: string; operations: string[] }[] };
+    expect(spec.tools).toEqual([{ id: "t-weather", name: "Weather", operations: ["get_weather"] }]);
+    // AD-10: the endpoint URL + the encrypted credential are NEVER on the sandbox wire.
+    expect(jobSpecJson).not.toContain("mcp.example");
+    expect(jobSpecJson).not.toContain("enc-secret-blob");
+  });
+
+  it("skips a grant whose tool was deleted rather than failing the run", async () => {
+    const { o, runtime } = toolOrch({ attachedTools: [{ toolId: "gone", operations: ["x"] }], tools: [] });
+    const r = await o.launch("a1", "x");
+    expect(r.ok).toBe(true);
+    expect(runtime.established[0].jobSpecJson).toContain('"tools":[]');
   });
 });
 

@@ -14,6 +14,7 @@ describe("domain", () => {
       name: "inbox",
       instructions: "",
       skills: [{ skill: "read-search", scope: "read", send: false }],
+      attachedTools: [],
       costCap: { perRun: { minor: 50, currency: "USD" }, perDay: { minor: 500, currency: "USD" } },
       state: "draft",
       createdAt: "2026-07-31T00:00:00.000Z",

@@ -111,6 +111,45 @@ test("connecting a remote MCP tool verifies + discovers its operations (Story 6.
   await expect(page.getByText("No tools yet.")).toBeVisible();
 });
 
+test("attach a tool to an agent + grant an operation — persists (Story 6.3)", async ({ page }) => {
+  await signIn(page);
+
+  // Connect a tool to grant (reuse 6.2's flow).
+  await page.goto("/settings/tools");
+  await page.getByRole("button", { name: "Add a tool" }).click();
+  await page.getByLabel("Name").fill("Grantable MCP");
+  await page.getByLabel("MCP server URL").fill("http://mcp-stub:9000/mcp");
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page.locator("li.tool")).toContainText("Grantable MCP · connected", { timeout: 20000 });
+
+  // Create an agent and open it.
+  await page.goto("/agents");
+  await page.getByRole("button", { name: "Create agent" }).first().click();
+  await page.locator("a.agent").first().click();
+  await expect(page).toHaveURL(/\/agents\/[0-9A-Z]{26}$/);
+
+  // The Tools section lists the connected tool via the picker; attach it (default-deny — no grant yet).
+  const tools = page.locator("section", { has: page.getByRole("button", { name: "Tools" }) });
+  await tools.getByRole("button", { name: "Add a tool" }).click();
+  await page.getByRole("button", { name: "Grantable MCP" }).click();
+
+  // Grant the `echo` operation (a checkbox per discovered operation).
+  const echoGrant = tools.locator("label.op", { hasText: "echo" });
+  await echoGrant.locator("input[type=checkbox]").check();
+  await expect(page.getByText("Saved")).toBeVisible({ timeout: 10000 });
+
+  // Reload → the grant persisted server-side (AD-7): echo checked, get_time not.
+  await page.reload();
+  await expect(tools.locator("label.op", { hasText: "echo" }).locator("input[type=checkbox]")).toBeChecked();
+  await expect(tools.locator("label.op", { hasText: "get_time" }).locator("input[type=checkbox]")).not.toBeChecked();
+
+  // Clean up the connected tool so the pristine-DB assumption holds on reruns.
+  await page.goto("/settings/tools");
+  await page.locator("li.tool").getByRole("button", { name: "Remove" }).click(); // arm
+  await page.locator("li.tool").getByRole("button", { name: "Remove" }).click(); // confirm
+  await expect(page.getByText("No tools yet.")).toBeVisible();
+});
+
 test("Data connections shows the not-configured state when no Google client is set", async ({ page }) => {
   await signIn(page);
   await page.goto("/settings/connections");

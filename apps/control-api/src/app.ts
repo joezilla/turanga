@@ -77,9 +77,9 @@ export function createApp(deps: AppDeps = {}) {
   const google = deps.googleOAuth ?? googleOAuth();
   app.route("/", dataConnectionRoutes(dataConnectionsRepo, google, webOrigin));
 
-  app.route("/", agentRoutes(agentsRepo, connectionsRepo)); // connectionsRepo → the Activate provider-connected gate (5.1)
-
   const toolsRepo = deps.toolsRepo ?? memoryToolsRepo();
+  app.route("/", agentRoutes(agentsRepo, connectionsRepo, toolsRepo)); // connectionsRepo → the Activate gate (5.1); toolsRepo → per-op grant validation (6.3)
+
   const mcpVerifier = deps.mcpVerifier ?? fakeMcpVerifier();
   app.route("/", toolRoutes(toolsRepo, mcpVerifier)); // Epic 6 — manage + connect first-class tools
 
@@ -90,7 +90,7 @@ export function createApp(deps: AppDeps = {}) {
   // Docker; server.ts injects the real Docker-backed orchestrator (built on the same hub).
   const orchestrator =
     deps.orchestrator ??
-    runOrchestrator({ runsRepo, agentsRepo, runtime: fakeSandboxRuntime(), guard: fakeRunGuard(), hub: runHub, dataConnectionsRepo, googleOAuth: google, modelGateway: gateway, image: "turanga/agent-harness:dev", sandboxVolume: "guard-run" });
+    runOrchestrator({ runsRepo, agentsRepo, runtime: fakeSandboxRuntime(), guard: fakeRunGuard(), hub: runHub, dataConnectionsRepo, toolsRepo, googleOAuth: google, modelGateway: gateway, image: "turanga/agent-harness:dev", sandboxVolume: "guard-run" });
   app.route("/", runRoutes(runsRepo, orchestrator, runHub, deps.guardCallbackToken ?? "dev-guard-callback"));
 
   return app;
