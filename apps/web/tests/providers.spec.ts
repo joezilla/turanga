@@ -73,9 +73,42 @@ test("Settings → Tools shows the tools management surface + empty state (Story
   await page.getByRole("link", { name: "Tools", exact: true }).click();
   await expect(page).toHaveURL(/\/settings\/tools$/);
   await expect(page.getByRole("heading", { name: "Tools" })).toBeVisible();
-  // Empty state + the "Add a tool" affordance (disabled — connecting tools ships in 6.2).
+  // Empty state + the "Add a tool" affordance (active as of 6.2).
   await expect(page.getByText("No tools yet.")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Add a tool" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Add a tool" })).toBeEnabled();
+});
+
+test("connecting a remote MCP tool verifies + discovers its operations (Story 6.2)", async ({ page }) => {
+  await signIn(page);
+  await page.goto("/settings/tools");
+
+  // Open the connect form and point it at the in-network stub MCP server.
+  await page.getByRole("button", { name: "Add a tool" }).click();
+  await page.getByLabel("Name").fill("Stub MCP");
+  await page.getByLabel("MCP server URL").fill("http://mcp-stub:9000/mcp");
+  await page.getByRole("button", { name: "Connect" }).click();
+
+  // control-api does a real MCP handshake against the stub → connected + its operations discovered.
+  const card = page.locator("li.tool");
+  await expect(card).toContainText("Stub MCP · connected", { timeout: 20000 });
+  await expect(card).toContainText("echo");
+  await expect(card).toContainText("get_time");
+  // No credential was supplied → the "credential set" indicator is absent.
+  await expect(card).not.toContainText("credential set");
+
+  // Fail-closed: a bad URL surfaces the cause and persists nothing new.
+  await page.getByRole("button", { name: "Add a tool" }).click();
+  await page.getByLabel("Name").fill("Broken");
+  await page.getByLabel("MCP server URL").fill("http://mcp-stub:9999/nope");
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page.getByRole("alert")).toBeVisible({ timeout: 20000 });
+  await expect(page.locator("li.tool")).toHaveCount(1); // only the good one persisted
+
+  // Clean up so the pristine-DB assumption of the other tools test still holds on reruns.
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await page.locator("li.tool").getByRole("button", { name: "Remove" }).click(); // arm
+  await page.locator("li.tool").getByRole("button", { name: "Remove" }).click(); // confirm
+  await expect(page.getByText("No tools yet.")).toBeVisible();
 });
 
 test("Data connections shows the not-configured state when no Google client is set", async ({ page }) => {

@@ -19,6 +19,8 @@ export interface Tool {
   endpoint: ToolEndpointType;
   status: ToolStatus;
   lastError: string | null;
+  url: string | null; // the remote MCP endpoint (Story 6.2)
+  credentialSet: boolean; // whether a credential is held Guard-side (the value is never returned — AD-10)
   operations: ToolOperation[];
   createdAt: string;
 }
@@ -45,4 +47,15 @@ export async function listTools(): Promise<Result<Tool[]>> {
 
 export function removeTool(id: string): Promise<Result<{ ok: true }>> {
   return req(`/tools/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+// Connect a remote MCP tool (Story 6.2): control-api verifies via an MCP handshake + discovers its
+// operations. The credential (if any) is held Guard-side — never returned. Fail-closed: a bad URL/
+// credential returns the stated cause and persists nothing.
+export function connectTool(input: { name: string; url: string; credential?: string }): Promise<Result<{ tool: Tool }>> {
+  return req("/tools", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
 }

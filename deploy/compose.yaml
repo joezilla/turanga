@@ -129,6 +129,21 @@ services:
       timeout: 3s
       retries: 20
 
+  # A stub MCP server so "Add a tool" has a real remote MCP endpoint to verify against in dev + e2e
+  # (Story 6.2). control-api reaches it in-network at http://mcp-stub:9000/mcp — that's the URL you
+  # enter in the Tools UI. Holds no secrets; not part of the trust boundary.
+  mcp-stub:
+    build:
+      context: ..
+      dockerfile: apps/mcp-stub/Dockerfile
+    environment:
+      PORT: "9000"
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:9000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   # Build-only: produces the turanga/agent-harness:dev image the orchestrator runs per-run.
   # It is NOT a long-lived service (AD-4) — `no-op` keeps it from staying up. Build with
   # `docker compose build agent-harness-image` (or `--build` brings it along).

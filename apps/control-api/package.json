@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.13.2",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@node-rs/argon2": "^2.0.2",
     "@turanga/contracts": "workspace:*",
     "@turanga/domain": "workspace:*",

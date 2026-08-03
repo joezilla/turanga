@@ -93,6 +93,10 @@ export const tools = pgTable("tools", {
   endpoint: text("endpoint").notNull(), // 'remote' | 'container' (ToolEndpointType)
   status: text("status").notNull(), // 'unverified' | 'connected' | 'error' (ToolStatus)
   lastError: text("last_error"),
+  url: text("url"), // the remote MCP endpoint (Story 6.2); null for a container tool
+  // The MCP bearer token, ENCRYPTED at rest (AES-256-GCM, Story 6.2) — mirrors enc_refresh_token;
+  // NEVER returned by the route view(); decrypted only at run time to hand to the Guard (AD-10, 6.4).
+  encCredential: text("enc_credential"),
   operations: jsonb("operations").$type<{ name: string; title?: string; description?: string; inputSchema?: unknown }[]>().notNull().default([]), // discovered MCP tools/list (Story 6.2 populates)
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

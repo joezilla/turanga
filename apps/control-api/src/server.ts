@@ -13,6 +13,7 @@ import { googleOAuth } from "./oauth/google.js";
 import { drizzleAgentsRepo } from "./agents/repo.js";
 import { drizzleRunsRepo } from "./runs/repo.js";
 import { drizzleToolsRepo } from "./tools/repo.js";
+import { httpMcpVerifier } from "./tools/mcp.js";
 import { runOrchestrator } from "./runs/orchestrator.js";
 import { dockerRuntime, resolveSandboxRuntimeKind } from "./runs/runtime.js";
 import { httpRunGuard } from "./runs/guardClient.js";
@@ -99,6 +100,7 @@ async function main() {
     agentsRepo,
     runsRepo,
     toolsRepo,
+    mcpVerifier: httpMcpVerifier(),
     runHub,
     orchestrator,
     guardCallbackToken,

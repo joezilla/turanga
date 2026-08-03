@@ -3,12 +3,20 @@
   // status; remove one. Connecting a remote tool (URL + credential) + deploying a container come next
   // (6.2 / Epic 7) — so "Add a tool" is present but not yet wired.
   import { Circle } from "@lucide/svelte";
-  import { listTools, removeTool, type Tool } from "$lib/tools";
+  import { listTools, removeTool, connectTool, type Tool } from "$lib/tools";
 
   let tools = $state<Tool[]>([]);
   let loading = $state(true);
   let loadError = $state("");
   let confirmRemoveId = $state<string | null>(null);
+
+  // Add-a-remote-tool form (Story 6.2)
+  let showAdd = $state(false);
+  let addName = $state("");
+  let addUrl = $state("");
+  let addCredential = $state("");
+  let adding = $state(false);
+  let addError = $state("");
 
   async function load() {
     loading = true;
@@ -24,6 +32,28 @@
   $effect(() => {
     load();
   });
+
+  function openAdd() {
+    showAdd = true;
+    addName = "";
+    addUrl = "";
+    addCredential = "";
+    addError = "";
+  }
+
+  async function onConnect(e: SubmitEvent) {
+    e.preventDefault();
+    adding = true;
+    addError = "";
+    const r = await connectTool({ name: addName, url: addUrl, credential: addCredential || undefined });
+    adding = false;
+    if (r.ok) {
+      showAdd = false;
+      await load();
+    } else {
+      addError = r.error;
+    }
+  }
 
   async function onRemove(id: string) {
     confirmRemoveId = null;
@@ -41,6 +71,33 @@
 <h1>Tools</h1>
 <p class="lede">Tools are MCP servers your agents can call at runtime — a remote server or one you deploy yourself. Attach them to an agent to grant specific operations.</p>
 
+<!-- Add / connect a remote MCP tool (Story 6.2) -->
+{#if showAdd}
+  <form class="card add" onsubmit={onConnect}>
+    <label class="field">
+      <span>Name</span>
+      <input type="text" bind:value={addName} placeholder="e.g. Weather" required />
+    </label>
+    <label class="field">
+      <span>MCP server URL</span>
+      <input type="url" bind:value={addUrl} placeholder="https://…/mcp" required />
+    </label>
+    <label class="field">
+      <span>Credential (optional)</span>
+      <input type="password" bind:value={addCredential} autocomplete="off" placeholder="bearer token — leave blank if the server needs none" />
+    </label>
+    {#if addError}<p class="error" role="alert">{addError}</p>{/if}
+    <div class="add-actions">
+      <button type="submit" class="primary" disabled={adding}>{adding ? "Connecting…" : "Connect"}</button>
+      <button type="button" class="ghost" onclick={() => (showAdd = false)} disabled={adding}>Cancel</button>
+    </div>
+  </form>
+{:else}
+  <div class="head">
+    <button class="primary" onclick={openAdd}>Add a tool</button>
+  </div>
+{/if}
+
 {#if loading}
   <p class="muted">Loading…</p>
 {:else if loadError}
@@ -49,15 +106,8 @@
     <button class="primary" onclick={load}>Retry</button>
   </div>
 {:else if tools.length === 0}
-  <div class="empty">
-    <p>No tools yet.</p>
-    <button class="primary" disabled title="Connecting tools ships in the next update.">Add a tool</button>
-    <p class="muted">Connecting a remote tool and deploying your own are coming next.</p>
-  </div>
+  {#if !showAdd}<p class="muted">No tools yet.</p>{/if}
 {:else}
-  <div class="head">
-    <button class="primary" disabled title="Connecting tools ships in the next update.">Add a tool</button>
-  </div>
   <ul class="cards">
     {#each tools as t (t.id)}
       <li class="card tool">
@@ -68,7 +118,12 @@
           </span>
           <span class="type">{endpointLabel(t.endpoint)}</span>
         </div>
-        <p class="sub">{t.operations.length} operation{t.operations.length === 1 ? "" : "s"}</p>
+        {#if t.url}<p class="sub mono">{t.url}{#if t.credentialSet} · credential set{/if}</p>{/if}
+        {#if t.operations.length > 0}
+          <p class="sub">{t.operations.length} operation{t.operations.length === 1 ? "" : "s"}: <span class="ops">{t.operations.map((o) => o.name).join(", ")}</span></p>
+        {:else}
+          <p class="sub">No operations discovered.</p>
+        {/if}
         {#if t.status === "error" && t.lastError}<p class="error">{t.lastError}</p>{/if}
         <div class="actions">
           {#if confirmRemoveId === t.id}
@@ -170,6 +225,56 @@
     margin: 0;
     font-size: var(--text-xs);
     color: var(--text-tertiary);
+  }
+  .sub.mono {
+    font-family: var(--font-mono, ui-monospace, monospace);
+    word-break: break-all;
+  }
+  .ops {
+    color: var(--text-secondary);
+  }
+  /* Connect form (Story 6.2) — mirrors the providers add-form */
+  .add {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    max-width: 480px;
+    margin-bottom: var(--space-6);
+    padding: var(--space-5);
+  }
+  .add .field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+  }
+  .add input {
+    height: var(--control-h-md);
+    padding: 0 var(--space-3);
+    font-size: var(--text-sm);
+    color: var(--text-primary);
+    background: var(--surface-card);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+  }
+  .add-actions {
+    display: flex;
+    gap: var(--space-2);
+  }
+  .add-actions .ghost {
+    height: var(--control-h-md);
+    padding: 0 var(--space-4);
+    font-size: var(--text-sm);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    background: var(--surface-card);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-subtle);
+  }
+  .add-actions .ghost:disabled {
+    color: var(--text-disabled);
+    cursor: default;
   }
   .actions {
     display: flex;

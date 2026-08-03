@@ -11,6 +11,8 @@ export interface ToolRow {
   endpoint: ToolEndpointType;
   status: ToolStatus;
   lastError: string | null;
+  url: string | null; // the remote MCP endpoint (Story 6.2)
+  encCredential: string | null; // the bearer token ENCRYPTED at rest (Story 6.2) — internal only, NEVER in view()
   operations: ToolOperation[];
   createdAt: string; // UTC ISO-8601
 }
@@ -31,6 +33,8 @@ function toRow(r: typeof tools.$inferSelect): ToolRow {
     endpoint: r.endpoint as ToolEndpointType,
     status: r.status as ToolStatus,
     lastError: r.lastError,
+    url: r.url,
+    encCredential: r.encCredential,
     operations: (r.operations ?? []) as ToolOperation[],
     createdAt: r.createdAt.toISOString(),
   };
@@ -53,6 +57,8 @@ export function drizzleToolsRepo(db: Db): ToolsRepo {
         endpoint: row.endpoint,
         status: row.status,
         lastError: row.lastError,
+        url: row.url,
+        encCredential: row.encCredential,
         operations: row.operations,
         createdAt: new Date(row.createdAt),
       });
