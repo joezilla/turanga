@@ -6,6 +6,8 @@
     rotateKey,
     removeProvider,
     providerDependents,
+    setEnabledModels,
+    refreshModels,
     type Provider,
     type ProviderKind,
     type DependentAgent,
@@ -30,6 +32,10 @@
   let confirmRemoveId = $state<string | null>(null);
   let dependents = $state<DependentAgent[]>([]); // agents that use the provider being removed
   let dependentsUnknown = $state(false); // the dependents check failed — don't imply "safe"
+  // Model curation (Story 2.4)
+  let refreshingId = $state<string | null>(null);
+  let refreshKeyValue = $state("");
+  let modelFilter = $state<Record<string, string>>({}); // per-provider filter text (long catalogs)
 
   async function load() {
     loading = true;
@@ -92,6 +98,30 @@
     const r = await removeProvider(id);
     if (r.ok) await load();
     else loadError = r.error;
+  }
+
+  // Toggle a single model on/off (Story 2.4) — optimistic, reconciled from the server response.
+  async function onToggle(p: Provider, model: string, enable: boolean) {
+    const next = enable ? [...new Set([...p.enabledModels, model])] : p.enabledModels.filter((m) => m !== model);
+    providers = providers.map((x) => (x.id === p.id ? { ...x, enabledModels: next } : x)); // optimistic
+    const r = await setEnabledModels(p.id, next);
+    if (r.ok) providers = providers.map((x) => (x.id === p.id ? r.value.provider : x));
+    else await load(); // a write failure → reconcile from the server (don't leave a wrong toggle)
+  }
+
+  // Re-query the provider's catalog. The key isn't stored control-api-side (AD-10) → re-enter it.
+  async function onRefresh(id: string) {
+    if (!refreshKeyValue) return;
+    const r = await refreshModels(id, refreshKeyValue);
+    refreshingId = null;
+    refreshKeyValue = "";
+    if (r.ok) await load();
+    else loadError = r.error;
+  }
+
+  function shownModels(p: Provider): string[] {
+    const q = (modelFilter[p.id] ?? "").toLowerCase();
+    return q ? p.models.filter((m) => m.toLowerCase().includes(q)) : p.models;
   }
 
   function dotColor(status: string): string {
@@ -183,6 +213,42 @@
             <button type="button" class="ghost" onclick={() => armRemove(p.id)}>Remove</button>
           {/if}
         </div>
+
+        <!-- Model catalog + enable/disable (Story 2.4). Only enabled models are selectable on an agent. -->
+        {#if p.status === "connected"}
+          <div class="models">
+            <div class="models-head">
+              <span class="count mono-num">{p.enabledModels.length} of {p.models.length} enabled</span>
+              {#if refreshingId === p.id}
+                <input class="refresh-key" type="password" bind:value={refreshKeyValue} placeholder="API key to refresh" autocomplete="off" />
+                <button type="button" onclick={() => onRefresh(p.id)}>Refresh</button>
+                <button type="button" class="ghost" onclick={() => (refreshingId = null)}>Cancel</button>
+              {:else}
+                <button type="button" class="ghost" onclick={() => { refreshingId = p.id; refreshKeyValue = ""; }}>Refresh models</button>
+              {/if}
+            </div>
+            {#if p.models.length === 0}
+              <p class="muted">No models — Refresh to fetch the catalog.</p>
+            {:else}
+              {#if p.models.length > 8}
+                <input class="model-filter" type="text" placeholder="Filter models" value={modelFilter[p.id] ?? ""} oninput={(e) => (modelFilter = { ...modelFilter, [p.id]: e.currentTarget.value })} />
+              {/if}
+              <ul class="model-list">
+                {#each shownModels(p) as m (m)}
+                  <li>
+                    <label class="model">
+                      <input type="checkbox" checked={p.enabledModels.includes(m)} onchange={(e) => onToggle(p, m, e.currentTarget.checked)} />
+                      <span class="mono-num">{m}</span>
+                    </label>
+                  </li>
+                {/each}
+                {#if shownModels(p).length === 0}
+                  <li class="muted no-match">No models match "{modelFilter[p.id]}".</li>
+                {/if}
+              </ul>
+            {/if}
+          </div>
+        {/if}
       </li>
     {/each}
   </ul>
@@ -318,6 +384,68 @@
   .confirm {
     font-size: var(--text-sm);
     color: var(--text-secondary);
+  }
+  /* Model catalog + toggles (Story 2.4) */
+  .models {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding-top: var(--space-2);
+    border-top: 1px solid var(--border-subtle);
+  }
+  .models-head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+  }
+  .count {
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+    margin-right: auto;
+  }
+  .models-head button {
+    height: var(--control-h-sm);
+    padding: 0 var(--space-3);
+    font-size: var(--text-xs);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    background: var(--surface-card);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-subtle);
+  }
+  .refresh-key {
+    height: var(--control-h-sm);
+    flex: 1 1 160px;
+  }
+  .model-filter {
+    height: var(--control-h-sm);
+    width: 100%;
+  }
+  .model-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    max-height: 220px;
+    overflow-y: auto;
+  }
+  .model {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--text-xs);
+    color: var(--text-primary);
+    cursor: pointer;
+  }
+  .model input {
+    height: auto;
+    accent-color: var(--action-primary-bg);
+  }
+  .no-match {
+    padding: var(--space-1) 0;
   }
   .error {
     margin: 0;

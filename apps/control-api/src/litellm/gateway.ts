@@ -15,6 +15,7 @@ export interface RegisterInput {
 export interface VerifyResult {
   ok: boolean;
   error?: string; // human cause, never contains the key
+  models?: string[]; // the provider's available model ids, parsed from /v1/models at verify (Story 2.4)
 }
 
 import type { Money } from "@turanga/domain";
@@ -103,8 +104,12 @@ export function httpModelGateway(litellmBaseUrl: string, masterKey: string): Mod
         headers = { authorization: `Bearer ${input.apiKey}` };
       }
       const res = await fetch(url, { headers });
-      if (res.ok) return { ok: true };
-      return { ok: false, error: `The provider rejected the key (HTTP ${res.status}). Check the key and try again.` };
+      if (!res.ok) return { ok: false, error: `The provider rejected the key (HTTP ${res.status}). Check the key and try again.` };
+      // Story 2.4: parse the model catalog too (all three return { data: [{ id }, …] }). Best-effort —
+      // a verified key with an unparseable body still connects (models fall back / can be refreshed).
+      const json = (await res.json().catch(() => ({}))) as { data?: { id?: unknown }[] };
+      const models = [...new Set((json.data ?? []).map((m) => m.id).filter((x): x is string => typeof x === "string" && x.length > 0))];
+      return { ok: true, models };
     } catch {
       return { ok: false, error: "Couldn't reach the provider to verify the key. Check the base URL / network." };
     }
@@ -168,8 +173,16 @@ export function httpModelGateway(litellmBaseUrl: string, masterKey: string): Mod
   };
 }
 
+// A representative fetched catalog per provider for the test double (openai includes a non-chat id so
+// the chat-default filtering is exercised). openai-compatible echoes the caller's typed models.
+function fakeCatalog(input: RegisterInput): string[] {
+  if (input.provider === "anthropic") return ["claude-sonnet-4", "claude-opus-4"];
+  if (input.provider === "openai") return ["gpt-4o", "gpt-4o-mini", "text-embedding-3-small"];
+  return input.models ?? [];
+}
+
 // Test double.
-export function fakeModelGateway(opts: { verifyOk?: boolean; verifyError?: string; teamSpendMicros?: number } = {}): ModelGateway & {
+export function fakeModelGateway(opts: { verifyOk?: boolean; verifyError?: string; teamSpendMicros?: number; models?: string[] } = {}): ModelGateway & {
   registered: string[][];
   unregistered: string[];
   mintedKeys: { runId: string; teamId: string; perRunCap: Money | null }[];
@@ -185,8 +198,9 @@ export function fakeModelGateway(opts: { verifyOk?: boolean; verifyError?: strin
     unregistered,
     mintedKeys,
     deletedKeys,
-    async verify() {
-      return opts.verifyOk === false ? { ok: false, error: opts.verifyError ?? "bad key" } : { ok: true };
+    async verify(input) {
+      if (opts.verifyOk === false) return { ok: false, error: opts.verifyError ?? "bad key" };
+      return { ok: true, models: opts.models ?? fakeCatalog(input) };
     },
     async register(input) {
       const n = input.provider === "openai-compatible" ? (input.models?.length ?? 0) : 1;

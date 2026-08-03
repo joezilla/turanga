@@ -1,0 +1,1 @@
+ALTER TABLE "connections" ADD COLUMN "enabled_models" jsonb DEFAULT '[]'::jsonb NOT NULL;

@@ -14,7 +14,8 @@ export interface Provider {
   keyLast4: string | null;
   status: ProviderStatus;
   lastError: string | null;
-  models: string[];
+  models: string[]; // the provider's available catalog (Story 2.4)
+  enabledModels: string[]; // the curated subset selectable in the agent picker (Story 2.4)
 }
 
 export interface ConnectInput {
@@ -61,6 +62,24 @@ export function rotateKey(id: string, apiKey: string): Promise<Result<{ provider
 
 export function removeProvider(id: string): Promise<Result<{ ok: true }>> {
   return req(`/connections/providers/${id}`, { method: "DELETE" });
+}
+
+// Set which of a provider's fetched models are enabled/selectable (Story 2.4).
+export function setEnabledModels(id: string, enabled: string[]): Promise<Result<{ provider: Provider }>> {
+  return req(`/connections/providers/${id}/models`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  });
+}
+
+// Re-query the provider's model catalog (Story 2.4). Needs the key (AD-10 — not stored control-api-side).
+export function refreshModels(id: string, apiKey: string): Promise<Result<{ provider: Provider }>> {
+  return req(`/connections/providers/${id}/refresh-models`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ apiKey }),
+  });
 }
 
 export interface DependentAgent {

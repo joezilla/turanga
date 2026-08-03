@@ -30,7 +30,8 @@ export const connections = pgTable("connections", {
   keyLast4: text("key_last4"),
   status: text("status").notNull(), // 'connected' | 'error' | 'unconfigured'
   lastError: text("last_error"),
-  models: jsonb("models").$type<string[]>().notNull().default([]),
+  models: jsonb("models").$type<string[]>().notNull().default([]), // the provider's available catalog (Story 2.4)
+  enabledModels: jsonb("enabled_models").$type<string[]>().notNull().default([]), // the curated subset selectable in the agent picker (Story 2.4)
   litellmModelIds: jsonb("litellm_model_ids").$type<string[]>().notNull().default([]),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

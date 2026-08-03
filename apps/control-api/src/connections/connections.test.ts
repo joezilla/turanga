@@ -79,6 +79,41 @@ describe("connect a model provider", () => {
     expect(gateway.registered[0].length).toBe(2);
   });
 
+  it("fetches + persists the model catalog and chat-default enabled subset on connect (Story 2.4)", async () => {
+    const { app, cookie } = await appWithSession(fakeModelGateway({ verifyOk: true })); // openai catalog = gpt-4o, gpt-4o-mini, text-embedding-3-small
+    const res = await app.request("/connections/providers", { ...jsonPost({ provider: "openai", apiKey: "sk-secret-abcd1234" }), headers: { "content-type": "application/json", cookie } });
+    const p = ((await res.json()) as { provider: { models: string[]; enabledModels: string[] } }).provider;
+    expect(p.models).toEqual(["gpt-4o", "gpt-4o-mini", "text-embedding-3-small"]); // full fetched catalog
+    expect(p.enabledModels).toEqual(["gpt-4o", "gpt-4o-mini"]); // the embedding is off by default
+  });
+
+  it("sets the enabled subset via PUT /models, ignoring ids not in the catalog (Story 2.4)", async () => {
+    const { app, cookie } = await appWithSession();
+    const created = ((await (await app.request("/connections/providers", { ...jsonPost({ provider: "openai", apiKey: "sk-abcd1234" }), headers: { "content-type": "application/json", cookie } })).json()) as { provider: { id: string } }).provider;
+    const put = await app.request(`/connections/providers/${created.id}/models`, { method: "PUT", headers: { "content-type": "application/json", cookie }, body: JSON.stringify({ enabled: ["gpt-4o", "text-embedding-3-small", "not-a-real-model"] }) });
+    const p = ((await put.json()) as { provider: { enabledModels: string[] } }).provider;
+    expect(p.enabledModels).toEqual(["gpt-4o", "text-embedding-3-small"]); // enabled the embedding, dropped the unknown id
+  });
+
+  it("refresh-models re-fetches + reconciles, preserving prior enable choices (Story 2.4 AC4)", async () => {
+    const { app, cookie } = await appWithSession();
+    const created = ((await (await app.request("/connections/providers", { ...jsonPost({ provider: "openai", apiKey: "sk-abcd1234" }), headers: { "content-type": "application/json", cookie } })).json()) as { provider: { id: string } }).provider;
+    // Disable gpt-4o-mini (keep only gpt-4o).
+    await app.request(`/connections/providers/${created.id}/models`, { method: "PUT", headers: { "content-type": "application/json", cookie }, body: JSON.stringify({ enabled: ["gpt-4o"] }) });
+    // Refresh (re-enter key) — same fake catalog; the disabled choice must be preserved.
+    const res = await app.request(`/connections/providers/${created.id}/refresh-models`, { ...jsonPost({ apiKey: "sk-abcd1234" }), headers: { "content-type": "application/json", cookie } });
+    const p = ((await res.json()) as { provider: { status: string; enabledModels: string[] } }).provider;
+    expect(p.status).toBe("connected");
+    expect(p.enabledModels).toEqual(["gpt-4o"]); // gpt-4o-mini stays disabled across the refresh
+  });
+
+  it("refresh-models requires the key (400) and 404s an unknown provider", async () => {
+    const { app, cookie } = await appWithSession();
+    const created = ((await (await app.request("/connections/providers", { ...jsonPost({ provider: "openai", apiKey: "sk-abcd1234" }), headers: { "content-type": "application/json", cookie } })).json()) as { provider: { id: string } }).provider;
+    expect((await app.request(`/connections/providers/${created.id}/refresh-models`, { ...jsonPost({}), headers: { "content-type": "application/json", cookie } })).status).toBe(400);
+    expect((await app.request("/connections/providers/nope/refresh-models", { ...jsonPost({ apiKey: "k" }), headers: { "content-type": "application/json", cookie } })).status).toBe(404);
+  });
+
   it("removes a provider (unregisters LiteLLM models)", async () => {
     const { app, cookie, gateway } = await appWithSession();
     const created = (await (await app.request("/connections/providers", { ...jsonPost({ provider: "anthropic", apiKey: "sk-a-4321" }), headers: { "content-type": "application/json", cookie } })).json()) as { provider: { id: string } };

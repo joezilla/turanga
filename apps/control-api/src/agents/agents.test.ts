@@ -38,7 +38,7 @@ async function appWithSession(opts: { connectionsRepo?: ConnectionsRepo } = {}) 
 // provider-connected half of the Activate gate).
 async function connectedProviders(): Promise<ConnectionsRepo> {
   const repo = memoryConnectionsRepo();
-  await repo.createProvider({ id: ulid(2), provider: "openai", name: "OpenAI", baseUrl: null, keyLast4: "abcd", status: "connected", lastError: null, models: ["gpt-4o"], litellmModelIds: ["m1"] });
+  await repo.createProvider({ id: ulid(2), provider: "openai", name: "OpenAI", baseUrl: null, keyLast4: "abcd", status: "connected", lastError: null, models: ["gpt-4o"], enabledModels: ["gpt-4o"], litellmModelIds: ["m1"] });
   return repo;
 }
 // Fully configure an agent (model + both caps) via the general PATCH.
@@ -403,5 +403,34 @@ describe("activate / deactivate lifecycle (Story 5.1)", () => {
     const { app, cookie } = await appWithSession({ connectionsRepo: await connectedProviders() });
     expect((await app.request("/agents/nope/activate", post(cookie))).status).toBe(404);
     expect((await app.request("/agents/nope/deactivate", post(cookie))).status).toBe(404);
+  });
+});
+
+describe("agent model validation against enabled models (Story 2.4)", () => {
+  it("accepts an enabled model of a connected provider; rejects a non-enabled one (400)", async () => {
+    const { app, cookie } = await appWithSession({ connectionsRepo: await connectedProviders() }); // openai connected, enabled: ["gpt-4o"]
+    const agent = await createAgent(app, cookie);
+    const ok = await app.request(`/agents/${agent.id}`, { ...jsonPatch({ model: "openai/gpt-4o" }), headers: { "content-type": "application/json", cookie } });
+    expect(ok.status).toBe(200);
+    expect(((await ok.json()) as { agent: { model: string } }).agent.model).toBe("openai/gpt-4o");
+    // gpt-4o-mini exists in the provider's catalog conceptually but is NOT enabled here → rejected.
+    const bad = await app.request(`/agents/${agent.id}`, { ...jsonPatch({ model: "openai/gpt-4o-mini" }), headers: { "content-type": "application/json", cookie } });
+    expect(bad.status).toBe(400);
+    expect(((await bad.json()) as { error: string }).error).toMatch(/enabled model of the connected provider/i);
+  });
+
+  it("allows a model whose provider kind isn't connected (set-now, connect-later)", async () => {
+    const { app, cookie } = await appWithSession({ connectionsRepo: await connectedProviders() }); // only openai connected
+    const agent = await createAgent(app, cookie);
+    const res = await app.request(`/agents/${agent.id}`, { ...jsonPatch({ model: "anthropic/claude-sonnet-4" }), headers: { "content-type": "application/json", cookie } });
+    expect(res.status).toBe(200); // anthropic not connected → lenient; activation gate (5.1) catches it at go-live
+    // Clearing to null always allowed.
+    expect((await app.request(`/agents/${agent.id}`, { ...jsonPatch({ model: null }), headers: { "content-type": "application/json", cookie } })).status).toBe(200);
+  });
+
+  it("no connected providers → any model string is accepted (lenient, unchanged behavior)", async () => {
+    const { app, cookie } = await appWithSession(); // no connected providers
+    const agent = await createAgent(app, cookie);
+    expect((await app.request(`/agents/${agent.id}`, { ...jsonPatch({ model: "openai/gpt-4o" }), headers: { "content-type": "application/json", cookie } })).status).toBe(200);
   });
 });

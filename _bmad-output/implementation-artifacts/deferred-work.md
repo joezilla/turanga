@@ -1,5 +1,10 @@
 # Deferred Work
 
+## Deferred from: Story 2.4 (discover + curate provider models) (2026-08-03)
+- The enabled-model set is a UI + set-time-validation filter, NOT LiteLLM-enforced. openai/anthropic stay wildcard (`openai/*`), so a disabled model would still resolve at the LiteLLM layer if an agent somehow referenced it (the PATCH validation + the dropdown prevent that). True enforcement = register discrete enabled models instead of wildcards and re-register on toggle. Revisit if per-model enforcement (or per-model pricing/routing) is needed.
+- `PATCH /agents` model validation is kind-scoped: it enforces enabled-membership only when the model's provider KIND is connected (a model for an unconnected kind is allowed — set-now-connect-later; the 5.1 activation gate catches it at go-live). If a stricter "must always be a known enabled model" is ever wanted, it needs the e2e/test setup to connect a provider first.
+- The connected-provider model UI (toggles, dropdown population, Refresh) has no deterministic e2e — a real provider connection needs a real API key (gated/manual, like the run happy-path + OAuth). Coverage is unit-based. A stubbed provider `/v1/models` server in the e2e stack would let this be exercised end-to-end.
+
 ## Deferred from: code review of 5-3-run-history-observability (2026-08-03)
 - Memory vs drizzle `list`/`listSummary` ordering parity: drizzle sorts by `desc(createdAt), desc(id)` while the memory repo returns insertion order (`unshift`, no createdAt sort) — they agree only while `createdAt` is monotonic with insertion. Pre-existing (inherited from `list`); the 5.3 tests use monotonic timestamps. Make the memory repo sort by createdAt to truly match if it ever matters for a test.
 - `GET /runs` with no `agentId` returns up to 100 summaries across ALL agents to any authenticated session. Pre-existing; the web always scopes by agentId. Folds into the deferred multi-tenancy / run-ownership work (see the `GET /runs` ownership item above) — close them together.

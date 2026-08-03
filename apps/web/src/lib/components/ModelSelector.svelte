@@ -14,11 +14,12 @@
     { kind: "openai-compatible", label: "OpenAI-compatible" },
   ];
 
-  // Per known kind: the unique models available from *connected* providers of that kind.
+  // Per known kind: the unique ENABLED models from *connected* providers of that kind (Story 2.4 —
+  // curated in Settings; disabled models never appear here).
   const groups = $derived(
     KINDS.map(({ kind, label }) => {
       const connected = providers.filter((p) => p.provider === kind && p.status === "connected");
-      const models = [...new Set(connected.flatMap((p) => p.models))];
+      const models = [...new Set(connected.flatMap((p) => p.enabledModels))];
       return { kind, label, connected: connected.length > 0 && models.length > 0, models };
     }),
   );

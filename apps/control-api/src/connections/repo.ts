@@ -12,7 +12,8 @@ export interface ProviderRow {
   keyLast4: string | null;
   status: ProviderStatus;
   lastError: string | null;
-  models: string[];
+  models: string[]; // the provider's available catalog (Story 2.4)
+  enabledModels: string[]; // the curated subset selectable in the agent picker (Story 2.4)
   litellmModelIds: string[];
 }
 
@@ -22,6 +23,8 @@ export interface ConnectionsRepo {
   createProvider(row: ProviderRow): Promise<void>;
   setStatus(id: string, status: ProviderStatus, lastError: string | null, keyLast4?: string | null): Promise<void>;
   setModelIds(id: string, ids: string[]): Promise<void>;
+  setModels(id: string, models: string[], enabledModels: string[]): Promise<void>; // Story 2.4 — refresh the catalog + reconciled enabled set
+  setEnabled(id: string, enabledModels: string[]): Promise<void>; // Story 2.4 — toggle which models are selectable
   deleteProvider(id: string): Promise<void>;
 }
 
@@ -37,6 +40,7 @@ function toRow(r: typeof connections.$inferSelect): ProviderRow {
     status: r.status as ProviderStatus,
     lastError: r.lastError,
     models: r.models ?? [],
+    enabledModels: r.enabledModels ?? [],
     litellmModelIds: r.litellmModelIds ?? [],
   };
 }
@@ -62,6 +66,7 @@ export function drizzleConnectionsRepo(db: Db): ConnectionsRepo {
         status: row.status,
         lastError: row.lastError,
         models: row.models,
+        enabledModels: row.enabledModels,
         litellmModelIds: row.litellmModelIds,
       });
     },
@@ -73,6 +78,12 @@ export function drizzleConnectionsRepo(db: Db): ConnectionsRepo {
     },
     async setModelIds(id, ids) {
       await db.update(connections).set({ litellmModelIds: ids }).where(eq(connections.id, id));
+    },
+    async setModels(id, models, enabledModels) {
+      await db.update(connections).set({ models, enabledModels }).where(eq(connections.id, id));
+    },
+    async setEnabled(id, enabledModels) {
+      await db.update(connections).set({ enabledModels }).where(eq(connections.id, id));
     },
     async deleteProvider(id) {
       await db.delete(connections).where(eq(connections.id, id));
@@ -99,6 +110,14 @@ export function memoryConnectionsRepo(): ConnectionsRepo {
     async setModelIds(id, ids) {
       const r = rows.get(id);
       if (r) rows.set(id, { ...r, litellmModelIds: ids });
+    },
+    async setModels(id, models, enabledModels) {
+      const r = rows.get(id);
+      if (r) rows.set(id, { ...r, models, enabledModels });
+    },
+    async setEnabled(id, enabledModels) {
+      const r = rows.get(id);
+      if (r) rows.set(id, { ...r, enabledModels });
     },
     async deleteProvider(id) {
       rows.delete(id);

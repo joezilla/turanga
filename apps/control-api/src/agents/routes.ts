@@ -146,7 +146,20 @@ export function agentRoutes(repo: AgentsRepo, connectionsRepo: ConnectionsRepo) 
       if (body.model === null) {
         patch.model = null;
       } else if (typeof body.model === "string" && body.model.trim()) {
-        patch.model = body.model.trim().slice(0, MAX_MODEL_LEN);
+        const model = body.model.trim().slice(0, MAX_MODEL_LEN);
+        // Story 2.4: if the model's provider KIND is connected, the model id must be one of its ENABLED
+        // models. A model for a not-yet-connected kind is allowed (set-now-connect-later); the
+        // activation gate (5.1) blocks going Active without a connected provider, so nothing runs on an
+        // unenabled model.
+        const prefix = model.split("/")[0];
+        const modelId = model.slice(prefix.length + 1);
+        const connectedOfKind = (await connectionsRepo.listProviders()).filter(
+          (p) => p.status === "connected" && (p.provider === prefix || p.name === prefix),
+        );
+        if (connectedOfKind.length > 0 && !connectedOfKind.some((p) => p.enabledModels.includes(modelId))) {
+          return c.json({ error: "That model isn't an enabled model of the connected provider." }, 400);
+        }
+        patch.model = model;
       } else {
         return c.json({ error: "Model must be a provider/model-id string, or null to clear it." }, 400);
       }
