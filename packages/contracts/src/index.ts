@@ -3,11 +3,13 @@
 // they harden in Epic 4. The `v` field is the contract version — bump on any change.
 import { z } from "zod";
 
+// v5 (Story 6.1): tools — a logical JobTool handle on the job spec + the harness↔Guard tool-invoke
+// protocol (ToolCallRequest/Response). No endpoint/credential in either (AD-10).
 // v4 (Story 4.5): metrics cost is real (micro-USD `costMicros`); the Guard→orchestrator event
 // channel (metrics + kill) is defined here (E4-AD-10, out-of-band control-plane).
 // v3 (Story 4.4): provider-agnostic connection ops (read | label | send), refusal `kind`, skill policy.
 // v2 (Story 4.3): connection-read entries + logical connection handles.
-export const CONTRACT_VERSION = 4 as const;
+export const CONTRACT_VERSION = 5 as const;
 
 /** A logical connection handle the agent is configured to use. NO token, URL, or destination —
  *  the Guard holds the credential + allowlist per-run (AD-10); the sandbox names only the handle. */
@@ -16,6 +18,15 @@ export const JobConnectionSchema = z.object({
   provider: z.literal("gmail"),
 });
 export type JobConnection = z.infer<typeof JobConnectionSchema>;
+
+/** A logical tool handle the agent may invoke (Story 6.1). Names the tool + the operations granted —
+ *  NO endpoint URL, NO credential (AD-10); the Guard resolves the endpoint + holds the credential. */
+export const JobToolSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  operations: z.array(z.string()),
+});
+export type JobTool = z.infer<typeof JobToolSchema>;
 
 /** Immutable job spec injected into a sandbox at run start (AD-9). */
 export const JobSpecSchema = z.object({
@@ -28,6 +39,9 @@ export const JobSpecSchema = z.object({
   // Logical connection handles the harness may read from (no secret — AD-10). Default keeps older
   // construction that omits it valid.
   connections: z.array(JobConnectionSchema).default([]),
+  // Logical tool handles the harness may invoke (Story 6.1; no endpoint/secret — AD-10). Default
+  // keeps older specs valid.
+  tools: z.array(JobToolSchema).default([]),
   // Runtime data ingress is proxy-mediated (AD-9); the spec carries only the task input.
   taskInput: z.string(),
 });
@@ -99,6 +113,34 @@ export const GuardConnectionResponseSchema = z.object({
   latencyMs: z.number().optional(),
 });
 export type GuardConnectionResponse = z.infer<typeof GuardConnectionResponseSchema>;
+
+/** The harness↔Guard tool-invoke protocol (Story 6.1; brokered in 6.4). The harness names the
+ *  LOGICAL tool + operation + arguments (maps to MCP `tools/call`) — never the endpoint URL or the
+ *  credential (AD-10). The Guard resolves the endpoint, injects the held bearer token, performs the
+ *  MCP call, and returns the result. */
+export const ToolCallRequestSchema = z.object({
+  v: z.literal(CONTRACT_VERSION),
+  runId: z.string(),
+  toolId: z.string(),
+  operation: z.string(),
+  arguments: z.record(z.string(), z.unknown()).optional(),
+});
+export type ToolCallRequest = z.infer<typeof ToolCallRequestSchema>;
+
+/** The Guard's response to a tool call. Maps to the MCP result: `content` blocks + `isError` (a
+ *  tool-EXECUTION error, distinct from a Guard `refusal`). On a Guard denial: `ok:false` + `refusal`
+ *  (`permission` for an ungranted op, `egress` for an off-allowlist/uncredentialed endpoint). No
+ *  credential ever crosses this boundary (AD-10). */
+export const ToolCallResponseSchema = z.object({
+  v: z.literal(CONTRACT_VERSION),
+  ok: z.boolean(),
+  content: z.array(z.unknown()).optional(), // MCP content blocks (text/image/resource/…)
+  isError: z.boolean().optional(), // MCP tool-execution error (inside a successful call — read this, not HTTP status)
+  error: z.string().optional(),
+  refusal: z.object({ kind: z.enum(["permission", "egress"]), detail: z.string() }).optional(),
+  latencyMs: z.number().optional(),
+});
+export type ToolCallResponse = z.infer<typeof ToolCallResponseSchema>;
 
 // ── Skill → connection-op permission policy (Story 4.4) ──────────────────────────────────────────
 // Provider-agnostic and Guard-enforced. This is the ONLY place the skill/scope/op relationship

@@ -17,6 +17,8 @@ import { agentRoutes } from "./agents/routes.js";
 import { memoryAgentsRepo, type AgentsRepo } from "./agents/repo.js";
 import { runRoutes } from "./runs/routes.js";
 import { memoryRunsRepo, type RunsRepo } from "./runs/repo.js";
+import { toolRoutes } from "./tools/routes.js";
+import { memoryToolsRepo, type ToolsRepo } from "./tools/repo.js";
 import { runOrchestrator, type RunOrchestrator } from "./runs/orchestrator.js";
 import { fakeSandboxRuntime } from "./runs/runtime.js";
 import { fakeRunGuard } from "./runs/guardClient.js";
@@ -34,6 +36,7 @@ export interface AppDeps {
   googleOAuth?: GoogleOAuth;
   agentsRepo?: AgentsRepo;
   runsRepo?: RunsRepo;
+  toolsRepo?: ToolsRepo; // Epic 6 (Story 6.1) — first-class tools
   runHub?: RunHub; // the live SSE relay; MUST be the same instance the orchestrator publishes to
   orchestrator?: RunOrchestrator; // defaults to a fake-runtime orchestrator (tests / no-Docker boot)
   guardCallbackToken?: string; // authenticates the Guard→orchestrator callback (Story 4.5)
@@ -61,6 +64,8 @@ export function createApp(deps: AppDeps = {}) {
   app.use("/agents/*", requireSession(authRepo));
   app.use("/runs", requireSession(authRepo));
   app.use("/runs/*", requireSession(authRepo));
+  app.use("/tools", requireSession(authRepo));
+  app.use("/tools/*", requireSession(authRepo));
   const agentsRepo = deps.agentsRepo ?? memoryAgentsRepo();
   const connectionsRepo = deps.connectionsRepo ?? memoryConnectionsRepo();
   const gateway = deps.modelGateway ?? fakeModelGateway();
@@ -71,6 +76,9 @@ export function createApp(deps: AppDeps = {}) {
   app.route("/", dataConnectionRoutes(dataConnectionsRepo, google, webOrigin));
 
   app.route("/", agentRoutes(agentsRepo, connectionsRepo)); // connectionsRepo → the Activate provider-connected gate (5.1)
+
+  const toolsRepo = deps.toolsRepo ?? memoryToolsRepo();
+  app.route("/", toolRoutes(toolsRepo)); // Epic 6 — manage first-class tools
 
   const runsRepo = deps.runsRepo ?? memoryRunsRepo();
   // The hub is the live SSE relay; the orchestrator and the routes MUST share one instance.

@@ -1,8 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { JobSpecSchema, ControlChannelMessageSchema, GuardConnectionRequestSchema, GuardConnectionResponseSchema, GuardRunEventSchema, authorizes, SKILL_OPS, OP_REQUIREMENTS, CONTRACT_VERSION } from "./index.js";
+import { JobSpecSchema, JobToolSchema, ToolCallRequestSchema, ToolCallResponseSchema, ControlChannelMessageSchema, GuardConnectionRequestSchema, GuardConnectionResponseSchema, GuardRunEventSchema, authorizes, SKILL_OPS, OP_REQUIREMENTS, CONTRACT_VERSION } from "./index.js";
 
 describe("contracts", () => {
-  it("job spec round-trips (with logical connection handles)", () => {
+  it("contract version is 5 (Story 6.1 — tools)", () => {
+    expect(CONTRACT_VERSION).toBe(5);
+  });
+
+  it("job spec round-trips (with logical connection + tool handles)", () => {
     const spec = {
       v: CONTRACT_VERSION,
       runId: "r1",
@@ -11,14 +15,37 @@ describe("contracts", () => {
       instructions: "hi",
       skills: ["read-search"],
       connections: [{ id: "gmail", provider: "gmail" as const }],
+      tools: [{ id: "t1", name: "weather", operations: ["get_weather"] }],
       taskInput: "go",
     };
     expect(JobSpecSchema.parse(spec)).toEqual(spec);
   });
 
-  it("defaults connections to [] when omitted (older construction stays valid)", () => {
+  it("defaults connections + tools to [] when omitted (older construction stays valid)", () => {
     const spec = { v: CONTRACT_VERSION, runId: "r1", agentId: "a1", model: "m", instructions: "", skills: [], taskInput: "" };
-    expect(JobSpecSchema.parse(spec).connections).toEqual([]);
+    const parsed = JobSpecSchema.parse(spec);
+    expect(parsed.connections).toEqual([]);
+    expect(parsed.tools).toEqual([]);
+  });
+
+  it("JobTool: a logical handle carries only id/name/operations — no endpoint URL or credential (AD-10)", () => {
+    const t = JobToolSchema.parse({ id: "t1", name: "weather", operations: ["get_weather"] });
+    expect(Object.keys(t).sort()).toEqual(["id", "name", "operations"]);
+    // extra endpoint/secret keys are stripped by the schema (never reach the sandbox)
+    const stripped = JobToolSchema.parse({ id: "t1", name: "w", operations: [], url: "https://x", token: "secret" } as unknown as { id: string; name: string; operations: string[] });
+    expect(JSON.stringify(stripped)).not.toContain("secret");
+    expect(JSON.stringify(stripped)).not.toContain("https://x");
+  });
+
+  it("tool call request/response round-trip (maps to MCP tools/call; refusal + isError distinct)", () => {
+    const req = ToolCallRequestSchema.parse({ v: CONTRACT_VERSION, runId: "r1", toolId: "t1", operation: "get_weather", arguments: { location: "NYC" } });
+    expect(req.operation).toBe("get_weather");
+    // a successful call with a tool-execution error (MCP isError inside a 200)
+    const ok = ToolCallResponseSchema.parse({ v: CONTRACT_VERSION, ok: true, content: [{ type: "text", text: "boom" }], isError: true });
+    expect(ok.isError).toBe(true);
+    // a Guard denial is a refusal (distinct from isError)
+    const refused = ToolCallResponseSchema.parse({ v: CONTRACT_VERSION, ok: false, refusal: { kind: "permission", detail: "operation not granted" } });
+    expect(refused.refusal?.kind).toBe("permission");
   });
 
   it("rejects a wrong contract version", () => {

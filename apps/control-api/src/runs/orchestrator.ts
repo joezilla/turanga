@@ -144,7 +144,7 @@ export function runOrchestrator(deps: OrchestratorDeps) {
       // The job spec carries only LOGICAL handles + skill IDs — the minted access token, the cost key,
       // AND the authoritative scope/send grants live in `provision` and go to the Guard over the admin
       // API, NEVER into the sandbox (AD-10).
-      const jobSpec: JobSpec = { v: CONTRACT_VERSION, runId, agentId, model: agent.model, instructions: agent.instructions, skills: jobSkills, connections: jobConnections, taskInput };
+      const jobSpec: JobSpec = { v: CONTRACT_VERSION, runId, agentId, model: agent.model, instructions: agent.instructions, skills: jobSkills, connections: jobConnections, tools: [], taskInput }; // tools: agent tool grants land in 6.3
       const row: RunRow = { id: runId, agentId, status: "created", taskInput, transcript: [], reason: null, costMicros: 0, createdAt: now, endedAt: null };
       await runsRepo.create(row);
       hub.open(runId); // hub state exists before start() hands the run back — the SSE subscriber won't miss the opening

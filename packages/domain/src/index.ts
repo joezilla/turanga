@@ -74,6 +74,38 @@ export interface Connection {
   destinations: string[]; // declared allowlist destinations
 }
 
+/** A tool an agent can invoke at runtime — an MCP server, either a remote endpoint or a
+ *  self-deployed container (Epic 6). The endpoint type is an ADAPTER behind one contract; the common
+ *  core is here. Endpoint-specific config (remote url/credential, container image/manifest) is added
+ *  by later stories (6.2 / Epic 7). */
+export type ToolEndpointType = "remote" | "container";
+export type ToolStatus = "unverified" | "connected" | "error";
+
+/** A discovered MCP tool descriptor (from `tools/list`) — an operation a tool exposes. Populated by
+ *  discovery (Story 6.2); the type is defined here. */
+export interface ToolOperation {
+  name: string;
+  title?: string;
+  description?: string;
+  inputSchema?: unknown; // JSON Schema (MCP defaults to 2020-12)
+}
+
+export interface Tool {
+  id: Ulid;
+  name: string;
+  endpoint: ToolEndpointType;
+  status: ToolStatus;
+  operations: ToolOperation[];
+  createdAt: string; // UTC ISO-8601
+}
+
+/** A tool attached to an agent with the operations it may call (Story 6.3) — the AttachedSkill
+ *  analogue; default-deny (an empty `operations` grants nothing). */
+export interface AttachedTool {
+  toolId: Ulid;
+  operations: string[]; // granted operation names
+}
+
 export interface Run {
   id: Ulid;
   agentId: Ulid;

@@ -66,6 +66,18 @@ test("openai-compatible connect discovers models instead of manual typing (Story
   await expect(discover).toBeEnabled();
 });
 
+test("Settings → Tools shows the tools management surface + empty state (Story 6.1)", async ({ page }) => {
+  await signIn(page);
+  await page.goto("/settings");
+  // The Tools tab is in the Settings sub-nav.
+  await page.getByRole("link", { name: "Tools", exact: true }).click();
+  await expect(page).toHaveURL(/\/settings\/tools$/);
+  await expect(page.getByRole("heading", { name: "Tools" })).toBeVisible();
+  // Empty state + the "Add a tool" affordance (disabled — connecting tools ships in 6.2).
+  await expect(page.getByText("No tools yet.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Add a tool" })).toBeDisabled();
+});
+
 test("Data connections shows the not-configured state when no Google client is set", async ({ page }) => {
   await signIn(page);
   await page.goto("/settings/connections");

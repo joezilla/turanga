@@ -18,7 +18,7 @@ const errFetch = (async () =>
 describe("guard model proxy", () => {
   it("maps a model request to a LiteLLM call and returns the completion", async () => {
     const guard = createGuard({ socketDir: "/tmp", litellmBaseUrl: "http://litellm:4000", litellmMasterKey: "sk", fetchImpl: okFetch });
-    const res = await guard.proxyModel("01ARZ3NDEKTSV4RRFFQ69G5FAV", { v: 4, runId: "r", model: "openai/gpt-4o", messages: [{ role: "user", content: "hi" }] });
+    const res = await guard.proxyModel("01ARZ3NDEKTSV4RRFFQ69G5FAV", { v: 5, runId: "r", model: "openai/gpt-4o", messages: [{ role: "user", content: "hi" }] });
     expect(res.ok).toBe(true);
     expect(res.text).toBe("hello from the model");
     expect(res.tokens).toBe(12);
@@ -26,7 +26,7 @@ describe("guard model proxy", () => {
 
   it("surfaces a provider error (no fallback)", async () => {
     const guard = createGuard({ socketDir: "/tmp", litellmBaseUrl: "http://litellm:4000", litellmMasterKey: "sk", fetchImpl: errFetch });
-    const res = await guard.proxyModel("01ARZ3NDEKTSV4RRFFQ69G5FAV", { v: 4, runId: "r", model: "openai/gpt-4o", messages: [{ role: "user", content: "hi" }] });
+    const res = await guard.proxyModel("01ARZ3NDEKTSV4RRFFQ69G5FAV", { v: 5, runId: "r", model: "openai/gpt-4o", messages: [{ role: "user", content: "hi" }] });
     expect(res.ok).toBe(false);
     expect(res.error).toMatch(/401/);
   });
@@ -49,7 +49,7 @@ describe("guard per-run socket lifecycle", () => {
     expect(guard.activeRuns()).toEqual([RUN]);
 
     // A harness-style HTTP-over-UDS call resolves through the socket.
-    const body = JSON.stringify({ v: 4, runId: RUN, model: "m", messages: [{ role: "user", content: "hi" }] });
+    const body = JSON.stringify({ v: 5, runId: RUN, model: "m", messages: [{ role: "user", content: "hi" }] });
     const out = await new Promise<GuardModelResponse>((resolve) => {
       const req = http.request({ socketPath, path: "/", method: "POST", headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body) } }, (res) => {
         let raw = "";
@@ -70,7 +70,7 @@ describe("guard per-run socket lifecycle", () => {
 
 const gmailConn: ProvisionConnection = { connectionId: "gmail", provider: "gmail", destinations: ["gmail.googleapis.com", "oauth2.googleapis.com"], accessToken: "tok-secret-123" };
 const FULL_GRANT: SkillGrant[] = [{ scope: "read-write", send: true }]; // authorizes any op — used to reach the egress stage
-const readReq = { v: 4 as const, runId: RUN, connectionId: "gmail", op: "read" as const, params: { maxResults: 5 } };
+const readReq = { v: 5 as const, runId: RUN, connectionId: "gmail", op: "read" as const, params: { maxResults: 5 } };
 
 // A fetch spy that captures the outbound request and returns a Gmail-style message list.
 function captureGmailFetch() {
@@ -157,7 +157,7 @@ describe("guard skill-permission enforcement (4.4, permission-first)", () => {
     await guard.register(RUN, { connections, grants });
     return { guard, cleanup: async () => { await guard.teardown(RUN); fs.rmSync(dir, { recursive: true, force: true }); } };
   }
-  const op = (o: "read" | "label" | "send") => ({ v: 4 as const, runId: RUN, connectionId: "gmail", op: o });
+  const op = (o: "read" | "label" | "send") => ({ v: 5 as const, runId: RUN, connectionId: "gmail", op: o });
 
   it("refuses an out-of-scope op with kind=permission BEFORE any credential is consulted (AC2)", async () => {
     const { impl, calls } = captureGmailFetch();
@@ -253,7 +253,7 @@ describe("guard filter hook seam (4.6)", () => {
 });
 
 describe("guard cost metering + kill-on-breach (4.5)", () => {
-  const modelReq = { v: 4 as const, runId: RUN, model: "openai/gpt-4o", messages: [{ role: "user" as const, content: "hi" }] };
+  const modelReq = { v: 5 as const, runId: RUN, model: "openai/gpt-4o", messages: [{ role: "user" as const, content: "hi" }] };
 
   function costFetch(status: number, message?: string, cost = "0.0041") {
     const calls: { auth: string | undefined }[] = [];

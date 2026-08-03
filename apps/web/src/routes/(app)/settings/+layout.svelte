@@ -4,6 +4,7 @@
   const items = [
     { href: "/settings/providers", label: "Model providers" },
     { href: "/settings/connections", label: "Data connections" },
+    { href: "/settings/tools", label: "Tools" },
     { href: "/settings/profile", label: "Profile" },
   ];
 </script>

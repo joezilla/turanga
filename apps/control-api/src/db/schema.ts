@@ -82,3 +82,17 @@ export const runs = pgTable("runs", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   endedAt: timestamp("ended_at", { withTimezone: true }),
 });
+
+// Tools (Epic 6, Story 6.1). A first-class MCP tool an agent can invoke. Dedicated table (like
+// data_connections). control-api is the only writer (AD-7). The endpoint TYPE is an adapter (remote
+// now, container in Epic 7); endpoint-specific config (remote url/credential, container image) is
+// added by later stories. Any credential lives Guard-side, NEVER here (AD-10).
+export const tools = pgTable("tools", {
+  id: text("id").primaryKey(), // ULID
+  name: text("name").notNull(),
+  endpoint: text("endpoint").notNull(), // 'remote' | 'container' (ToolEndpointType)
+  status: text("status").notNull(), // 'unverified' | 'connected' | 'error' (ToolStatus)
+  lastError: text("last_error"),
+  operations: jsonb("operations").$type<{ name: string; title?: string; description?: string; inputSchema?: unknown }[]>().notNull().default([]), // discovered MCP tools/list (Story 6.2 populates)
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});

@@ -12,6 +12,7 @@ import { drizzleDataConnectionsRepo } from "./connections/dataRepo.js";
 import { googleOAuth } from "./oauth/google.js";
 import { drizzleAgentsRepo } from "./agents/repo.js";
 import { drizzleRunsRepo } from "./runs/repo.js";
+import { drizzleToolsRepo } from "./tools/repo.js";
 import { runOrchestrator } from "./runs/orchestrator.js";
 import { dockerRuntime, resolveSandboxRuntimeKind } from "./runs/runtime.js";
 import { httpRunGuard } from "./runs/guardClient.js";
@@ -59,6 +60,7 @@ async function main() {
   const dataConnectionsRepo = drizzleDataConnectionsRepo(db);
   const google = googleOAuth();
   const agentsRepo = drizzleAgentsRepo(db);
+  const toolsRepo = drizzleToolsRepo(db); // Epic 6 — first-class tools
 
   // Run-orchestrator wiring (Epic 4). Runtime kind is explicit (fail-closed; dev-insecure refused
   // in production). The Docker socket is available only here (control plane), never a sandbox.
@@ -96,6 +98,7 @@ async function main() {
     googleOAuth: google,
     agentsRepo,
     runsRepo,
+    toolsRepo,
     runHub,
     orchestrator,
     guardCallbackToken,

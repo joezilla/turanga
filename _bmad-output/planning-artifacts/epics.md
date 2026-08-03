@@ -137,6 +137,12 @@ The builder can Test an agent and watch it run inside an isolated sandbox — re
 The builder can deliberately Activate an agent (gated on model + both caps), operate it in production with caps and guard holding, and see live status + spend across all agents — the exhale test.
 **FRs covered:** FR-5, FR-6 (Active), FR-11/FR-12 (production enforcement), FR-15 (live status/meter) (UX-DR24; AD-8)
 
+### Epic 6: Tools — the agent↔tool contract + remote MCP
+Agents gain **tools**: capabilities they invoke at runtime beyond the model. Establishes the agent↔tool contract (MCP over streamable HTTP, brokered by the Guard), the permission model (attach + per-operation grant, mirroring Skills), tool discovery, credential custody (Guard-held — the agent never holds a tool's URL or key), and invocation observability — proven end-to-end with the cheap endpoint type, **remote MCP** (URL + credential). The Guard gains its server-side agent→tool broker; endpoint type is an adapter (remote now, container in Epic 7). *(Post-MVP; captured 2026-08-03. AD-5, AD-7, AD-10, E4-AD-10.)*
+
+### Epic 7: Self-deployed tool containers
+The builder can deploy their **own** trusted tool containers into turanga and have them registered as tools once they satisfy a packaging contract. Inherits Epic 6's contract wholesale; adds the container packaging contract (MCP-HTTP + `/health` + manifest), UI deploy with **legible per-clause contract verification**, the tool as a long-lived (one-per-operator) guard-fronted node with its **own** Guard-mediated egress (a tool can have its own connections), and the Guard's client-side tool→world broker. Containers are trusted (operator-authored, trusted SDLC); "untrust it" (gVisor, input screening) is a later flag. *(Post-MVP; captured 2026-08-03. AD-1, AD-5, AD-10.)*
+
 > **Cross-cutting UX conventions** (applied as ACs across all UI stories, not standalone): UX-DR14 interaction primitives, UX-DR15 accessibility floor, UX-DR16 voice/microcopy, UX-DR19 Lucide icons. Established as project conventions in Story 1.2 and re-asserted per surface.
 
 ## Epic 1: Foundation & Access
@@ -572,3 +578,141 @@ So that I can always answer "what happened."
 **Given** a killed or failed run
 **When** reviewed
 **Then** the outcome and cause (cap breach, blocked egress, error) are legible.
+
+---
+
+## Epic 6: Tools — the agent↔tool contract + remote MCP
+
+Agents gain **tools** — capabilities they invoke at runtime beyond talking to the model (query a DB, hit a company API, run a calculation). This epic defines the *contract* that every tool honors and proves it with the cheap endpoint type (remote MCP), so Epic 7 inherits the spine wholesale.
+
+**The keystone (party-mode brainstorm, 2026-08-03):** the *contract between the agent and the tool* is the common denominator. Remote MCP and containerized MCP are just two **endpoint types** behind one brokered path — a `Tool` is `{ endpoint: remote | container }`; the agent talks to it identically either way.
+
+### Architecture & scope decisions (binding constraints)
+- **Contract = MCP over streamable HTTP, brokered by the Guard.** The harness issues a *logical* tool call; the Guard resolves the endpoint, attaches the held credential, forwards over its own TLS, records the call, returns. The agent never learns the URL or holds the key (AD-10). This reuses AD-5(a) — the credentialed-connection gateway — as the transport.
+- **Endpoint type is an adapter.** Epic 6 ships `remote` (an external MCP server: URL + credential). Epic 7 adds `container`. Same brokered path; different resolver.
+- **Guard, server-side half only, this epic.** The agent→tool direction. The tool→world direction (a tool that itself calls out) is Epic 7 — build the two halves separately, don't build the broker twice.
+- **Permission model mirrors Skills (FR-3).** Attach a tool to an agent, then **grant per operation**; the Guard enforces the grant at runtime, exactly like skill scopes. Discovery: `list-tools` handshake at attach-time (through the Guard) so the builder sees what they're granting.
+- **Observability, not metering.** Every tool call is **recorded on the Run** — count, latency, outcome, refusal (extends E4-AD-10's Guard→orchestrator event ledger). **No cost-cap, no kill-on-breach** for tool calls in v1; the ledger is the hook if enforcement is wanted later.
+- **AD-7:** control-api is the sole writer of Tool state.
+
+### Story 6.1: Model tools and a Tools management surface
+
+As the builder,
+I want turanga to treat a Tool as a first-class thing I manage in one place,
+So that a tool's identity is stable and endpoint-type-agnostic before anything invokes it.
+
+**Acceptance Criteria:**
+
+**Given** the contracts package
+**When** the agent↔tool contract is defined
+**Then** a tool invocation is a **versioned control-plane message** (a logical invoke request + result) carrying **no endpoint URL and no credential** — AD-9, AD-10.
+
+**Given** a Tool entity
+**When** it is created, renamed, or removed
+**Then** `control-api` is its **sole writer** (AD-7); it records an `endpoint` type (`remote` | `container`) so the type is an adapter, not a fork; IDs/timestamps follow project conventions (ULID, UTC).
+
+**Given** the Tools page
+**When** it is viewed
+**Then** it lists every tool with its type + status (dot + word, never colour-only), with an empty state and an "Add a tool" action — FR-15-style management, NFR-6.
+
+### Story 6.2: Connect a remote MCP tool
+
+As the builder,
+I want to connect an external MCP server by URL and credential and see what it offers,
+So that I can grant its operations to agents without ever exposing the credential to an agent.
+
+**Acceptance Criteria:**
+
+**Given** the "Add a tool → Remote" flow
+**When** I enter a URL + credential and connect
+**Then** the credential is **held Guard-side** (never stored where an agent can reach it, AD-10); the connection is verified; failure shows a stated cause; the stored credential is masked — mirrors FR-13.
+
+**Given** a connected remote tool
+**When** the connection is established
+**Then** turanga performs a **`list-tools` handshake through the Guard** and surfaces the operations the server offers (so the builder sees exactly what they can grant).
+
+### Story 6.3: Attach tools to an agent with per-operation grants
+
+As the builder,
+I want to attach a tool to an agent and grant only specific operations,
+So that an agent can use a tool with least privilege, enforced — not on trust.
+
+**Acceptance Criteria:**
+
+**Given** the agent-definition surface
+**When** the **Tools** section (next to Skills) is used
+**Then** I can attach a connected tool and **grant per operation**; the default is most-restrictive (deny), mirroring Skills/permission scopes — FR-3.
+
+**Given** an agent with granted tool operations
+**When** its definition is saved
+**Then** the grants persist server-side (AD-7) and are the authoritative set the Guard will enforce at runtime (the agent-visible job spec carries the granted operation IDs, never the endpoint/credential — AD-10).
+
+### Story 6.4: Invoke a tool at runtime through the Guard
+
+As the builder,
+I want a running agent to call its granted tools through the Guard,
+So that every tool call goes through the one choke point — resolved, credentialed, and enforced — with no new hole in the sandbox.
+
+**Acceptance Criteria:**
+
+**Given** a sandboxed run whose agent has a granted remote tool
+**When** the harness issues a **logical** tool call
+**Then** the **Guard resolves the endpoint, attaches the held credential, forwards over its own TLS, and returns the result** — the sandbox's only outbound edge stays the Guard (AD-1, AD-5a); the agent never learns the URL or key (AD-10).
+
+**Given** a tool call for an operation the agent was **not** granted
+**When** it reaches the Guard
+**Then** it is **refused and recorded** on the Run (a permission refusal, like an out-of-scope skill) — fail-closed, NFR-2/NFR-4.
+
+**Given** the Guard→orchestrator event path (E4-AD-10)
+**When** a tool call completes
+**Then** it is merged into the Run as a recorded event (this epic builds only the **agent→tool** / server-side half of the broker; the tool→world half is Epic 7).
+
+### Story 6.5: Tool invocation observability
+
+As the builder,
+I want to see how my tools are being used,
+So that I can trust what's running and answer "what did it call, and what was blocked" — without cost surprises being the only signal.
+
+**Acceptance Criteria:**
+
+**Given** runs that invoked tools
+**When** a tool's activity is viewed
+**Then** each shows **invocation statistics** — count, latency, outcome, and any refusals — recorded per tool and on the Run (NFR-4).
+
+**Given** tool calls
+**When** they execute
+**Then** they are **observed only** — recorded, **not metered against the cost cap and not killed on breach** (decision 2026-08-03; the E4-AD-10 ledger is the hook if enforcement is wanted later).
+
+### Open questions (resolve at story time)
+- Exact MCP version/profile to target; how `list-tools` + `call-tool` map onto the versioned control-plane contract.
+- One egress-guard brokering tool calls for all runs vs. per-tool routing (leans: reuse the existing guard path).
+- Whether a remote MCP's *own* downstream egress is ever our concern (it isn't — it runs on their infra; only container tools bring egress into scope, Epic 7).
+
+---
+
+## Epic 7: Self-deployed tool containers
+
+The builder deploys their **own** tool containers into turanga; once a container satisfies a packaging contract, it registers as a tool and agents use it exactly like a remote one. This epic inherits Epic 6's agent↔tool contract wholesale and adds only the hard hosting parts.
+
+**Trust posture (decision):** containers are **trusted** — operator-authored, shipped through a trusted SDLC. The v1 threat model is **least-privilege / blast-radius + contract conformance**, *not* hostile-code containment. But the isolation is designed so "untrust this tool" (run it under gVisor, screen its inputs) is a **later flag**, not a redesign.
+
+### Architecture & scope decisions (binding constraints)
+- **A tool container is topologically another sandbox-like node.** Single edge out to a guard, `--network=none` otherwise, its own allowlist built from its own attached connections, and **no ambient secrets** — the guard injects them (AD-10 generalizes: "no secret in the sandbox" → "no secret in any untrusted node"). It never holds its own API keys.
+- **A tool can have its own connections; its egress is Guard-intercepted.** This is the Guard's **client-side** (tool→world) broker — the second half deferred from Epic 6. A tool that hits a company API/DB does so through the guard, against its manifest-declared allowlist.
+- **Lifecycle = long-lived, shared, one instance per operator** (like litellm, not like a per-run sandbox). Per-run ephemeral / stateful tools are **deferred**. The one lifecycle wrinkle vs. a run: a long-lived tool's held credentials are **refreshed**, not minted-and-reaped.
+- **The packaging contract** a container must satisfy: speaks **MCP over HTTP** on a declared port; exposes **`/health`**; ships a **manifest** declaring the tools it provides, the connections/egress it needs, resource caps, and a `stateful?` flag. Verification must report **pass/fail per clause, legibly** (Sally + Amelia: "which clause failed" is the hardest, most important part).
+- **AD-7 / AD-1 / AD-5** all hold: control-api sole writer of tool/container state; the tool plane is isolated; the guard is the choke point in both directions.
+
+### Provisional story sketch (NOT yet broken down — expect this to shift as Epic 6 teaches us)
+- The **container packaging contract** + manifest schema; a reference/example tool image.
+- **Deploy a tool** via UI (point at an image) → run **contract verification** (health + MCP handshake + manifest) → legible per-clause pass/fail.
+- The **tool plane**: bring up a trusted tool container as a long-lived, network-isolated, guard-fronted node (orchestrator via the Docker API, reusing Epic 4's sandbox machinery).
+- The Guard's **tool→world broker** (client-side): a tool's connections + Guard-mediated egress allowlist; no ambient secrets.
+- **Lifecycle** management via UI: health, version, start/stop, long-lived credential refresh.
+- (Deferred flags noted, not built: gVisor for tools; input screening; per-run/stateful tools; tool-call cost metering.)
+
+### Open questions (resolve at story time)
+- Image source/trust: registry pull vs. local build; how the operator points turanga at an image.
+- One guard instance brokering all tools vs. a guard edge per tool container.
+- Credential-refresh mechanics for long-lived held creds (OAuth refresh vs. static keys).
+- Whether "which contract clause failed" verification can be made deterministic/e2e-testable without a real image (likely gated/manual, like provider connect).
