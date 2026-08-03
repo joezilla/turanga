@@ -20,9 +20,14 @@ export interface Run {
   taskInput: string;
   transcript: RunMessage[];
   reason: string | null;
+  costMicros: number; // persisted run-cost summary in micro-USD (Story 4.5); shown in run history (5.3)
   createdAt: string;
   endedAt: string | null;
 }
+
+/** A run without its transcript — the run-history list row (Story 5.3). The review view fetches the
+ *  full Run (with transcript) via getRun. */
+export type RunSummary = Omit<Run, "transcript">;
 
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -76,6 +81,20 @@ export async function getAgentsCost(): Promise<Record<string, number>> {
     return body.costs ?? {};
   } catch {
     return {};
+  }
+}
+
+/** An agent's past runs, newest-first (run history, Story 5.3). Best-effort — a read failure returns
+ *  `[]` so the history never white-screens; the row summaries carry the outcome + cause + cost, and
+ *  the review view fetches the full run (transcript) via getRun. */
+export async function listRuns(agentId: string): Promise<RunSummary[]> {
+  try {
+    const r = await fetch(`${base}/runs?agentId=${encodeURIComponent(agentId)}`, { credentials: "include" });
+    if (!r.ok) return [];
+    const body = (await r.json()) as { runs?: RunSummary[] };
+    return Array.isArray(body.runs) ? body.runs : [];
+  } catch {
+    return [];
   }
 }
 

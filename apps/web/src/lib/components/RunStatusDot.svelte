@@ -5,16 +5,20 @@
   import { Circle } from "@lucide/svelte";
   import type { RunStatus } from "$lib/runs";
 
-  let { status }: { status: Exclude<RunStatus, "created"> } = $props();
+  // Accepts the full run lifecycle (the run-history list can show a `created` run that never ran —
+  // Story 5.3). `created` reads neutral/idle; the test pane only ever passes the non-created states.
+  let { status }: { status: RunStatus } = $props();
 
   const color = $derived(
-    status === "running"
-      ? "var(--state-running)"
-      : status === "succeeded"
-        ? "var(--state-succeeded)"
-        : status === "failed"
-          ? "var(--state-failed)"
-          : "var(--state-killed)",
+    status === "created"
+      ? "var(--state-idle)"
+      : status === "running"
+        ? "var(--state-running)"
+        : status === "succeeded"
+          ? "var(--state-succeeded)"
+          : status === "failed"
+            ? "var(--state-failed)"
+            : "var(--state-killed)",
   );
 </script>
 

@@ -410,3 +410,49 @@ test("agents list is live — a newly created agent appears without a manual rel
   //  gated/manual in dev, mirroring the run happy-path + 5.1 Activate. The meter markup + tone are
   //  unit-proven via meterTone; the batch spend read via sumTodayMicrosByAgent.)
 });
+
+test("run history: empty state, then a completed run is listed and reviewable with its outcome + transcript (5.3)", async ({ page }) => {
+  await signIn(page);
+  await page.getByRole("button", { name: "Create agent" }).first().click();
+  await page.locator("a.agent").first().click();
+  await expect(page).toHaveURL(/\/agents\/[0-9A-Z]{26}$/);
+  const agentUrl = page.url();
+  const agentId = agentUrl.split("/").pop();
+
+  // A fresh agent has no runs → the history is the empty state. [5.3 AC1]
+  await page.getByRole("link", { name: "Run history" }).click();
+  await expect(page).toHaveURL(/\/agents\/[0-9A-Z]{26}\/runs$/);
+  await expect(page.getByText("No runs yet.")).toBeVisible();
+
+  // Give it a model + caps and run a Test so a run persists (dev has no provider key → the run
+  // resolves failed, which is exactly a case AC2 wants legible).
+  const patch = await page.request.patch(`${CONTROL_API}/agents/${agentId}`, {
+    data: { model: "openai/gpt-4o", costCap: { perRun: { minor: 50, currency: "USD" }, perDay: { minor: 500, currency: "USD" } } },
+    headers: { "content-type": "application/json" },
+  });
+  expect(patch.ok()).toBeTruthy();
+  await page.goto(agentUrl);
+  await page.getByLabel("Task for this test run").fill("history-probe");
+  await page.getByRole("button", { name: "Run test" }).click();
+  await expect(page.locator(".transcript .run-status")).toContainText(/failed|succeeded/, { timeout: 20000 });
+
+  // Open Run history via the header link → the run is listed newest-first with its OUTCOME (dot +
+  // word), a mono cost, and the task. [5.3 AC1/AC2]
+  await page.getByRole("link", { name: "Run history" }).click();
+  await expect(page).toHaveURL(/\/agents\/[0-9A-Z]{26}\/runs$/);
+  const row = page.locator("a.run").first();
+  await expect(row).toBeVisible();
+  await expect(row.locator(".run-status")).toContainText(/failed|succeeded/); // outcome legible (AC2)
+  await expect(row.locator(".cost")).toContainText("$"); // cost, mono
+  await expect(row.locator(".task")).toContainText("history-probe");
+
+  // Open the review → the persisted run's outcome + task + transcript render. [5.3 AC1/AC2]
+  await row.click();
+  await expect(page).toHaveURL(/\/agents\/[0-9A-Z]{26}\/runs\/[0-9A-Z]{26}$/);
+  await expect(page.locator(".outcome .run-status")).toContainText(/failed|succeeded/); // outcome (AC2)
+  await expect(page.locator(".task-text")).toContainText("history-probe"); // what it was asked (AC1)
+  await expect(page.locator(".transcript")).toBeVisible(); // the transcript record (AC1)
+  // (A killed-by-cap-breach review needs real spend > cap — a real model call — so the cap-breach
+  //  cause string is unit-proven via the orchestrator killReason + listSummary carrying `reason`;
+  //  here the failed-run OUTCOME legibility is the deterministic e2e, mirroring the run happy path.)
+});

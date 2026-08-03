@@ -381,6 +381,23 @@ describe("RunsRepo (memory)", () => {
     expect((await repo.list("a1")).map((r) => r.id)).toEqual(["r1"]);
     expect(await repo.list("other")).toEqual([]);
   });
+
+  it("listSummary returns newest-first, agent-scoped, WITHOUT the transcript (run history, Story 5.3)", async () => {
+    const repo = memoryRunsRepo();
+    const t0 = "2026-08-01T00:00:00.000Z";
+    const t1 = "2026-08-02T00:00:00.000Z";
+    await repo.create({ id: "r1", agentId: "a1", status: "succeeded", taskInput: "first", transcript: [{ type: "turn", v: 4, role: "user", text: "hi" }], reason: null, costMicros: 4100, createdAt: t0, endedAt: t0 });
+    await repo.create({ id: "r2", agentId: "a1", status: "killed", taskInput: "second", transcript: [{ type: "turn", v: 4, role: "agent", text: "bye" }], reason: "Killed — per-run cost cap reached ($0.50).", costMicros: 900, createdAt: t1, endedAt: t1 });
+    await repo.create({ id: "r3", agentId: "other", status: "failed", taskInput: "x", transcript: [], reason: "boom", costMicros: 0, createdAt: t1, endedAt: t1 });
+
+    const hist = await repo.listSummary("a1");
+    expect(hist.map((r) => r.id)).toEqual(["r2", "r1"]); // newest first (create unshifts)
+    expect(hist.every((r) => !("transcript" in r))).toBe(true); // no transcript in the projection
+    // The summary carries the outcome + cause + cost + task for the list row.
+    expect(hist[0]).toMatchObject({ id: "r2", status: "killed", reason: "Killed — per-run cost cap reached ($0.50).", costMicros: 900, taskInput: "second" });
+    expect(await repo.listSummary("other")).toHaveLength(1);
+    expect((await repo.listSummary()).map((r) => r.id)).toEqual(["r3", "r2", "r1"]); // all agents when unscoped
+  });
 });
 
 describe("resolveSandboxRuntimeKind", () => {

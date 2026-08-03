@@ -17,12 +17,18 @@ export interface RunRow {
   endedAt: string | null;
 }
 
+// A run WITHOUT its (potentially large) transcript — the run-history list projection (Story 5.3).
+// The review view fetches the full RunRow (with transcript) via get(id).
+export type RunSummary = Omit<RunRow, "transcript">;
+
 // Written only by the run-orchestrator (AD-7). No `update(patch)` surface beyond these. LiteLLM owns
 // spend; this `costMicros` summary is the summed run metrics the Guard reported (AD-7 — read, not recomputed).
 export interface RunsRepo {
   create(row: Omit<RunRow, "costMicros"> & { costMicros?: number }): Promise<void>;
   get(id: string): Promise<RunRow | null>;
   list(agentId?: string, limit?: number): Promise<RunRow[]>; // newest first, bounded
+  listSummary(agentId?: string, limit?: number): Promise<RunSummary[]>; // newest first, bounded — run history (Story 5.3), no transcript
+
   setStatus(id: string, status: RunStatus, patch?: { reason?: string | null; endedAt?: string; costMicros?: number }): Promise<void>;
   appendMessage(id: string, msg: ControlChannelMessage): Promise<void>;
   sumTodayMicros(agentId: string): Promise<number>; // agent's summed run cost since UTC midnight (daily meter)
@@ -42,6 +48,31 @@ function toRow(r: typeof runs.$inferSelect): RunRow {
     status: r.status as RunStatus,
     taskInput: r.taskInput,
     transcript: r.transcript as ControlChannelMessage[],
+    reason: r.reason,
+    costMicros: r.costMicros ?? 0,
+    createdAt: r.createdAt.toISOString(),
+    endedAt: r.endedAt ? r.endedAt.toISOString() : null,
+  };
+}
+
+// The summary column selection (everything except the transcript) for the run-history list projection.
+const summaryCols = {
+  id: runs.id,
+  agentId: runs.agentId,
+  status: runs.status,
+  taskInput: runs.taskInput,
+  reason: runs.reason,
+  costMicros: runs.costMicros,
+  createdAt: runs.createdAt,
+  endedAt: runs.endedAt,
+} as const;
+type SummarySelect = { [K in keyof typeof summaryCols]: (typeof runs.$inferSelect)[K] };
+function toSummary(r: SummarySelect): RunSummary {
+  return {
+    id: r.id,
+    agentId: r.agentId,
+    status: r.status as RunStatus,
+    taskInput: r.taskInput,
     reason: r.reason,
     costMicros: r.costMicros ?? 0,
     createdAt: r.createdAt.toISOString(),
@@ -72,6 +103,11 @@ export function drizzleRunsRepo(db: Db): RunsRepo {
       const q = db.select().from(runs).orderBy(desc(runs.createdAt), desc(runs.id)).limit(limit);
       const rows = agentId ? await q.where(eq(runs.agentId, agentId)) : await q;
       return rows.map(toRow);
+    },
+    async listSummary(agentId, limit = DEFAULT_LIST_LIMIT) {
+      const q = db.select(summaryCols).from(runs).orderBy(desc(runs.createdAt), desc(runs.id)).limit(limit);
+      const rows = agentId ? await q.where(eq(runs.agentId, agentId)) : await q;
+      return rows.map(toSummary);
     },
     async setStatus(id, status, patch) {
       const set: Partial<typeof runs.$inferInsert> = { status };
@@ -125,6 +161,22 @@ export function memoryRunsRepo(): RunsRepo {
         .filter((r) => (agentId ? r.agentId === agentId : true))
         .slice(0, limit)
         .map((r) => ({ ...r, transcript: [...r.transcript] }));
+    },
+    async listSummary(agentId, limit = DEFAULT_LIST_LIMIT) {
+      return order
+        .map((id) => rows.get(id)!)
+        .filter((r) => (agentId ? r.agentId === agentId : true))
+        .slice(0, limit)
+        .map((r): RunSummary => ({
+          id: r.id,
+          agentId: r.agentId,
+          status: r.status,
+          taskInput: r.taskInput,
+          reason: r.reason,
+          costMicros: r.costMicros,
+          createdAt: r.createdAt,
+          endedAt: r.endedAt,
+        })); // drop the transcript — summary projection
     },
     async setStatus(id, status, patch) {
       const r = rows.get(id);

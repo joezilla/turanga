@@ -13,6 +13,7 @@
   import Section from "$lib/components/Section.svelte";
   import StatusDot from "$lib/components/StatusDot.svelte";
   import RunStatusDot from "$lib/components/RunStatusDot.svelte";
+  import RunTranscript from "$lib/components/RunTranscript.svelte";
   import ModelSelector from "$lib/components/ModelSelector.svelte";
   import InstructionsEditor from "$lib/components/InstructionsEditor.svelte";
   import SkillsEditor from "$lib/components/SkillsEditor.svelte";
@@ -356,6 +357,7 @@
     {:else}
       <button class="secondary" onclick={() => (showDeactivateConfirm = true)} disabled={lifecycleBusy}>Deactivate</button>
     {/if}
+    <a class="runs-link" href="/agents/{id}/runs">Run history</a>
     <button class="test-toggle" onclick={() => (showTest = !showTest)} aria-pressed={showTest}>Test</button>
   </div>
 
@@ -439,20 +441,9 @@
         {#if transcript.length === 0 && runState === "empty"}
           <p class="muted">No test runs.</p>
         {:else}
-          {#each transcript as msg, i (i)}
-            {#if msg.type === "turn"}
-              <div class="turn">
-                <span class="turn-role">{msg.role}</span>
-                <p class="turn-text">{msg.text}</p>
-              </div>
-            {:else if msg.type === "refusal"}
-              <!-- A guardrail stopped an egress — reads caution (dot + full reason), never a red banner. -->
-              <div class="refusal">
-                <Circle size={7} fill="var(--state-killed)" color="var(--state-killed)" aria-hidden="true" />
-                <span>{msg.detail}</span>
-              </div>
-            {/if}
-          {/each}
+          <!-- Live turns + refusal rows (shared with the run-history review). Metrics stay in the
+               resolution summary below (showMetrics=false), so the pane's behavior is unchanged. -->
+          <RunTranscript {transcript} />
 
           {#if runState !== "empty" && runState !== "error"}
             <div class="resolution">
@@ -584,6 +575,22 @@
     font-size: var(--text-sm);
     cursor: pointer;
   }
+  /* Run history entry point (Story 5.3) — a quiet text link to the per-agent runs surface. */
+  .runs-link {
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .runs-link:hover {
+    color: var(--text-primary);
+    text-decoration: underline;
+  }
+  .runs-link:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
 
   .split {
     display: grid;
@@ -615,25 +622,6 @@
     overflow-y: auto;
     min-height: 0;
   }
-  .turn {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-1);
-  }
-  .turn-role {
-    font-size: 11px;
-    letter-spacing: var(--tracking-micro);
-    text-transform: uppercase;
-    color: var(--text-tertiary);
-  }
-  .turn-text {
-    margin: 0;
-    font-family: var(--font-mono);
-    font-size: var(--text-sm);
-    color: var(--text-primary);
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
   .resolution {
     display: flex;
     align-items: center;
@@ -653,7 +641,6 @@
     font-size: var(--text-sm); /* ≥ 12px */
     color: var(--text-secondary);
   }
-  .refusal,
   .run-error {
     display: flex;
     align-items: baseline;

@@ -137,8 +137,10 @@ export function runRoutes(repo: RunsRepo, orchestrator: RunOrchestrator, hub: Ru
     });
   });
 
+  // Run history (Story 5.3): newest-first summaries (no transcript — the review view fetches the full
+  // run via GET /runs/:id). Bounded by the repo default. Session-guarded via /runs in app.ts.
   app.get("/runs", async (c) => {
-    return c.json({ runs: await repo.list(c.req.query("agentId")) }); // bounded by the repo default
+    return c.json({ runs: await repo.listSummary(c.req.query("agentId")) });
   });
 
   return app;
