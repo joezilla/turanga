@@ -127,6 +127,11 @@ export function runOrchestrator(deps: OrchestratorDeps) {
     | { ok: true; runId: string; jobSpec: JobSpec; row: RunRow; provision: RunProvision; costCap: CostCap | null }
     | { ok: false; error: string; status: 400 | 404 | 429 };
   async function validateAndCreate(agentId: string, taskInput: string): Promise<Created> {
+    // INVARIANT (Story 5.2 AC2, NFR-1): the run path is state-agnostic — a Draft (Test) run and an
+    // Active run take the identical Sandbox + Guard + cost-cap establishment below; nothing here or in
+    // execute() branches on agent.state. Do NOT add a state condition — a run must always be sandboxed
+    // and guarded regardless of lifecycle. (Asserted by the "Active agent runs under the same
+    // Sandbox/Guard" test in runs.test.ts.)
     const agent = await agentsRepo.get(agentId);
     if (!agent) return { ok: false, error: "That agent doesn't exist.", status: 404 };
     if (!agent.model) return { ok: false, error: "An agent needs a model to run.", status: 400 };

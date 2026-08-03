@@ -1,5 +1,9 @@
 # Deferred Work
 
+## Deferred from: Story 5.2 (operate active agents — live status + spend) (2026-08-03)
+- The agents-list live meter refreshes by a 5s visibility-aware **poll**, not SSE — there is no per-agent live-cost stream (SSE is per-run in the test pane, E4-AD-7) and the runs-table sum only advances at run-terminal, so sub-second liveness buys nothing. If a live in-flight tick on the list is ever wanted, add a per-agent cost SSE (fan-out) or fold cost into the existing run SSE; until then the poll is intentional.
+- The list meter counts only **terminal** run cost (`cost_micros` persists at run end); an in-flight run's spend appears on the list only after it resolves. Live in-flight spend is a detail/test-pane concern (the per-run SSE meter). Revisit with the SSE-for-list item above if needed.
+
 ## Deferred from: code review of Epic 4 batch 4.3–4.6 (2026-08-02)
 - Per-run cost cap can't stop a single model call (LiteLLM admits a fresh per-run key's first call; the harness makes one call → only the daily/team cap bites). Enforced across calls once multi-turn lands; reserve-then-reconcile is the AD-6 deferred hardening.
 - `ensureAgentTeam` calls `/team/update` on every reuse — verify LiteLLM doesn't reset `spend`/`budget_reset_at` on a budget update (would slide the daily window and bypass the per-day cap); guard the update (only when the cap changed) if confirmed.

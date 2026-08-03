@@ -1,23 +1,25 @@
 <script lang="ts">
-  // Agents surface (Story 3.1): create + list + Draft state. Rows are display-only here;
-  // the agent-definition surface and navigation to /agents/:id are Story 3.2.
+  // Agents surface (Story 3.1): create + list + Draft state. Story 5.2 makes the list live: each
+  // Active agent shows its live Lifecycle State (dot + word) and a live daily-spend meter (today's
+  // spend vs the per-day cap), refreshed by a visibility-aware poll.
   import { listAgents, createAgent, type Agent } from "$lib/agents";
-  import { formatMinor } from "$lib/money";
+  import { formatMinor, formatMicros, meterTone } from "$lib/money";
+  import { getAgentsCost } from "$lib/runs";
   import StatusDot from "$lib/components/StatusDot.svelte";
 
-  // Cost-meter denominator for an Active agent's row (Story 3.6). Live spend ($0.00) is Epic 4.
-  function meterCap(agent: Agent): string {
-    return agent.costCap.perDay ? `$${formatMinor(agent.costCap.perDay.minor)}` : "—";
-  }
+  const POLL_MS = 5000; // agents-list refresh cadence while the tab is visible
 
   let agents = $state<Agent[]>([]);
+  let costs = $state<Record<string, number>>({}); // agentId → today's spend (micro-USD); absent ⇒ 0
   let loading = $state(true);
   let loadError = $state("");
   let creating = $state(false);
   let createError = $state("");
   let filter = $state("");
   let filterEl = $state<HTMLInputElement | null>(null);
+  let refreshing = false; // guards against overlapping polls
 
+  // Initial / explicit load (mount, Create, Retry) — shows the loading state and surfaces errors.
   async function load() {
     loading = true;
     const r = await listAgents();
@@ -25,12 +27,43 @@
     if (r.ok) {
       agents = r.value;
       loadError = "";
+      costs = await getAgentsCost();
     } else {
       loadError = r.error;
     }
   }
+
+  // Background poll — no loading flash, no transient error surfaced. A failed refresh keeps the
+  // last-known list + costs (a blip must not blank the page or clobber the meter). The client-side
+  // `filter` is derived (`shown`), so refreshing the array preserves the user's filter.
+  async function refresh() {
+    if (refreshing) return;
+    refreshing = true;
+    try {
+      const r = await listAgents();
+      if (r.ok) {
+        agents = r.value; // live Lifecycle State (StatusDot reads agent.state)
+        loadError = "";
+        costs = await getAgentsCost(); // live daily-spend meter
+      }
+    } finally {
+      refreshing = false;
+    }
+  }
+
+  // Mount: load once, then poll every POLL_MS but only while the document is visible (pause when
+  // hidden; refresh immediately on becoming visible again). The effect's teardown clears both.
   $effect(() => {
     load();
+    const tick = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+    const timer = setInterval(tick, POLL_MS);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", tick);
+    };
   });
 
   const shown = $derived(
@@ -99,7 +132,12 @@
           <span class="name">{agent.name}</span>
           <span class="meta">
             {#if agent.state === "active"}
-              <span class="meter">today $0.00 / {meterCap(agent)}</span>
+              <span
+                class="meter"
+                class:warn={meterTone(costs[agent.id] ?? 0, agent.costCap.perDay?.minor ?? null) === "warn"}
+              >
+                today {formatMicros(costs[agent.id] ?? 0)}{#if agent.costCap.perDay} / ${formatMinor(agent.costCap.perDay.minor)}{/if}
+              </span>
             {/if}
             <StatusDot status={agent.state} />
           </span>
@@ -204,12 +242,17 @@
     align-items: center;
     gap: var(--space-3);
   }
-  /* Per-Active-agent cost meter — mono/tabular; live spend is Epic 4. */
+  /* Per-Active-agent live daily-spend meter (Story 5.2) — mono/tabular; neutral until near the cap. */
   .meter {
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
     font-size: var(--text-xs);
     color: var(--text-tertiary);
+    white-space: nowrap;
+  }
+  /* Near/over the per-day cap — caution tone (never color-only: the numbers still read literally). */
+  .meter.warn {
+    color: var(--caution-500);
   }
   .muted {
     color: var(--text-tertiary);

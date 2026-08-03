@@ -299,6 +299,76 @@ describe("run orchestrator — cost keys + kill-on-breach (4.5)", () => {
   });
 });
 
+describe("Story 5.2 — operate active agents (live status + spend)", () => {
+  const yesterday = new Date(Date.now() - 26 * 60 * 60 * 1000).toISOString();
+
+  it("sumTodayMicrosByAgent groups today's run costs per agent and excludes prior days (agents-list meter)", async () => {
+    const repo = memoryRunsRepo();
+    const now = new Date().toISOString();
+    await repo.create({ id: "r1", agentId: "a1", status: "succeeded", taskInput: "", transcript: [], reason: null, costMicros: 4100, createdAt: now, endedAt: now });
+    await repo.create({ id: "r2", agentId: "a1", status: "killed", taskInput: "", transcript: [], reason: null, costMicros: 900, createdAt: now, endedAt: now });
+    await repo.create({ id: "r3", agentId: "a2", status: "succeeded", taskInput: "", transcript: [], reason: null, costMicros: 5000, createdAt: now, endedAt: now });
+    await repo.create({ id: "r4", agentId: "a1", status: "succeeded", taskInput: "", transcript: [], reason: null, costMicros: 7777, createdAt: yesterday, endedAt: yesterday }); // excluded (prior day)
+    const byAgent = await repo.sumTodayMicrosByAgent();
+    expect(byAgent).toEqual({ a1: 5000, a2: 5000 }); // a1 today = 4100+900; yesterday's 7777 excluded; agents with no runs today absent
+    // The batch map agrees with the per-agent query for each agent (single source, no split-brain).
+    expect(byAgent.a1).toBe(await repo.sumTodayMicros("a1"));
+    expect(byAgent.a2).toBe(await repo.sumTodayMicros("a2"));
+    expect(byAgent.a3).toBeUndefined(); // caller defaults an absent agent to 0
+  });
+
+  it("an Active agent runs under the same Sandbox + Guard as Test, with refusals recorded (AC2, NFR-1/4)", async () => {
+    // The run establishment (validateAndCreate/execute) does NOT branch on agent.state — an Active
+    // agent gets the identical Sandbox + Guard registration as a Draft. Prove it: run an Active agent
+    // whose harness emits a refusal, and assert the Guard was registered, the sandbox established, and
+    // the refusal is persisted on the Run (observability).
+    const runtime = fakeSandboxRuntime({
+      lines: [
+        nd({ type: "turn", v: 4, role: "agent", text: "trying to reach the internet" }),
+        nd({ type: "refusal", v: 4, kind: "egress", detail: "blocked evil.example.com" }),
+        nd({ type: "done", v: 4, status: "succeeded" }),
+      ],
+    });
+    const { o, guard } = orch({ agent: agent({ state: "active" }), runtime });
+    const r = await o.launch("a1", "phone home");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(guard.registered).toHaveLength(1); // same Guard boundary as a Test run
+    expect(guard.toreDown).toHaveLength(1);
+    expect(runtime.established).toHaveLength(1); // same Sandbox — no unsandboxed fast-path for Active
+    expect(r.run.transcript.some((m) => m.type === "refusal" && m.kind === "egress")).toBe(true); // refusal recorded (NFR-4)
+  });
+
+  it("an Active agent's metrics + cost are recorded and roll into the daily meter (AC2→AC1 loop, same caps as Test)", async () => {
+    // Active agent with a per-run cap; the Guard reports a metrics event and a breach kill — identical
+    // cost-cap enforcement to a Test run. The summed cost persists on the Run and therefore appears in
+    // the agents-list daily aggregate (sumTodayMicros / sumTodayMicrosByAgent).
+    const cap: CostCap = { perRun: { minor: 50, currency: "USD" }, perDay: { minor: 500, currency: "USD" } };
+    const runsRepo = memoryRunsRepo();
+    const o = runOrchestrator({
+      runsRepo,
+      agentsRepo: agentsRepo(agent({ state: "active", costCap: cap })),
+      runtime: fakeSandboxRuntime({ hang: true }),
+      guard: fakeRunGuard(),
+      hub: createRunHub(),
+      modelGateway: fakeModelGateway(),
+      image: "img",
+      sandboxVolume: "vol",
+    });
+    const r = await o.start("a1", "x");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    await vi.waitFor(async () => expect((await runsRepo.get(r.run.id))?.status).toBe("running"));
+    await o.handleGuardEvent(r.run.id, { type: "metrics", v: 4, latencyMs: 12, tokens: 100, costMicros: 4100 });
+    await o.handleGuardEvent(r.run.id, { type: "kill", v: 4, scope: "run" });
+    await vi.waitFor(async () => expect((await runsRepo.get(r.run.id))?.status).toBe("killed"));
+    const run = await runsRepo.get(r.run.id);
+    expect(run?.costMicros).toBe(4100); // metrics recorded on the Run (NFR-4)
+    expect(await runsRepo.sumTodayMicros("a1")).toBe(4100); // rolls into the daily meter
+    expect((await runsRepo.sumTodayMicrosByAgent()).a1).toBe(4100); // …and the batch agents-list read
+  });
+});
+
 describe("RunsRepo (memory)", () => {
   it("create/get/setStatus/appendMessage/list", async () => {
     const repo = memoryRunsRepo();

@@ -26,6 +26,7 @@ export interface RunsRepo {
   setStatus(id: string, status: RunStatus, patch?: { reason?: string | null; endedAt?: string; costMicros?: number }): Promise<void>;
   appendMessage(id: string, msg: ControlChannelMessage): Promise<void>;
   sumTodayMicros(agentId: string): Promise<number>; // agent's summed run cost since UTC midnight (daily meter)
+  sumTodayMicrosByAgent(): Promise<Record<string, number>>; // every agent's summed run cost since UTC midnight (agents-list meter, Story 5.2) — same window/source as sumTodayMicros
 }
 
 const DEFAULT_LIST_LIMIT = 100;
@@ -93,6 +94,16 @@ export function drizzleRunsRepo(db: Db): RunsRepo {
         .where(and(eq(runs.agentId, agentId), gte(runs.createdAt, startOfUtcToday())));
       return Number(rows[0]?.total ?? 0);
     },
+    async sumTodayMicrosByAgent() {
+      const rows = await db
+        .select({ agentId: runs.agentId, total: sql<number>`coalesce(sum(${runs.costMicros}), 0)` })
+        .from(runs)
+        .where(gte(runs.createdAt, startOfUtcToday()))
+        .groupBy(runs.agentId);
+      const out: Record<string, number> = {};
+      for (const r of rows) out[r.agentId] = Number(r.total);
+      return out;
+    },
   };
 }
 
@@ -129,6 +140,14 @@ export function memoryRunsRepo(): RunsRepo {
     async sumTodayMicros(agentId) {
       const midnight = startOfUtcToday().toISOString();
       return [...rows.values()].filter((r) => r.agentId === agentId && r.createdAt >= midnight).reduce((s, r) => s + r.costMicros, 0);
+    },
+    async sumTodayMicrosByAgent() {
+      const midnight = startOfUtcToday().toISOString();
+      const out: Record<string, number> = {};
+      for (const r of rows.values()) {
+        if (r.createdAt >= midnight) out[r.agentId] = (out[r.agentId] ?? 0) + r.costMicros;
+      }
+      return out;
     },
   };
 }

@@ -33,6 +33,14 @@ export function runRoutes(repo: RunsRepo, orchestrator: RunOrchestrator, hub: Ru
     return c.json({ ok: true });
   });
 
+  // Batch daily spend for the agents-list meter (Story 5.2): { costs: { [agentId]: todayMicros } },
+  // summed since UTC midnight — same window/source as /agents/:id/cost, so the list and the detail
+  // meter agree. Read-only (AD-6: litellm owns spend, all others read). Registered before the `:id`
+  // route so `cost` is never captured as an agent id. Session-guarded via /agents/* in app.ts.
+  app.get("/agents/cost", async (c) => {
+    return c.json({ costs: await repo.sumTodayMicrosByAgent() });
+  });
+
   // The agent's cumulative spend today (micro-USD) for the live daily meter (the web pairs it with the
   // agent's per-day cap it already holds). Session-guarded via /agents/* in app.ts.
   app.get("/agents/:id/cost", async (c) => {

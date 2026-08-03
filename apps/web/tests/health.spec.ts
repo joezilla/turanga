@@ -7,7 +7,11 @@ import { test, expect, type Page } from "@playwright/test";
 const EMAIL = "admin@turanga.local";
 const PASSWORD = "changeme-dev";
 
+// Distinct x-forwarded-for per login so control-api's per-key login throttle (20/min) buckets each
+// test separately — the whole serial suite exceeds 20 logins on one control-api process otherwise.
+let signInSeq = 0;
 async function signIn(page: Page) {
+  await page.setExtraHTTPHeaders({ "x-forwarded-for": `e2e-health-${++signInSeq}` });
   await page.goto("/login");
   await page.getByLabel("Email").fill(EMAIL);
   await page.getByLabel("Password").fill(PASSWORD);

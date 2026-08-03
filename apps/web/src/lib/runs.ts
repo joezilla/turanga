@@ -65,6 +65,20 @@ export async function getAgentCost(agentId: string): Promise<{ todayMicros: numb
   }
 }
 
+/** Every agent's cumulative spend today in micro-USD, keyed by agent id (the agents-list daily meter,
+ *  Story 5.2). Best-effort — a read failure returns `{}` so the list never white-screens; an agent
+ *  absent from the map has no spend today (render 0). Same UTC-midnight window as `getAgentCost`. */
+export async function getAgentsCost(): Promise<Record<string, number>> {
+  try {
+    const r = await fetch(`${base}/agents/cost`, { credentials: "include" });
+    if (!r.ok) return {};
+    const body = (await r.json()) as { costs?: Record<string, number> };
+    return body.costs ?? {};
+  } catch {
+    return {};
+  }
+}
+
 /** Fetch a run (for its persisted reason + cost summary after it resolves). Best-effort. */
 export async function getRun(id: string): Promise<Run | null> {
   try {

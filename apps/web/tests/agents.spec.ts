@@ -8,7 +8,11 @@ import { test, expect, type Page } from "@playwright/test";
 const EMAIL = "admin@turanga.local";
 const PASSWORD = "changeme-dev";
 
+// Distinct x-forwarded-for per login so control-api's per-key login throttle (20/min) buckets each
+// test separately — the whole serial suite exceeds 20 logins on one control-api process otherwise.
+let signInSeq = 0;
 async function signIn(page: Page) {
+  await page.setExtraHTTPHeaders({ "x-forwarded-for": `e2e-agents-${++signInSeq}` });
   await page.goto("/login");
   await page.getByLabel("Email").fill(EMAIL);
   await page.getByLabel("Password").fill(PASSWORD);
@@ -381,4 +385,28 @@ test("lifecycle: Activate is disabled with a stated reason until fully configure
   await expect(page.locator(".gate-reason")).toContainText(/provider isn't connected/);
   // (A full Activate click + the Deactivate confirm need a connected provider — gated/manual; the
   //  Draft↔Active transitions + the gate are proven by control-api unit tests.)
+});
+
+test("agents list is live — a newly created agent appears without a manual reload (polling, 5.2)", async ({ page }) => {
+  await signIn(page);
+  await expect(page.getByRole("heading", { name: "Agents" })).toBeVisible();
+
+  // Create an agent out-of-band (API) while the list stays open — no navigation, no reload. The
+  // visibility-aware poll (5s) must surface it on its own, which is what makes the list's live
+  // Lifecycle State "live" (an agent activated/deactivated elsewhere reflects the same way). [5.2 AC1]
+  const name = `poll-probe-${Date.now()}`;
+  const created = await page.request.post(`${CONTROL_API}/agents`, {
+    data: { name },
+    headers: { "content-type": "application/json" },
+  });
+  expect(created.ok()).toBeTruthy();
+
+  const row = page.locator("a.agent", { hasText: name });
+  await expect(row).toBeVisible({ timeout: 15000 }); // appears via the poll, NOT a reload
+  // It's a Draft → dot + word "draft", and NO meter (the daily-spend meter is Active-only). [5.2 AC1]
+  await expect(row.locator(".status-dot")).toContainText("draft");
+  await expect(row.locator(".meter")).toHaveCount(0);
+  // (The live daily-spend meter on an Active agent needs a connected model provider to activate —
+  //  gated/manual in dev, mirroring the run happy-path + 5.1 Activate. The meter markup + tone are
+  //  unit-proven via meterTone; the batch spend read via sumTodayMicrosByAgent.)
 });

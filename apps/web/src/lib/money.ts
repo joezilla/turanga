@@ -28,3 +28,14 @@ export function formatMicros(micros: number): string {
   const dp = usd !== 0 && Math.abs(usd) < 0.0001 ? 6 : 4;
   return `$${usd.toLocaleString("en-US", { minimumFractionDigits: dp, maximumFractionDigits: dp })}`;
 }
+
+/** Fraction of the per-day cap at which the agents-list meter turns from neutral to caution. */
+export const NEAR_CAP_FRACTION = 0.8;
+/** Agents-list daily-meter tone (Story 5.2): "warn" once today's spend reaches NEAR_CAP_FRACTION of
+ *  the per-day cap, else "neutral" (DESIGN.md — neutral until near a cap). Spend is micro-USD; the cap
+ *  is minor units (cents) — convert micros→cents (÷10,000) before comparing (the units differ 10,000×).
+ *  No cap ⇒ always neutral (nothing to approach). */
+export function meterTone(spendMicros: number, perDayCapMinor: number | null): "neutral" | "warn" {
+  if (!perDayCapMinor) return "neutral";
+  return spendMicros / 10_000 >= NEAR_CAP_FRACTION * perDayCapMinor ? "warn" : "neutral";
+}

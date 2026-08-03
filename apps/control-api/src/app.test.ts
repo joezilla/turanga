@@ -25,4 +25,10 @@ describe("control-api", () => {
     const ok = await app2.request("/internal/guard/runs/R1/events", { method: "POST", headers: { "content-type": "application/json", "x-guard-callback": "secret-cb" }, body: event });
     expect(ok.status).toBe(200);
   });
+
+  it("GET /agents/cost (agents-list daily meter, Story 5.2) is session-guarded via /agents/*", async () => {
+    // No session cookie → 401 (it sits under the same requireSession as the rest of /agents/*).
+    const res = await app.request("/agents/cost");
+    expect(res.status).toBe(401);
+  });
 });
