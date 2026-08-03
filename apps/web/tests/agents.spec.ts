@@ -357,3 +357,28 @@ test("test pane: cost meters — the metrics line carries a cost + the run/today
   await expect(transcript.locator(".cost-meter")).toContainText(/run \$.* \/ \$0\.50/);
   await expect(transcript.locator(".cost-meter")).toContainText(/today \$.* \/ \$5\.00/);
 });
+
+test("lifecycle: Activate is disabled with a stated reason until fully configured (5.1)", async ({ page }) => {
+  await signIn(page);
+  await page.getByRole("button", { name: "Create agent" }).first().click();
+  await page.locator("a.agent").first().click();
+  await expect(page).toHaveURL(/\/agents\/[0-9A-Z]{26}$/);
+  const agentId = page.url().split("/").pop();
+
+  // A fresh Draft has no model + no caps → Activate is disabled with a stated reason. [5.1 AC1]
+  await expect(page.getByRole("button", { name: "Activate" })).toBeDisabled();
+  await expect(page.locator(".gate-reason")).toContainText("Select a model.");
+
+  // Set model + both caps via the API → the only remaining blocker is the (unconnectable-in-dev)
+  // provider, so Activate stays disabled with the provider reason. [5.1 AC1]
+  const patch = await page.request.patch(`${CONTROL_API}/agents/${agentId}`, {
+    data: { model: "openai/gpt-4o", costCap: { perRun: { minor: 50, currency: "USD" }, perDay: { minor: 500, currency: "USD" } } },
+    headers: { "content-type": "application/json" },
+  });
+  expect(patch.ok()).toBeTruthy();
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Activate" })).toBeDisabled();
+  await expect(page.locator(".gate-reason")).toContainText(/provider isn't connected/);
+  // (A full Activate click + the Deactivate confirm need a connected provider — gated/manual; the
+  //  Draft↔Active transitions + the gate are proven by control-api unit tests.)
+});

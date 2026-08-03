@@ -50,6 +50,18 @@ export interface AgentPatch {
 
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 
+/** The Activate gate (Story 5.1) — mirrors the domain rule the control-api enforces (the server is
+ *  authoritative; this is for the disabled-with-reason UX). Returns the reasons an agent can't be
+ *  activated, in a stable order; `[]` means activatable. Keep in sync with @turanga/domain. */
+export function activationBlockers(agent: { model: string | null; costCap: CostCap }, modelProviderConnected: boolean): string[] {
+  const reasons: string[] = [];
+  if (!agent.model) reasons.push("Select a model.");
+  else if (!modelProviderConnected) reasons.push("The selected model's provider isn't connected — reconnect it in Settings.");
+  if (!agent.costCap.perRun) reasons.push("Set a per-run cost cap.");
+  if (!agent.costCap.perDay) reasons.push("Set a per-day cost cap.");
+  return reasons;
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<Result<T>> {
   try {
     const r = await fetch(`${base}${path}`, { credentials: "include", ...init });
@@ -89,5 +101,17 @@ export async function updateAgent(id: string, patch: AgentPatch): Promise<Result
     headers: { "content-type": "application/json" },
     body: JSON.stringify(patch),
   });
+  return r.ok ? { ok: true, value: r.value.agent } : r;
+}
+
+/** Promote a Draft agent to Active (Story 5.1). Server-gated — a 400 returns the blocker reason. */
+export async function activateAgent(id: string): Promise<Result<Agent>> {
+  const r = await req<{ agent: Agent }>(`/agents/${encodeURIComponent(id)}/activate`, { method: "POST" });
+  return r.ok ? { ok: true, value: r.value.agent } : r;
+}
+
+/** Return an Active agent to Draft (Story 5.1). */
+export async function deactivateAgent(id: string): Promise<Result<Agent>> {
+  const r = await req<{ agent: Agent }>(`/agents/${encodeURIComponent(id)}/deactivate`, { method: "POST" });
   return r.ok ? { ok: true, value: r.value.agent } : r;
 }

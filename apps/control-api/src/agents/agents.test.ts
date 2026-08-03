@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { createApp } from "../app.js";
 import { memoryAuthRepo, type AuthRepo } from "../auth/repo.js";
 import { memoryAgentsRepo } from "./repo.js";
+import { memoryConnectionsRepo, type ConnectionsRepo } from "../connections/repo.js";
 import { hashPassword } from "../auth/password.js";
 import { ulid } from "@turanga/domain";
 
@@ -19,11 +20,11 @@ async function createAgent(app: Awaited<ReturnType<typeof appWithSession>>["app"
 // so give each test session a distinct client IP — otherwise many logins in one run trip the
 // per-client limit (a real deployment sees distinct clients).
 let clientSeq = 0;
-async function appWithSession() {
+async function appWithSession(opts: { connectionsRepo?: ConnectionsRepo } = {}) {
   const authRepo: AuthRepo = memoryAuthRepo();
   await authRepo.createUser({ id: ulid(1), email: EMAIL, passwordHash: await hashPassword(PW) });
   const agentsRepo = memoryAgentsRepo();
-  const app = createApp({ authRepo, agentsRepo });
+  const app = createApp({ authRepo, agentsRepo, connectionsRepo: opts.connectionsRepo });
   const ip = `10.0.0.${clientSeq++}`;
   const login = await app.request("/auth/login", {
     ...jsonPost({ email: EMAIL, password: PW }),
@@ -31,6 +32,21 @@ async function appWithSession() {
   });
   const cookie = (login.headers.get("set-cookie") ?? "").split(";")[0];
   return { app, cookie, agentsRepo };
+}
+
+// A connections repo with one CONNECTED openai provider (so a model "openai/..." passes the
+// provider-connected half of the Activate gate).
+async function connectedProviders(): Promise<ConnectionsRepo> {
+  const repo = memoryConnectionsRepo();
+  await repo.createProvider({ id: ulid(2), provider: "openai", name: "OpenAI", baseUrl: null, keyLast4: "abcd", status: "connected", lastError: null, models: ["gpt-4o"], litellmModelIds: ["m1"] });
+  return repo;
+}
+// Fully configure an agent (model + both caps) via the general PATCH.
+async function configure(app: Awaited<ReturnType<typeof appWithSession>>["app"], cookie: string, id: string) {
+  await app.request(`/agents/${id}`, {
+    ...jsonPatch({ model: "openai/gpt-4o", costCap: { perRun: { minor: 50, currency: "USD" }, perDay: { minor: 500, currency: "USD" } } }),
+    headers: { "content-type": "application/json", cookie },
+  });
 }
 
 describe("agents guard", () => {
@@ -329,5 +345,63 @@ describe("agent cost caps (PATCH, Story 3.5)", () => {
   it("401 without a session", async () => {
     const { app } = await appWithSession();
     expect((await app.request("/agents/x", jsonPatch({ costCap: { perRun: null, perDay: null } }))).status).toBe(401);
+  });
+});
+
+describe("activate / deactivate lifecycle (Story 5.1)", () => {
+  const post = (cookie: string) => ({ method: "POST", headers: { cookie } });
+
+  it("blocks Activate with a stated reason when the model / caps are missing (400)", async () => {
+    const { app, cookie } = await appWithSession({ connectionsRepo: await connectedProviders() });
+    const agent = await createAgent(app, cookie);
+    const res = await app.request(`/agents/${agent.id}/activate`, post(cookie));
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; blockers: string[] };
+    expect(body.blockers).toContain("Select a model.");
+    expect(body.blockers).toContain("Set a per-run cost cap.");
+    expect(body.blockers).toContain("Set a per-day cost cap.");
+  });
+
+  it("blocks Activate when the model's provider isn't connected (400, stated reason)", async () => {
+    const { app, cookie } = await appWithSession(); // no connected providers
+    const agent = await createAgent(app, cookie);
+    await configure(app, cookie, agent.id); // model + both caps, but provider not connected
+    const res = await app.request(`/agents/${agent.id}/activate`, post(cookie));
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toMatch(/provider isn't connected/i);
+  });
+
+  it("activates a fully-configured Draft with a connected provider (200, state=active)", async () => {
+    const { app, cookie } = await appWithSession({ connectionsRepo: await connectedProviders() });
+    const agent = await createAgent(app, cookie);
+    await configure(app, cookie, agent.id);
+    const res = await app.request(`/agents/${agent.id}/activate`, post(cookie));
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { agent: { state: string } }).agent.state).toBe("active");
+  });
+
+  it("Deactivate returns an Active agent to Draft (200, state=draft)", async () => {
+    const { app, cookie } = await appWithSession({ connectionsRepo: await connectedProviders() });
+    const agent = await createAgent(app, cookie);
+    await configure(app, cookie, agent.id);
+    await app.request(`/agents/${agent.id}/activate`, post(cookie));
+    const res = await app.request(`/agents/${agent.id}/deactivate`, post(cookie));
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { agent: { state: string } }).agent.state).toBe("draft");
+  });
+
+  it("the general PATCH cannot self-promote (state in the body is ignored)", async () => {
+    const { app, cookie } = await appWithSession({ connectionsRepo: await connectedProviders() });
+    const agent = await createAgent(app, cookie);
+    await configure(app, cookie, agent.id);
+    // A crafted PATCH with state: "active" must NOT flip the state.
+    const res = await app.request(`/agents/${agent.id}`, { ...jsonPatch({ state: "active", name: "x" }), headers: { "content-type": "application/json", cookie } });
+    expect(((await res.json()) as { agent: { state: string } }).agent.state).toBe("draft");
+  });
+
+  it("404 for activate/deactivate of a missing agent", async () => {
+    const { app, cookie } = await appWithSession({ connectionsRepo: await connectedProviders() });
+    expect((await app.request("/agents/nope/activate", post(cookie))).status).toBe(404);
+    expect((await app.request("/agents/nope/deactivate", post(cookie))).status).toBe(404);
   });
 });

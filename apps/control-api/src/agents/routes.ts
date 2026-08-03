@@ -1,6 +1,16 @@
 import { Hono } from "hono";
-import { ulid } from "@turanga/domain";
+import { ulid, activationBlockers } from "@turanga/domain";
 import type { AgentsRepo, AgentRow, AgentPatch, AgentVariable, AttachedSkill, CostCap, Money } from "./repo.js";
+import type { ConnectionsRepo } from "../connections/repo.js";
+
+// Story 5.1: is the agent's model ("<prefix>/<id>") served by a currently-connected provider? The
+// prefix is the provider kind (openai/anthropic) or the connection name (openai-compatible).
+async function modelProviderConnected(model: string | null, connectionsRepo: ConnectionsRepo): Promise<boolean> {
+  if (!model) return false;
+  const prefix = model.split("/")[0];
+  const providers = await connectionsRepo.listProviders();
+  return providers.some((p) => p.status === "connected" && (p.provider === prefix || p.name === prefix));
+}
 
 // Bound the display name / model string so one oversized value can't bloat payloads.
 const MAX_NAME_LEN = 200;
@@ -93,7 +103,7 @@ function parseSkills(input: unknown): { ok: true; value: AttachedSkill[] } | { o
   return { ok: true, value: out };
 }
 
-export function agentRoutes(repo: AgentsRepo) {
+export function agentRoutes(repo: AgentsRepo, connectionsRepo: ConnectionsRepo) {
   const app = new Hono();
 
   app.get("/agents", async (c) => c.json({ agents: await repo.list() }));
@@ -163,9 +173,30 @@ export function agentRoutes(repo: AgentsRepo) {
       patch.costCap = parsed.value;
     }
 
+    // NOTE (Story 5.1): the general PATCH deliberately does NOT read `body.state` — promotion is a
+    // gated action via POST /agents/:id/activate, not a self-editable field.
     const agent = await repo.update(c.req.param("id"), patch);
     if (!agent) return c.json({ error: "That agent doesn't exist." }, 404);
     return c.json({ agent });
+  });
+
+  // Deliberate, server-enforced promotion (Story 5.1, FR-5/AD-7). A mis-configured agent can never be
+  // activated — the gate is authoritative here; the web disable is UX only.
+  app.post("/agents/:id/activate", async (c) => {
+    const agent = await repo.get(c.req.param("id"));
+    if (!agent) return c.json({ error: "That agent doesn't exist." }, 404);
+    const blockers = activationBlockers(agent, await modelProviderConnected(agent.model, connectionsRepo));
+    if (blockers.length > 0) return c.json({ error: blockers[0], blockers }, 400);
+    const updated = await repo.update(c.req.param("id"), { state: "active" });
+    return c.json({ agent: updated });
+  });
+
+  // Deactivate returns an Active agent to Draft. Deactivating a Draft is a harmless no-op → Draft.
+  app.post("/agents/:id/deactivate", async (c) => {
+    const agent = await repo.get(c.req.param("id"));
+    if (!agent) return c.json({ error: "That agent doesn't exist." }, 404);
+    const updated = await repo.update(c.req.param("id"), { state: "draft" });
+    return c.json({ agent: updated });
   });
 
   return app;

@@ -5,7 +5,7 @@
   import { page } from "$app/state";
   import { onDestroy } from "svelte";
   import { ArrowLeft, Circle } from "@lucide/svelte";
-  import { getAgent, updateAgent, type Agent, type AgentPatch, type AgentVariable, type AttachedSkill, type CostCap } from "$lib/agents";
+  import { getAgent, updateAgent, activateAgent, deactivateAgent, activationBlockers, type Agent, type AgentPatch, type AgentVariable, type AttachedSkill, type CostCap } from "$lib/agents";
   import { listProviders, type Provider } from "$lib/connections";
   import { startRun, runEventsUrl, getAgentCost, getRun, type RunMessage } from "$lib/runs";
   import { formatMinor, formatMicros } from "$lib/money";
@@ -152,6 +152,36 @@
 
   const definedNames = $derived(vars.map((v) => v.name).filter((n) => VAR_NAME_RE.test(n)));
   const undefinedNames = $derived(undefinedVariables(instructions, definedNames));
+
+  // Activate gate (Story 5.1). The web mirrors the server's rule for the disabled-with-reason UX;
+  // the server is authoritative. `modelProviderConnected` = the model's provider is connected now.
+  let lifecycleBusy = $state(false);
+  let showDeactivateConfirm = $state(false);
+  let activateError = $state(""); // a server 400 (a race: caps cleared after the button enabled)
+  const modelProviderConnected = $derived.by(() => {
+    if (!agent?.model) return false;
+    const prefix = agent.model.split("/")[0];
+    return providers.some((p) => p.status === "connected" && (p.provider === prefix || p.name === prefix));
+  });
+  const activateBlockers = $derived(agent ? activationBlockers({ model: agent.model, costCap: agent.costCap }, modelProviderConnected) : []);
+
+  async function doActivate() {
+    if (!agent || activateBlockers.length || lifecycleBusy) return;
+    lifecycleBusy = true;
+    activateError = "";
+    const r = await activateAgent(agent.id);
+    lifecycleBusy = false;
+    if (r.ok) agent = r.value;
+    else activateError = r.error; // e.g. caps cleared between enabling the button and the click
+  }
+  async function doDeactivate() {
+    if (!agent || lifecycleBusy) return;
+    lifecycleBusy = true;
+    const r = await deactivateAgent(agent.id);
+    lifecycleBusy = false;
+    showDeactivateConfirm = false;
+    if (r.ok) agent = r.value;
+  }
 
   // Per-row "why this variable isn't saved" cue (blank / malformed / duplicate name).
   const varIssues = $derived.by(() => {
@@ -306,8 +336,38 @@
     <span class="save" aria-live="polite">
       {#if save === "saving"}Saving…{:else if save === "saved"}Saved{:else if save === "error"}Couldn't save — retry{/if}
     </span>
+    <!-- Lifecycle (Story 5.1): Activate a Draft (gated + disabled-with-reason) / Deactivate an Active. -->
+    {#if agent.state === "draft"}
+      <div class="lifecycle">
+        <button
+          class="primary"
+          onclick={doActivate}
+          disabled={activateBlockers.length > 0 || lifecycleBusy}
+          title={activateBlockers.join(" ")}
+        >
+          Activate
+        </button>
+        {#if activateBlockers.length > 0}
+          <span class="gate-reason">{activateBlockers.join(" ")}</span>
+        {:else if activateError}
+          <span class="gate-reason">{activateError}</span>
+        {/if}
+      </div>
+    {:else}
+      <button class="secondary" onclick={() => (showDeactivateConfirm = true)} disabled={lifecycleBusy}>Deactivate</button>
+    {/if}
     <button class="test-toggle" onclick={() => (showTest = !showTest)} aria-pressed={showTest}>Test</button>
   </div>
+
+  {#if showDeactivateConfirm}
+    <div class="confirm" role="alertdialog" aria-label="Deactivate agent">
+      <p>Deactivate returns this agent to Draft; it won't run in production until you re-activate it.</p>
+      <div class="confirm-actions">
+        <button class="ghost" onclick={() => (showDeactivateConfirm = false)} disabled={lifecycleBusy}>Cancel</button>
+        <button class="primary" onclick={doDeactivate} disabled={lifecycleBusy}>Deactivate</button>
+      </div>
+    </div>
+  {/if}
 
   <div class="split" class:show-test={showTest}>
     <div class="config">
@@ -481,6 +541,37 @@
     text-transform: uppercase;
     color: var(--text-tertiary);
     min-width: 9ch;
+  }
+  .lifecycle {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+  }
+  .primary:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+  .gate-reason {
+    font-size: var(--text-sm);
+    color: var(--text-tertiary);
+  }
+  .confirm {
+    margin: 0 0 var(--space-4);
+    padding: var(--space-3) var(--space-4);
+    background: var(--surface-card);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+  }
+  .confirm p {
+    margin: 0 0 var(--space-3);
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+  }
+  .confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-2);
   }
   .test-toggle {
     display: none; /* only shown < 1024px */

@@ -26,6 +26,7 @@ export interface AgentPatch {
   variables?: AgentVariable[];
   skills?: AttachedSkill[];
   costCap?: CostCap;
+  state?: LifecycleState; // Story 5.1 — written ONLY by the gated activate/deactivate routes, never the general PATCH
 }
 
 export interface AgentsRepo {
@@ -59,6 +60,7 @@ function applyPatch(row: AgentRow, patch: AgentPatch): AgentRow {
     ...(patch.variables !== undefined ? { variables: patch.variables } : {}),
     ...(patch.skills !== undefined ? { skills: patch.skills } : {}),
     ...(patch.costCap !== undefined ? { costCap: patch.costCap } : {}),
+    ...(patch.state !== undefined ? { state: patch.state } : {}),
   };
 }
 
@@ -95,6 +97,7 @@ export function drizzleAgentsRepo(db: Db): AgentsRepo {
       if (patch.variables !== undefined) set.variables = patch.variables;
       if (patch.skills !== undefined) set.skills = patch.skills;
       if (patch.costCap !== undefined) set.costCap = patch.costCap;
+      if (patch.state !== undefined) set.state = patch.state;
       if (Object.keys(set).length === 0) return this.get(id); // nothing to change
       const rows = await db.update(agents).set(set).where(eq(agents.id, id)).returning();
       return rows[0] ? toRow(rows[0]) : null;

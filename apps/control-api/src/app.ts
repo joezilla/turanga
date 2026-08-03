@@ -70,7 +70,7 @@ export function createApp(deps: AppDeps = {}) {
   const google = deps.googleOAuth ?? googleOAuth();
   app.route("/", dataConnectionRoutes(dataConnectionsRepo, google, webOrigin));
 
-  app.route("/", agentRoutes(agentsRepo));
+  app.route("/", agentRoutes(agentsRepo, connectionsRepo)); // connectionsRepo → the Activate provider-connected gate (5.1)
 
   const runsRepo = deps.runsRepo ?? memoryRunsRepo();
   // The hub is the live SSE relay; the orchestrator and the routes MUST share one instance.

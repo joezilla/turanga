@@ -23,6 +23,19 @@ export interface CostCap {
   perDay: Money | null;
 }
 
+/** The Activate gate (Story 5.1, FR-5). Returns the human reasons an agent can't be promoted to
+ *  Active, in a stable order — `[]` means it's activatable. The single source of truth shared by the
+ *  server enforcement (control-api, authoritative) and the disabled-with-reason UI, so they can't
+ *  drift. `modelProviderConnected` is computed by the caller from its providers list. */
+export function activationBlockers(agent: { model: string | null; costCap: CostCap }, modelProviderConnected: boolean): string[] {
+  const reasons: string[] = [];
+  if (!agent.model) reasons.push("Select a model.");
+  else if (!modelProviderConnected) reasons.push("The selected model's provider isn't connected — reconnect it in Settings.");
+  if (!agent.costCap.perRun) reasons.push("Set a per-run cost cap.");
+  if (!agent.costCap.perDay) reasons.push("Set a per-day cost cap.");
+  return reasons;
+}
+
 /** A named, reusable parameter referenced from instructions as `{name}` (Story 3.3). */
 export interface AgentVariable {
   name: string;
