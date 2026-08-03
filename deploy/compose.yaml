@@ -86,8 +86,10 @@ services:
       # Authenticates the Guard→orchestrator cost/kill callback (Story 4.5, E4-AD-10).
       GUARD_CALLBACK_TOKEN: ${GUARD_CALLBACK_TOKEN:-dev-guard-callback}
       AGENT_HARNESS_IMAGE: ${AGENT_HARNESS_IMAGE:-turanga/agent-harness:dev}
-      # The named volume the guard's per-run sockets live on (docker-compose prefixes with the project name).
-      GUARD_SANDBOX_VOLUME: turanga_guard-run
+      # The named volume the guard's per-run sockets live on (docker-compose prefixes with the project
+      # name). Tracks COMPOSE_PROJECT_NAME so an isolated test stack (turanga-e2e) mounts ITS own
+      # guard volume, not the dev stack's. Defaults to the dev project when the env var is unset.
+      GUARD_SANDBOX_VOLUME: ${COMPOSE_PROJECT_NAME:-turanga}_guard-run
     ports:
       - "8080:8080"
     volumes:
