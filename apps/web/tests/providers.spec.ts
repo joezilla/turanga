@@ -44,6 +44,28 @@ test("connecting with a bad key shows an error card, and Remove clears it", asyn
   await expect(page.getByText("No providers connected.")).toBeVisible();
 });
 
+test("openai-compatible connect discovers models instead of manual typing (Story 2.4)", async ({ page }) => {
+  await signIn(page);
+  await page.goto("/settings/providers");
+  await page.getByLabel("Provider").selectOption("openai-compatible");
+
+  // The error-prone manual "Models (comma-separated)" field is gone — discovery replaces it.
+  await expect(page.getByText("Models (comma-separated)")).toHaveCount(0);
+
+  // A Discover button is present, disabled until the base URL + key are set.
+  const discover = page.getByRole("button", { name: "Discover models" });
+  await expect(discover).toBeVisible();
+  await expect(discover).toBeDisabled();
+  // Connect is gated until at least one discovered model is selected.
+  await expect(page.getByRole("button", { name: "Connect provider" })).toBeDisabled();
+
+  // Entering the base URL + key enables discovery (the actual /models fetch needs a real endpoint —
+  // gated/manual, like the run/OAuth paths).
+  await page.getByLabel("Base URL").fill("https://example.invalid/v1");
+  await page.getByLabel("API key").fill("sk-test-key");
+  await expect(discover).toBeEnabled();
+});
+
 test("Data connections shows the not-configured state when no Google client is set", async ({ page }) => {
   await signIn(page);
   await page.goto("/settings/connections");

@@ -8,6 +8,7 @@
     providerDependents,
     setEnabledModels,
     refreshModels,
+    discoverModels,
     type Provider,
     type ProviderKind,
     type DependentAgent,
@@ -22,9 +23,14 @@
   let name = $state("");
   let apiKey = $state("");
   let baseUrl = $state("");
-  let models = $state("");
   let busy = $state(false);
   let formError = $state("");
+  // Model discovery (Story 2.4) — for openai-compatible, discover the model list from the base URL +
+  // key instead of typing it. Discovered ids become checkboxes; the checked ones are what gets added.
+  let discovering = $state(false);
+  let discovered = $state<string[] | null>(null); // null = not discovered yet
+  let selected = $state<Set<string>>(new Set());
+  let discoverError = $state("");
 
   // per-card ui
   let rotatingId = $state<string | null>(null);
@@ -54,18 +60,50 @@
   });
 
   const isCompatible = $derived(kind === "openai-compatible");
+  // A compatible provider can only be added once at least one discovered model is selected.
+  const canConnect = $derived(!isCompatible || selected.size > 0);
+
+  function resetDiscovery() {
+    discovered = null;
+    selected = new Set();
+    discoverError = "";
+  }
+
+  // Discover the model list from the entered base URL + key (no connect, nothing persisted).
+  async function onDiscover() {
+    discovering = true;
+    discoverError = "";
+    const r = await discoverModels({ provider: kind, apiKey, baseUrl: baseUrl || undefined });
+    discovering = false;
+    if (r.ok) {
+      discovered = r.value.models;
+      selected = new Set(r.value.models); // default: add them all; the user unchecks any they don't want
+    } else {
+      discovered = null;
+      discoverError = r.error;
+    }
+  }
+
+  function toggleSelected(m: string, on: boolean) {
+    const next = new Set(selected);
+    if (on) next.add(m);
+    else next.delete(m);
+    selected = next;
+  }
 
   async function onConnect(e: SubmitEvent) {
     e.preventDefault();
     busy = true;
     formError = "";
-    const r = await connectProvider({ provider: kind, apiKey, name: name || undefined, baseUrl: baseUrl || undefined, models: models || undefined });
+    // Compatible providers add the selected discovered models; openai/anthropic auto-fetch on connect.
+    const modelsArg = isCompatible ? [...selected] : undefined;
+    const r = await connectProvider({ provider: kind, apiKey, name: name || undefined, baseUrl: baseUrl || undefined, models: modelsArg });
     busy = false;
     if (r.ok) {
       apiKey = "";
       name = "";
       baseUrl = "";
-      models = "";
+      resetDiscovery();
       await load();
     } else {
       formError = r.error;
@@ -141,7 +179,7 @@
   <div class="row">
     <label class="field">
       <span>Provider</span>
-      <select bind:value={kind}>
+      <select bind:value={kind} onchange={resetDiscovery}>
         <option value="openai">OpenAI</option>
         <option value="anthropic">Anthropic</option>
         <option value="openai-compatible">OpenAI-compatible</option>
@@ -160,10 +198,6 @@
       <span>Base URL</span>
       <input type="url" bind:value={baseUrl} placeholder="https://…/v1" />
     </label>
-    <label class="field">
-      <span>Models (comma-separated)</span>
-      <input type="text" bind:value={models} placeholder="llama-3.1-70b, mixtral-8x7b" />
-    </label>
   {/if}
 
   <label class="field">
@@ -171,8 +205,38 @@
     <input type="password" bind:value={apiKey} autocomplete="off" required />
   </label>
 
+  <!-- Model discovery (Story 2.4): for an OpenAI-compatible provider, discover the models from the
+       base URL + key instead of typing them, then pick which to add. -->
+  {#if isCompatible}
+    <div class="discover">
+      <button type="button" class="ghost" onclick={onDiscover} disabled={discovering || !baseUrl || !apiKey}>
+        {discovering ? "Discovering…" : discovered ? "Re-discover models" : "Discover models"}
+      </button>
+      {#if discoverError}<p class="error" role="alert">{discoverError}</p>{/if}
+      {#if discovered}
+        {#if discovered.length === 0}
+          <p class="muted">No models returned by this endpoint — check the base URL, or the provider may not list models.</p>
+        {:else}
+          <p class="muted">{selected.size} of {discovered.length} selected to add.</p>
+          <ul class="discover-list">
+            {#each discovered as m (m)}
+              <li>
+                <label class="model">
+                  <input type="checkbox" checked={selected.has(m)} onchange={(e) => toggleSelected(m, e.currentTarget.checked)} />
+                  <span class="mono-num">{m}</span>
+                </label>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      {:else}
+        <p class="muted">Enter the base URL and API key, then discover the available models.</p>
+      {/if}
+    </div>
+  {/if}
+
   {#if formError}<p class="error" role="alert">{formError}</p>{/if}
-  <button type="submit" class="connect" disabled={busy}>{busy ? "Connecting…" : "Connect provider"}</button>
+  <button type="submit" class="connect" disabled={busy || !canConnect}>{busy ? "Connecting…" : "Connect provider"}</button>
 </form>
 
 <!-- Connected providers -->
@@ -321,6 +385,37 @@
   .connect:disabled {
     color: var(--text-disabled);
     cursor: default;
+  }
+  /* Model discovery (Story 2.4) */
+  .discover {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+  .discover > button {
+    align-self: flex-start;
+    height: var(--control-h-sm);
+    padding: 0 var(--space-3);
+    font-size: var(--text-xs);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    background: var(--surface-card);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-subtle);
+  }
+  .discover > button:disabled {
+    color: var(--text-disabled);
+    cursor: default;
+  }
+  .discover-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    max-height: 220px;
+    overflow-y: auto;
   }
   .cards {
     list-style: none;

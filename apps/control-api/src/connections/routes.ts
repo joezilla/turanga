@@ -109,6 +109,24 @@ export function connectionRoutes(repo: ConnectionsRepo, gateway: ModelGateway, a
     return c.json({ provider: view((await repo.getProvider(id))!) }, 201);
   });
 
+  // Discover a provider's models WITHOUT connecting (Story 2.4). Lets the connect form show the model
+  // list once the base URL + key are entered — no manual typing. Verifies the key (parses /v1/models)
+  // and returns the ids; persists NOTHING and never echoes the key (AD-10).
+  app.post("/connections/providers/discover", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+    const provider = body.provider;
+    const apiKey = body.apiKey;
+    if (typeof provider !== "string" || !PROVIDERS.includes(provider as ProviderKind) || typeof apiKey !== "string" || !apiKey) {
+      return c.json({ error: "Provider and API key are required." }, 400);
+    }
+    const kind = provider as ProviderKind;
+    const baseUrl = typeof body.baseUrl === "string" && body.baseUrl.trim() ? body.baseUrl.trim() : undefined;
+    if (kind === "openai-compatible" && !baseUrl) return c.json({ error: "An OpenAI-compatible provider needs a base URL to discover models." }, 400);
+    const v = await gateway.verify({ provider: kind, name: kind, apiKey, baseUrl, models: [] });
+    if (!v.ok) return c.json({ error: v.error ?? "Couldn't verify the provider." }, 400);
+    return c.json({ models: [...new Set(v.models ?? [])] });
+  });
+
   // Re-verify a provider with the supplied key, re-fetch its catalog, reconcile the enabled set
   // (preserving the user's choices for still-present models — Story 2.4 AC4), and re-register with
   // LiteLLM. Registers the NEW models BEFORE dropping the old, so a register failure can never leave a

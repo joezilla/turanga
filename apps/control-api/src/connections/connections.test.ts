@@ -87,6 +87,22 @@ describe("connect a model provider", () => {
     expect(p.enabledModels).toEqual(["gpt-4o", "gpt-4o-mini"]); // the embedding is off by default
   });
 
+  it("discovers models without connecting — returns the list, persists nothing (Story 2.4)", async () => {
+    const { app, cookie } = await appWithSession(); // openai fake catalog = gpt-4o, gpt-4o-mini, text-embedding-3-small
+    const res = await app.request("/connections/providers/discover", { ...jsonPost({ provider: "openai", apiKey: "sk-abcd1234" }), headers: { "content-type": "application/json", cookie } });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { models: string[] }).models).toEqual(["gpt-4o", "gpt-4o-mini", "text-embedding-3-small"]);
+    // Nothing was persisted — the providers list is still empty.
+    expect(((await (await app.request("/connections/providers", { headers: { cookie } })).json()) as { providers: unknown[] }).providers).toEqual([]);
+  });
+
+  it("discover: 400 for a bad key and 400 for a compatible provider without a base URL (Story 2.4)", async () => {
+    const { app, cookie } = await appWithSession(fakeModelGateway({ verifyOk: false, verifyError: "The provider rejected the key (HTTP 401)." }));
+    expect((await app.request("/connections/providers/discover", { ...jsonPost({ provider: "openai", apiKey: "sk-bad" }), headers: { "content-type": "application/json", cookie } })).status).toBe(400);
+    const { app: app2, cookie: cookie2 } = await appWithSession();
+    expect((await app2.request("/connections/providers/discover", { ...jsonPost({ provider: "openai-compatible", apiKey: "sk-x" }), headers: { "content-type": "application/json", cookie: cookie2 } })).status).toBe(400); // no baseUrl
+  });
+
   it("sets the enabled subset via PUT /models, ignoring ids not in the catalog (Story 2.4)", async () => {
     const { app, cookie } = await appWithSession();
     const created = ((await (await app.request("/connections/providers", { ...jsonPost({ provider: "openai", apiKey: "sk-abcd1234" }), headers: { "content-type": "application/json", cookie } })).json()) as { provider: { id: string } }).provider;

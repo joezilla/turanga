@@ -23,7 +23,7 @@ export interface ConnectInput {
   apiKey: string;
   name?: string;
   baseUrl?: string;
-  models?: string;
+  models?: string | string[]; // discovered/selected ids (array) or a comma string; control-api parses both
 }
 
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -46,6 +46,16 @@ export async function listProviders(): Promise<Result<Provider[]>> {
 
 export function connectProvider(input: ConnectInput): Promise<Result<{ provider: Provider }>> {
   return req("/connections/providers", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+// Discover a provider's models before connecting (Story 2.4) — verifies the key + returns the model
+// list without persisting anything, so the connect form can show them instead of asking you to type.
+export function discoverModels(input: { provider: ProviderKind; apiKey: string; baseUrl?: string }): Promise<Result<{ models: string[] }>> {
+  return req("/connections/providers/discover", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
