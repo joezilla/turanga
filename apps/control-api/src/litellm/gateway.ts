@@ -106,9 +106,11 @@ export function httpModelGateway(litellmBaseUrl: string, masterKey: string): Mod
       const res = await fetch(url, { headers });
       if (!res.ok) return { ok: false, error: `The provider rejected the key (HTTP ${res.status}). Check the key and try again.` };
       // Story 2.4: parse the model catalog too (all three return { data: [{ id }, …] }). Best-effort —
-      // a verified key with an unparseable body still connects (models fall back / can be refreshed).
-      const json = (await res.json().catch(() => ({}))) as { data?: { id?: unknown }[] };
-      const models = [...new Set((json.data ?? []).map((m) => m.id).filter((x): x is string => typeof x === "string" && x.length > 0))];
+      // a verified key with an unparseable/oddly-shaped body still connects (a non-array `data` must not
+      // throw the whole verify into "connection failed"; models fall back / can be refreshed).
+      const json = (await res.json().catch(() => ({}))) as { data?: unknown };
+      const data = Array.isArray(json.data) ? (json.data as { id?: unknown }[]) : [];
+      const models = [...new Set(data.map((m) => m?.id).filter((x): x is string => typeof x === "string" && x.length > 0))];
       return { ok: true, models };
     } catch {
       return { ok: false, error: "Couldn't reach the provider to verify the key. Check the base URL / network." };

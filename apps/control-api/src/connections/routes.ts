@@ -3,7 +3,7 @@ import { ulid } from "@turanga/domain";
 import type { ConnectionsRepo, ProviderRow } from "./repo.js";
 import type { AgentsRepo } from "../agents/repo.js";
 import type { ModelGateway, ProviderKind, RegisterInput } from "../litellm/gateway.js";
-import { defaultEnabledModels, reconcileEnabled } from "./models.js";
+import { defaultEnabledModels, reconcileEnabled, resolveCatalog } from "./models.js";
 
 const PROVIDERS: ProviderKind[] = ["openai", "anthropic", "openai-compatible"];
 
@@ -94,9 +94,9 @@ export function connectionRoutes(repo: ConnectionsRepo, gateway: ModelGateway, a
       await repo.createProvider({ ...base, status: "error", lastError: v.error ?? "Verification failed." });
       return c.json({ provider: view((await repo.getProvider(id))!) }, 201);
     }
-    // Story 2.4: persist the fetched catalog + a chat-default enabled subset. openai-compatible falls
-    // back to the typed models when its /models is empty/unimplemented. Register covers the catalog.
-    const fetched = v.models && v.models.length ? [...new Set(v.models)] : models;
+    // Story 2.4: persist the catalog + a chat-default enabled subset. openai/anthropic use the fetched
+    // /v1/models; openai-compatible keeps the user's typed list (never a huge upstream catalog).
+    const fetched = resolveCatalog(kind, v.models ?? [], models);
     const enabledModels = defaultEnabledModels(kind, fetched);
     let ids: string[] = [];
     try {
@@ -109,26 +109,30 @@ export function connectionRoutes(repo: ConnectionsRepo, gateway: ModelGateway, a
     return c.json({ provider: view((await repo.getProvider(id))!) }, 201);
   });
 
-  // Re-verify a provider with the supplied key, re-fetch its model catalog, reconcile the enabled set
+  // Re-verify a provider with the supplied key, re-fetch its catalog, reconcile the enabled set
   // (preserving the user's choices for still-present models — Story 2.4 AC4), and re-register with
-  // LiteLLM. Shared by rotate-key (new key) and refresh-models (re-enter key). The key is never stored
-  // control-api-side (AD-10) — that's why both flows take it fresh.
-  async function reverifyAndSync(existing: ProviderRow, apiKey: string): Promise<ProviderRow> {
+  // LiteLLM. Registers the NEW models BEFORE dropping the old, so a register failure can never leave a
+  // "connected" provider pointing at deleted registrations. Does NOT mutate status on failure — the
+  // caller decides (rotate flips to error; refresh keeps the working connection). Shared by rotate-key
+  // (new key) + refresh-models (re-enter key). The key is never stored control-api-side (AD-10).
+  async function syncCatalog(existing: ProviderRow, apiKey: string): Promise<{ ok: true; provider: ProviderRow } | { ok: false; error: string }> {
     const kind = existing.provider as ProviderKind;
     const input: RegisterInput = { provider: kind, name: existing.name, apiKey, baseUrl: existing.baseUrl ?? undefined, models: existing.models };
     const v = await gateway.verify(input);
-    if (!v.ok) {
-      await repo.setStatus(existing.id, "error", v.error ?? "Verification failed.", last4(apiKey));
-      return (await repo.getProvider(existing.id))!;
-    }
-    const fetched = v.models && v.models.length ? [...new Set(v.models)] : existing.models;
+    if (!v.ok) return { ok: false, error: v.error ?? "Verification failed." };
+    const fetched = resolveCatalog(kind, v.models ?? [], existing.models);
     const enabledModels = reconcileEnabled(kind, existing.models, existing.enabledModels, fetched);
-    await gateway.unregister(existing.litellmModelIds);
-    const ids = await gateway.register({ ...input, models: fetched });
+    let ids: string[];
+    try {
+      ids = await gateway.register({ ...input, models: fetched }); // new registrations first…
+    } catch {
+      return { ok: false, error: "The key verified, but registering the models with the gateway failed. The provider is unchanged." };
+    }
+    await gateway.unregister(existing.litellmModelIds); // …then drop the old (best-effort, no longer referenced)
     await repo.setModelIds(existing.id, ids);
     await repo.setModels(existing.id, fetched, enabledModels);
     await repo.setStatus(existing.id, "connected", null, last4(apiKey));
-    return (await repo.getProvider(existing.id))!;
+    return { ok: true, provider: (await repo.getProvider(existing.id))! };
   }
 
   app.post("/connections/providers/:id/rotate-key", async (c) => {
@@ -136,17 +140,26 @@ export function connectionRoutes(repo: ConnectionsRepo, gateway: ModelGateway, a
     if (!existing) return c.json({ error: "Not found." }, 404);
     const body = (await c.req.json().catch(() => ({}))) as { apiKey?: unknown };
     if (typeof body.apiKey !== "string" || !body.apiKey) return c.json({ error: "A new API key is required." }, 400);
-    return c.json({ provider: view(await reverifyAndSync(existing, body.apiKey)) });
+    const r = await syncCatalog(existing, body.apiKey);
+    if (!r.ok) {
+      // Rotate is a deliberate key REPLACEMENT — a bad new key marks the provider error (Story 2.1).
+      await repo.setStatus(existing.id, "error", r.error, last4(body.apiKey));
+      return c.json({ provider: view((await repo.getProvider(existing.id))!) });
+    }
+    return c.json({ provider: view(r.provider) });
   });
 
   // Refresh the model catalog (Story 2.4). The key isn't kept control-api-side (AD-10), so a refresh
-  // re-takes it — same sync as rotate; the enabled set is reconciled, not reset.
+  // re-takes it. Unlike rotate, a bad key here must NOT disconnect a working provider — a re-query
+  // failure returns an error and leaves the connection untouched.
   app.post("/connections/providers/:id/refresh-models", async (c) => {
     const existing = await repo.getProvider(c.req.param("id"));
     if (!existing) return c.json({ error: "Not found." }, 404);
     const body = (await c.req.json().catch(() => ({}))) as { apiKey?: unknown };
     if (typeof body.apiKey !== "string" || !body.apiKey) return c.json({ error: "The API key is required to refresh models." }, 400);
-    return c.json({ provider: view(await reverifyAndSync(existing, body.apiKey)) });
+    const r = await syncCatalog(existing, body.apiKey);
+    if (!r.ok) return c.json({ error: r.error }, 400); // provider stays connected — a refresh typo can't break it
+    return c.json({ provider: view(r.provider) });
   });
 
   // Set which fetched models are enabled/selectable (Story 2.4). Unknown ids (not in the catalog) are

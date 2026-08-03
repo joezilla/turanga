@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isChatModel, defaultEnabledModels, reconcileEnabled } from "./models.js";
+import { isChatModel, defaultEnabledModels, reconcileEnabled, resolveCatalog } from "./models.js";
 
 describe("provider model curation (Story 2.4)", () => {
   it("isChatModel: openai keeps chat families, excludes non-chat", () => {
@@ -36,5 +36,18 @@ describe("provider model curation (Story 2.4)", () => {
   });
   it("reconcileEnabled: a first fetch (no prior) equals the chat default", () => {
     expect(reconcileEnabled("openai", [], [], ["gpt-4o", "text-embedding-3-small"])).toEqual(["gpt-4o"]);
+  });
+
+  it("isChatModel: a search-preview chat model is NOT excluded (regex refinement)", () => {
+    expect(isChatModel("openai", "gpt-4o-search-preview")).toBe(true);
+  });
+
+  it("resolveCatalog: openai/anthropic prefer the fetched list; openai-compatible keeps the curated list", () => {
+    // openai/anthropic use fetched (fresh catalog); fall back to curated only when fetched is empty.
+    expect(resolveCatalog("openai", ["gpt-4o", "gpt-4o"], ["stale"])).toEqual(["gpt-4o"]); // deduped
+    expect(resolveCatalog("openai", [], ["existing"])).toEqual(["existing"]);
+    // openai-compatible keeps the user-curated list — never a huge upstream /models catalog.
+    expect(resolveCatalog("openai-compatible", ["a", "b", "c", "d"], ["llama-3", "mixtral"])).toEqual(["llama-3", "mixtral"]);
+    expect(resolveCatalog("openai-compatible", ["fallback"], [])).toEqual(["fallback"]); // only if nothing curated
   });
 });

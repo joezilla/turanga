@@ -3,7 +3,7 @@ baseline_commit: 5fb0487d4bda39d4c45e54d33eae7599ba05eb40
 ---
 # Story 2.4: Discover and curate provider models
 
-Status: review
+Status: done
 
 <!-- New story (post-hoc addition to Epic 2, Connections). Not in the original epics.md — captured
      from a direct user request on 2026-08-03. Extends Story 2.1 (connect a model provider) + touches
@@ -111,7 +111,7 @@ claude-opus-4-8[1m]
 - **AC3:** `PATCH /agents` validates the model against the connected provider's enabled set (kind-scoped — see Debug Log).
 - **AC4:** `reconcileEnabled` on refresh — still-present models keep the user's choice, new models follow the chat default, removed models drop.
 - **Read-only / AD-7 / AD-10:** all catalog + enabled writes go through control-api (sole writer); provider keys stay out of control-api (only `keyLast4`); refresh re-takes the key. LiteLLM registration is unchanged by toggling (wildcards for openai/anthropic; compatible registers the fetched catalog) — true LiteLLM-level enforcement of the enabled set is **deferred** (noted in deferred-work.md).
-- **Testing note (gated/manual):** a real provider connection needs a real API key (the live stack uses the real gateway, and there's no endpoint to seed a connected row without verify), so the connected-provider UI (toggles, dropdown population, Refresh) is **gated/manual** — the same pattern as the run happy-path + OAuth. Coverage moved to strong control-api **unit** tests (the fetch/parse, chat-default, reconcile, PUT-enabled, refresh-reconcile, and the PATCH accept/reject) + the pure-helper truth tables; the e2e run (23/23) is a **regression** pass confirming the model-validation + ModelSelector changes don't break existing flows.
+- **Testing note (gated/manual) — Task 6 clarification:** the Task-6 subtask as written ("the deterministic e2e seeds a connected provider with fetched models via the API") was **not feasible** — the live stack uses the real gateway and there's no endpoint that creates a *connected* provider row without a real-key verify. So the connected-provider UI (toggles, dropdown population, Refresh) is **gated/manual**, the same pattern as the run happy-path + OAuth. Coverage moved to strong control-api **unit** tests (the fetch/parse, chat-default, reconcile, PUT-enabled, refresh-reconcile, and the PATCH accept/reject) + the pure-helper truth tables; the e2e run (23/23) is a **regression** pass confirming the model-validation + ModelSelector changes don't break existing flows.
 - **Verification:** `pnpm -r build` 6/6 · `svelte-check` 0/0 · `pnpm lint` clean · unit — domain 3, web 22, contracts 9, egress-guard 23, agent-harness 4, control-api 117 (+1 skipped; +13 for 2.4) · **23/23 Playwright e2e** on a fresh live stack with migration 0010 applied · `docker compose down -v` teardown.
 
 ### File List
@@ -126,6 +126,7 @@ claude-opus-4-8[1m]
 - apps/web/src/lib/connections.ts
 - apps/web/src/lib/components/ModelSelector.svelte
 - apps/web/src/routes/(app)/settings/providers/+page.svelte
+- _bmad-output/implementation-artifacts/deferred-work.md (Story 2.4 + code-review deferrals)
 
 **Added**
 - apps/control-api/src/connections/models.ts
@@ -136,3 +137,20 @@ claude-opus-4-8[1m]
 | Date | Change |
 | --- | --- |
 | 2026-08-03 | Story 2.4 implemented (post-hoc Epic 2 enhancement): fetch + persist a provider's model catalog at connect (the `/v1/models` body was already fetched, just discarded), a chat-default `enabledModels` subset + a `reconcileEnabled` for refresh, a `PUT …/models` toggle + a `refresh-models` (re-enter key) endpoint, the provider-card model list/toggles/count/Refresh UI, the `ModelSelector` sourcing `enabledModels`, and kind-scoped `PATCH /agents` model validation. Migration 0010 adds `enabled_models`. Verified: build 6/6, svelte-check 0/0, lint clean, unit (control-api 117 incl. +13, web 22), 23/23 e2e on a fresh live stack; the connected-provider UI is gated/manual (real key). Status → review. |
+
+## Review Findings
+
+Adversarial code review (Blind Hunter + Edge Case Hunter + Acceptance Auditor) of commit 8d974de vs 5fb0487. **AD-10 key custody verified clean — no key leak.** All 4 ACs delivered (AC3 kind-scoped, disclosed). No Critical after triage; 2 High. 8 patch, 3 deferred, 2 dismissed.
+
+- [x] [Review][Patch] `reverifyAndSync` unregisters the old LiteLLM models BEFORE a re-register that can throw — on a register failure the row stays `status:"connected"` with deleted registrations (silent breakage; no 500-safe recovery). Fix: register the new catalog first, then drop the old, guarded. (blind, high) [connections/routes.ts:126-127]
+- [x] [Review][Patch] `refresh-models` flips a WORKING connected provider to `error` on any verify failure (a typo'd/expired key), returned at HTTP 200 → the web shows no error and the model UI vanishes. Fix: refresh returns 400 without touching status; only rotate-key (a deliberate key replacement) flips to error. (blind+edge, high) [connections/routes.ts:120-123,144-150]
+- [x] [Review][Patch] `providerVerify` parse: `(json.data ?? [])` only guards null/undefined — a non-array `data` throws into the catch and a VALID key is reported as a connection failure (contradicts the code's own comment). Fix: `Array.isArray(json.data) ? … : []`. (blind+edge, medium) [gateway.ts:111]
+- [x] [Review][Patch] openai-compatible now registers + enables the FULL fetched `/models` catalog (potentially hundreds → sequential `/model/new` on connect + all-enabled), overriding the user's typed list. Fix: for openai-compatible use the typed/curated list (never the upstream `/models`); fetch is for openai/anthropic. (blind, medium) [connections/routes.ts:99,124]
+- [x] [Review][Patch] Migration 0010 adds `enabled_models` defaulting to `[]` with no backfill → any pre-2.4 provider vanishes from the (now `enabledModels`-sourced) agent picker. Fix: backfill `UPDATE connections SET enabled_models = models`. (blind, low — no real data yet, prealpha) [drizzle/0010_condemned_loners.sql]
+- [x] [Review][Patch] `NON_CHAT` over-excludes legit chat models by default — `search` drops `gpt-4o-search-preview` (a chat model); `moderat` is redundant with `moderation`. Fix: refine the exclusion regex. (blind, low) [connections/models.ts:6]
+- [x] [Review][Patch] The web optimistic model toggle has no request sequencing — rapid toggles / out-of-order PUT responses can flip-flop the UI (self-heals on reload). Fix: a per-provider seq guard (as done in the 5.3 review). (edge, low) [providers/+page.svelte onToggle]
+- [x] [Review][Patch] Bookkeeping: `deferred-work.md` is missing from the File List; the Task 6 e2e subtask is checked but the spec-requested "seed a connected provider via the API" e2e wasn't feasible (real key needed) — coverage is unit + gated/manual. Fix the docs to state this plainly. (auditor, trivial)
+- [x] [Review][Defer] openai/anthropic empty/absent `/v1/models` parse → a connected-but-empty provider (no models in the picker); recovery is a refresh (same parse). Degrades gracefully in the UI ("No models — Refresh"); unlikely in practice. — deferred
+- [x] [Review][Defer] A provider `name` equal to a different kind's prefix (e.g. a compatible provider named "openai") cross-contaminates the kind/name model validation + the dependents route. Pre-existing (shared with 5.1 `modelProviderConnected` + 3.6 dependents). — deferred, pre-existing
+- [x] [Review][Defer] `PUT /models` accepts a set on a non-`connected` provider and silently drops unknown ids with no caller feedback. Minor. — deferred
+- Dismissed (2): PATCH accepts a model with no `/` (pre-existing leniency; enforcing a slash would break the length-cap test + is outside AC3's enabled-membership scope); the chat heuristic not covering future families (o5, …) — by design, the user toggles.

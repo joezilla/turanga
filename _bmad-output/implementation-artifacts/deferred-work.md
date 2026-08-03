@@ -1,5 +1,10 @@
 # Deferred Work
 
+## Deferred from: code review of 2-4-discover-curate-provider-models (2026-08-03)
+- openai/anthropic whose `/v1/models` returns empty/unparseable connect as "connected" but with an empty catalog → no models in the agent picker; the only recovery is a refresh (same parse). The providers page shows "No models — Refresh to fetch." so it degrades gracefully; unlikely in practice (OpenAI/Anthropic always return a list). Consider a "connected, awaiting models" surface if it ever bites.
+- A provider `name` equal to another kind's prefix (e.g. a compatible provider named "openai") cross-contaminates the kind/name matching in `PATCH /agents` model validation and the `/dependents` route (union of enabled sets across the collision). Pre-existing — shared with 5.1 `modelProviderConnected` and 3.6 dependents. Tighten to kind-only matching (with an explicit compatible-name namespace) when multi-provider-per-kind is real.
+- `PUT /connections/providers/:id/models` accepts an enabled set on a non-`connected` provider and silently drops ids not in the catalog without telling the caller which were ignored. Minor; add a note in the response if it matters.
+
 ## Deferred from: Story 2.4 (discover + curate provider models) (2026-08-03)
 - The enabled-model set is a UI + set-time-validation filter, NOT LiteLLM-enforced. openai/anthropic stay wildcard (`openai/*`), so a disabled model would still resolve at the LiteLLM layer if an agent somehow referenced it (the PATCH validation + the dropdown prevent that). True enforcement = register discrete enabled models instead of wildcards and re-register on toggle. Revisit if per-model enforcement (or per-model pricing/routing) is needed.
 - `PATCH /agents` model validation is kind-scoped: it enforces enabled-membership only when the model's provider KIND is connected (a model for an unconnected kind is allowed — set-now-connect-later; the 5.1 activation gate catches it at go-live). If a stricter "must always be a known enabled model" is ever wanted, it needs the e2e/test setup to connect a provider first.

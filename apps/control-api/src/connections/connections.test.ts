@@ -114,6 +114,17 @@ describe("connect a model provider", () => {
     expect((await app.request("/connections/providers/nope/refresh-models", { ...jsonPost({ apiKey: "k" }), headers: { "content-type": "application/json", cookie } })).status).toBe(404);
   });
 
+  it("a bad key on refresh-models does NOT disconnect a working provider (400, stays connected)", async () => {
+    // Seed a connected provider, then refresh through a gateway that rejects the key.
+    const { app, cookie, connectionsRepo } = await appWithSession(fakeModelGateway({ verifyOk: false, verifyError: "The provider rejected the key (HTTP 401)." }));
+    await connectionsRepo.createProvider({ id: "seed1", provider: "openai", name: "OpenAI", baseUrl: null, keyLast4: "abcd", status: "connected", lastError: null, models: ["gpt-4o", "gpt-4o-mini"], enabledModels: ["gpt-4o"], litellmModelIds: ["m1"] });
+    const res = await app.request("/connections/providers/seed1/refresh-models", { ...jsonPost({ apiKey: "sk-wrong" }), headers: { "content-type": "application/json", cookie } });
+    expect(res.status).toBe(400); // refresh failed…
+    const still = ((await (await app.request("/connections/providers", { headers: { cookie } })).json()) as { providers: { id: string; status: string; enabledModels: string[] }[] }).providers.find((p) => p.id === "seed1")!;
+    expect(still.status).toBe("connected"); // …but the working provider is untouched
+    expect(still.enabledModels).toEqual(["gpt-4o"]); // enabled set preserved
+  });
+
   it("removes a provider (unregisters LiteLLM models)", async () => {
     const { app, cookie, gateway } = await appWithSession();
     const created = (await (await app.request("/connections/providers", { ...jsonPost({ provider: "anthropic", apiKey: "sk-a-4321" }), headers: { "content-type": "application/json", cookie } })).json()) as { provider: { id: string } };

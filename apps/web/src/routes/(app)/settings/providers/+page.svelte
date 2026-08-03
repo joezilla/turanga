@@ -36,6 +36,7 @@
   let refreshingId = $state<string | null>(null);
   let refreshKeyValue = $state("");
   let modelFilter = $state<Record<string, string>>({}); // per-provider filter text (long catalogs)
+  const toggleSeq: Record<string, number> = {}; // per-provider write generation (drops out-of-order responses)
 
   async function load() {
     loading = true;
@@ -100,11 +101,15 @@
     else loadError = r.error;
   }
 
-  // Toggle a single model on/off (Story 2.4) — optimistic, reconciled from the server response.
+  // Toggle a single model on/off (Story 2.4) — optimistic, reconciled from the server response. A
+  // per-provider generation drops a superseded (out-of-order) response so rapid toggles don't flip-flop.
   async function onToggle(p: Provider, model: string, enable: boolean) {
     const next = enable ? [...new Set([...p.enabledModels, model])] : p.enabledModels.filter((m) => m !== model);
+    const seq = (toggleSeq[p.id] ?? 0) + 1;
+    toggleSeq[p.id] = seq;
     providers = providers.map((x) => (x.id === p.id ? { ...x, enabledModels: next } : x)); // optimistic
     const r = await setEnabledModels(p.id, next);
+    if (toggleSeq[p.id] !== seq) return; // a newer toggle superseded this response — drop it
     if (r.ok) providers = providers.map((x) => (x.id === p.id ? r.value.provider : x));
     else await load(); // a write failure → reconcile from the server (don't leave a wrong toggle)
   }
