@@ -41,8 +41,9 @@ export function reduceToolStats(runs: { transcript: ControlChannelMessage[]; cre
   for (const run of runs) {
     for (const m of run.transcript) {
       if (m.type !== "tool") continue;
+      // Runs are scanned newest-first, so the FIRST message seen for a toolId (the `?? {...}` default)
+      // captures the freshest display name; don't overwrite it with older runs' names.
       const e = acc.get(m.toolId) ?? { toolName: m.toolName, invocations: 0, ok: 0, errors: 0, refusals: 0, totalLatency: 0, lastUsedAt: null };
-      e.toolName = m.toolName; // keep the freshest display name
       e.invocations++;
       if (m.outcome === "ok") e.ok++;
       else if (m.outcome === "refused") e.refusals++;

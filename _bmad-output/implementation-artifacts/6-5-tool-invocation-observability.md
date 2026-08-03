@@ -3,7 +3,7 @@ baseline_commit: 209d41f0db4a5498dfe09f5be5836f60f7ca776b
 ---
 # Story 6.5: Tool invocation observability
 
-Status: review
+Status: done
 
 <!-- Fifth and FINAL story of Epic 6 — closes the epic. Story 6.4 made tools callable through the
      Guard, but a SUCCESSFUL tool call is invisible (it folds into the model context; only refusals
@@ -74,6 +74,18 @@ so that I can trust what's running and answer "what did it call, and what was bl
   - [x] **web unit** (if a component test exists) or **svelte-check**: `RunTranscript` renders a `tool` row with the outcome word + latency. At minimum `svelte-check` 0.
   - [x] **Playwright e2e (isolated stack incl. `mcp-stub`, serial):** the payoff 6.4 couldn't assert — connect the stub tool, grant `get_time`, run the agent, and the run transcript (test pane or run-review) shows a **`tool` row: "Weather · get_time · ok"** with a latency. Given run-streaming flakiness keep it best-effort but now there IS a positive artifact to assert. Distinct `x-forwarded-for` per `signIn`; clean up.
   - [x] `svelte-check` 0 · `pnpm -r build` (8 workspaces) · `pnpm lint` · all unit suites · e2e green · teardown. **Run e2e via `deploy/test-stack.sh` (project `turanga-e2e`) — NEVER `docker compose down -v` on the dev stack** (it wipes `Clyde`/`Untitled agent`/`wopr`). `pnpm -r build` before any Docker build (the contract bump touches every service — rebuild all images for the e2e; a `.default([])` Zod field is optional on input but required on output, so `pnpm -r build` catches what `pnpm -r test` misses). Restore the dev stack after; verify data intact.
+
+### Review Findings (2026-08-03)
+
+**Patch (all applied 2026-08-03):**
+- [x] [Review][Patch] AD-10: a transport-error `detail` passes the raw upstream error to the sandbox + records it on the transcript — contradicts the contract claim "detail … never a secret — the Guard composed it"; the raw MCP/undici error can carry the tool endpoint URL/host or the server's response body [apps/egress-guard/src/mcp.ts:47 → guard.ts:370 → agent-harness/src/main.ts:144]. **Fixed:** the sandbox-facing error is now a generic Guard-composed string ("Couldn't reach the tool endpoint."); the raw cause is logged Guard-side (`console.error`) for the operator only.
+- [x] [Review][Patch] Stale tool-stats flash on agent navigation — `toolStats` is never reset in `load()`; A→B renders A's per-tool activity until B's async fetch resolves [apps/web/src/routes/(app)/agents/[id]/+page.svelte:load]. **Fixed:** `toolStats = []` at the start of `load()`.
+- [x] [Review][Patch] `reduceToolStats` resolves the OLDEST run's `toolName`, not the freshest — the `e.toolName = m.toolName` reassignment runs newest-first, so the last (oldest) write wins; the comment claims "freshest" [apps/control-api/src/runs/repo.ts:reduceToolStats]. **Fixed:** dropped the reassignment — the `?? {...}` default already captures the freshest (first-seen = newest run).
+- [x] [Review][Patch] A long/unbreakable tool `detail` can overflow the transcript row — `.tool-detail` has no `overflow-wrap`/`min-width:0` [apps/web/src/lib/components/RunTranscript.svelte]. **Fixed:** added `min-width:0` + `overflow-wrap: anywhere` + `word-break`.
+
+**Defer (pre-existing):**
+- [x] [Review][Defer] Only the first granted operation per tool is invoked/recorded [apps/agent-harness/src/main.ts:198] — deferred, pre-existing (6.4 deterministic harness stub; a model-driven tool loop is future work)
+- [x] [Review][Defer] `GET /agents/:id/tool-stats` has no agent-ownership check (IDOR if the platform becomes multi-tenant) [apps/control-api/src/runs/routes.ts:412] — deferred, pre-existing (matches `/agents/:id/cost` exactly; a whole-surface concern)
 
 ## Dev Notes
 

@@ -62,3 +62,7 @@
 - POST /runs has no ownership/tenancy check (single-user MVP) — revisit if multi-tenant.
 - Secrets (litellm master key, guard admin token) default to well-known values — a production-refusal / required-secret pass across all services.
 - runs.transcript jsonb has no growth cap — revisit when multi-turn agent loops land (4.4).
+
+## Deferred from: code review of 6-5-tool-invocation-observability (2026-08-03)
+- Only the first granted operation per tool is invoked/recorded (agent-harness/src/main.ts:198). The Phase-1b harness stub calls `tool.operations[0]` only, so the per-tool aggregate structurally can't reflect a tool's other granted operations. Pre-existing 6.4 limitation; resolves when a model-driven tool-use loop replaces the deterministic stub.
+- `GET /agents/:id/tool-stats` (and its sibling `/agents/:id/cost`) has no agent-ownership/existence check — any authenticated session can read any agent's stats. Fine for the single-tenant MVP; an IDOR to close if turanga becomes multi-tenant. Address the whole `/agents/:id/*` surface together.

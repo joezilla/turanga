@@ -104,5 +104,8 @@
   }
   .tool-detail {
     color: var(--text-tertiary);
+    min-width: 0; /* allow the flex child to shrink so a long unbreakable detail wraps, not overflows */
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
 </style>

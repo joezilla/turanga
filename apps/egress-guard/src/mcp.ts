@@ -44,7 +44,11 @@ export function httpMcpToolCaller(): McpToolCaller {
       const r = await client.callTool({ name: input.operation, arguments: input.arguments ?? {} });
       return { ok: true, content: (r.content ?? []) as unknown[], isError: !!r.isError };
     } catch (e) {
-      return { ok: false, error: `Couldn't reach the tool endpoint. (${msg(e)})` };
+      // AD-10: the sandbox-facing error MUST be Guard-composed — the raw MCP/undici error can carry
+      // the tool endpoint URL/host or the server's response body (the agent must never learn the URL).
+      // Log the raw cause Guard-side for the operator; return only a generic message to the run.
+      console.error(`[egress-guard] tool call failed (${input.operation}):`, msg(e));
+      return { ok: false, error: "Couldn't reach the tool endpoint." };
     } finally {
       await client.close().catch(() => {});
     }

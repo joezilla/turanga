@@ -212,6 +212,7 @@
     const target = id; // guard against a fast id change resolving out of order
     cancelPendingSaves();
     clearTest(); // a different agent starts with a fresh test pane
+    toolStats = []; // …and fresh tool-activity (the async fetch below repopulates for this agent)
     loading = true;
     notFound = false;
     loadError = "";
