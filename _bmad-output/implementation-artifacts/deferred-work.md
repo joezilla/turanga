@@ -1,5 +1,9 @@
 # Deferred Work
 
+## Deferred from: code review of 5-3-run-history-observability (2026-08-03)
+- Memory vs drizzle `list`/`listSummary` ordering parity: drizzle sorts by `desc(createdAt), desc(id)` while the memory repo returns insertion order (`unshift`, no createdAt sort) — they agree only while `createdAt` is monotonic with insertion. Pre-existing (inherited from `list`); the 5.3 tests use monotonic timestamps. Make the memory repo sort by createdAt to truly match if it ever matters for a test.
+- `GET /runs` with no `agentId` returns up to 100 summaries across ALL agents to any authenticated session. Pre-existing; the web always scopes by agentId. Folds into the deferred multi-tenancy / run-ownership work (see the `GET /runs` ownership item above) — close them together.
+
 ## Deferred from: Story 5.2 (operate active agents — live status + spend) (2026-08-03)
 - The agents-list live meter refreshes by a 5s visibility-aware **poll**, not SSE — there is no per-agent live-cost stream (SSE is per-run in the test pane, E4-AD-7) and the runs-table sum only advances at run-terminal, so sub-second liveness buys nothing. If a live in-flight tick on the list is ever wanted, add a per-agent cost SSE (fan-out) or fold cost into the existing run SSE; until then the poll is intentional.
 - The list meter counts only **terminal** run cost (`cost_micros` persists at run end); an in-flight run's spend appears on the list only after it resolves. Live in-flight spend is a detail/test-pane concern (the per-run SSE meter). Revisit with the SSE-for-list item above if needed.

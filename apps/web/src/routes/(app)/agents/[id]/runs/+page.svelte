@@ -4,20 +4,31 @@
   // — for a killed/failed run — the cause (reason). Read-only over GET /runs?agentId (E4-AD-7).
   import { page } from "$app/state";
   import { ArrowLeft } from "@lucide/svelte";
-  import { listRuns, type RunSummary } from "$lib/runs";
+  import { listRuns, runCause, type RunSummary } from "$lib/runs";
   import { formatMicros } from "$lib/money";
   import { formatTimestamp } from "$lib/datetime";
   import RunStatusDot from "$lib/components/RunStatusDot.svelte";
 
+  const RUN_LIMIT = 100; // control-api's newest-first list cap (repo DEFAULT_LIST_LIMIT)
   const id = $derived(page.params.id ?? "");
 
   let runs = $state<RunSummary[]>([]);
-  let loading = $state(true);
+  let loadState = $state<"loading" | "ok" | "error">("loading");
+  let loadError = $state("");
+  let seq = 0; // discards a superseded in-flight load (fast agent→agent navigation)
 
   async function load() {
-    loading = true;
-    runs = await listRuns(id); // best-effort → [] on failure
-    loading = false;
+    const s = ++seq;
+    loadState = "loading";
+    const r = await listRuns(id);
+    if (s !== seq) return; // a newer load started — drop this stale response
+    if (r.ok) {
+      runs = r.value;
+      loadState = "ok";
+    } else {
+      loadError = r.error; // an outage is distinct from an empty history (not "No runs yet.")
+      loadState = "error";
+    }
   }
   $effect(() => {
     load();
@@ -29,8 +40,13 @@
   <h1>Run history</h1>
 </div>
 
-{#if loading}
+{#if loadState === "loading"}
   <p class="muted">Loading runs…</p>
+{:else if loadState === "error"}
+  <div class="empty">
+    <p class="error">{loadError}</p>
+    <button class="primary" onclick={load}>Retry</button>
+  </div>
 {:else if runs.length === 0}
   <div class="empty">
     <p>No runs yet.</p>
@@ -39,6 +55,7 @@
 {:else}
   <ul class="runs">
     {#each runs as run (run.id)}
+      {@const cause = runCause(run.status, run.reason)}
       <li>
         <a class="run" href="/agents/{id}/runs/{run.id}">
           <span class="run-main">
@@ -49,13 +66,16 @@
             <span class="when mono-num">{formatTimestamp(run.createdAt)}</span>
             <span class="cost mono-num">{formatMicros(run.costMicros)}</span>
           </span>
-          {#if (run.status === "killed" || run.status === "failed") && run.reason}
-            <span class="reason">{run.reason}</span>
+          {#if cause}
+            <span class="reason">{cause}</span>
           {/if}
         </a>
       </li>
     {/each}
   </ul>
+  {#if runs.length >= RUN_LIMIT}
+    <p class="muted cap-note">Showing the latest {RUN_LIMIT} runs.</p>
+  {/if}
 {/if}
 
 <style>
@@ -102,10 +122,20 @@
     padding: 0 var(--space-4);
     background: var(--action-primary-bg);
     color: var(--action-primary-fg);
+    border: none;
     border-radius: var(--radius-md);
     font-size: var(--text-sm);
     font-weight: var(--weight-medium);
     text-decoration: none;
+    cursor: pointer;
+  }
+  .error {
+    margin: 0;
+    color: var(--state-failed);
+    font-size: var(--text-sm);
+  }
+  .cap-note {
+    margin: var(--space-3) 0 0;
   }
   .runs {
     list-style: none;
@@ -161,5 +191,6 @@
     grid-column: 1 / -1;
     font-size: var(--text-sm);
     color: var(--text-secondary);
+    overflow-wrap: anywhere; /* a long unbroken token (URL/base64) must not overflow the card */
   }
 </style>

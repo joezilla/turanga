@@ -452,7 +452,14 @@ test("run history: empty state, then a completed run is listed and reviewable wi
   await expect(page.locator(".outcome .run-status")).toContainText(/failed|succeeded/); // outcome (AC2)
   await expect(page.locator(".task-text")).toContainText("history-probe"); // what it was asked (AC1)
   await expect(page.locator(".transcript")).toBeVisible(); // the transcript record (AC1)
+  // AC2 cause legibility: a failed/killed run must always render a cause (the persisted reason or an
+  //  honest fallback — never blank). Asserted whenever the dev run resolved failed/killed.
+  const outcome = (await page.locator(".outcome .run-status").textContent()) ?? "";
+  if (/failed|killed/.test(outcome)) {
+    await expect(page.locator(".reason")).toBeVisible();
+    await expect(page.locator(".reason")).not.toBeEmpty();
+  }
   // (A killed-by-cap-breach review needs real spend > cap — a real model call — so the cap-breach
-  //  cause string is unit-proven via the orchestrator killReason + listSummary carrying `reason`;
-  //  here the failed-run OUTCOME legibility is the deterministic e2e, mirroring the run happy path.)
+  //  cause string is unit-proven via the orchestrator killReason + runCause; the failed-run cause
+  //  fallback is unit-proven via runCause and asserted above when the dev run fails.)
 });

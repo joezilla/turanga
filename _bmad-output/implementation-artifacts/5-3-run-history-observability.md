@@ -3,7 +3,7 @@ baseline_commit: 8fa5c471e48fff1bda3f9d51f820aa70b86483eb
 ---
 # Story 5.3: Run history and observability
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -156,3 +156,23 @@ claude-opus-4-8[1m]
 | Date | Change |
 | --- | --- |
 | 2026-08-03 | Story 5.3 implemented (closes Epic 5): a run-summary read projection (`listSummary` + `GET /runs` → summaries), a per-agent run-history surface (`/agents/:id/runs` list + `/agents/:id/runs/:runId` review, "Run history" header link), a shared `RunTranscript` renderer (turns + per-call metrics + kind-labelled refusal rows) reused by the test pane, `RunStatusDot` widened to the full lifecycle, and a `formatTimestamp` helper. Read-only over the existing runs table (E4-AD-7) — no schema change. Verified: build 6/6, svelte-check 0/0, lint clean, all unit suites, 23/23 e2e on a fresh live stack, no regressions. Status → review. |
+
+| 2026-08-03 | Code review (Blind Hunter + Edge Case Hunter + Acceptance Auditor): applied all 10 patches — discriminated `listRuns`/`getRun` (outage now distinct from empty/404) + retryable error states; a `runCause` fallback so a `failed`/`killed` run always shows a legible cause (AC2, incl. harness `done:failed` with null reason) + a unit test + a conditional e2e assertion; per-page load-sequence guards (no stale render); cross-agent runId scoping; a running/created "in progress" note; a renderable-transcript fallback; a 100-row cap disclosure; `.reason` overflow-wrap; `endedAt` in the review header; two comment fixes. 2 findings deferred (memory/drizzle ordering parity; unscoped `GET /runs`), 1 dismissed (index keys, append-only). Re-verified: build 6/6, svelte-check 0/0, lint clean, web unit 22, control-api 104, 23/23 e2e. Status → done. |
+
+## Review Findings
+
+Adversarial code review (Blind Hunter + Edge Case Hunter + Acceptance Auditor) of commit 5848413 vs 8fa5c47. No Critical/High. 10 patch, 2 deferred, 1 dismissed.
+
+- [x] [Review][Patch] Load failure is indistinguishable from empty on the observability surface — `listRuns` returns `[]` and `getRun` returns `null` on any outage, so an unreachable control plane renders "No runs yet." / "That run doesn't exist." — a false negative on the feature whose job is truth. (blind+edge+auditor, medium) [apps/web/src/lib/runs.ts, runs/+page.svelte, runs/[runId]/+page.svelte]
+- [x] [Review][Patch] AC2 gap: a `failed` run with a null `reason` shows no cause — both surfaces gate the cause on `reason` being truthy; a harness `done:failed` persists `reason=null` (orchestrator.ts:243), so AC2's "error" case renders only the outcome word, no cause. Add a fallback cause line + assert it in e2e. (auditor+edge, medium) [runs/+page.svelte, runs/[runId]/+page.svelte]
+- [x] [Review][Patch] Async load race — `load()` has no request sequencing; fast navigation between two runs/agents can render the last-resolved (stale) response. (edge, medium) [runs/+page.svelte, runs/[runId]/+page.svelte]
+- [x] [Review][Patch] A running/created run opened in the review is a frozen snapshot (perpetual pulsing dot, partial transcript, never refreshes) — add an "in progress" note pointing to the test pane. (edge, low) [runs/[runId]/+page.svelte]
+- [x] [Review][Patch] A transcript of only non-rendering messages (e.g. a lone `done`) skips the "No transcript recorded." fallback → empty bordered region; gate on renderable rows, not `length`. (edge, low) [runs/[runId]/+page.svelte]
+- [x] [Review][Patch] `.reason` lacks `overflow-wrap` — a long unbroken token (URL/base64) in a reason overflows the card. (edge, low) [runs/+page.svelte, runs/[runId]/+page.svelte]
+- [x] [Review][Patch] Cross-agent runId not scoped — the review renders `getRun(runId)` without checking `run.agentId === id`, so a run shows under the wrong agent's breadcrumb/back-link. (edge+blind, low) [runs/[runId]/+page.svelte]
+- [x] [Review][Patch] 100-row cap silent truncation — the list renders whatever `listSummary` returns (bounded 100) with no disclosure; show "Showing the latest 100 runs." at the cap. (edge+auditor, low) [runs/+page.svelte]
+- [x] [Review][Patch] Review header omits `endedAt` (Task 6 said `createdAt`/`endedAt`); add it. (auditor, low) [runs/[runId]/+page.svelte]
+- [x] [Review][Patch] Two inaccurate comments — the test-pane "behavior unchanged" note (refusal rows now show a kind label) and `datetime.ts` "viewer's local time" (locale is hard-pinned en-US, only the timezone is local). (blind, low) [agents/[id]/+page.svelte, datetime.ts]
+- [x] [Review][Defer] Memory vs drizzle `list`/`listSummary` ordering parity is timestamp-only in drizzle but insertion-order in memory — they agree only while `createdAt` is monotonic (pre-existing, inherited from `list`). — deferred, pre-existing
+- [x] [Review][Defer] `GET /runs` with no `agentId` returns cross-agent summaries to any session (pre-existing; folded into the deferred multi-tenancy / run-ownership item). — deferred, pre-existing
+- Dismissed (1): `RunTranscript` `{#each … (i)}` index keys — benign for the append-only transcript (messages never reorder).

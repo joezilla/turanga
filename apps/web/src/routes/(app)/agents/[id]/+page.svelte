@@ -116,7 +116,7 @@
         closeStream(); // we own the close so the browser doesn't auto-reconnect
         // Pull the daily spend (for the meter) + the persisted run reason (the killed/failed cause).
         void getAgentCost(id).then((c) => { if (myGen === runGen && c) todayMicros = c.todayMicros; });
-        void getRun(started.value.id).then((run) => { if (myGen === runGen && run) runReason = run.reason ?? ""; });
+        void getRun(started.value.id).then((r) => { if (myGen === runGen && r.ok && r.value) runReason = r.value.reason ?? ""; });
       });
       source.onerror = () => {
         if (myGen !== runGen) return;
@@ -442,7 +442,8 @@
           <p class="muted">No test runs.</p>
         {:else}
           <!-- Live turns + refusal rows (shared with the run-history review). Metrics stay in the
-               resolution summary below (showMetrics=false), so the pane's behavior is unchanged. -->
+               resolution summary below (showMetrics=false), so the pane's metrics behavior is
+               unchanged; the refusal row now also names the kind — an intentional improvement. -->
           <RunTranscript {transcript} />
 
           {#if runState !== "empty" && runState !== "error"}

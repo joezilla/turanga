@@ -84,27 +84,41 @@ export async function getAgentsCost(): Promise<Record<string, number>> {
   }
 }
 
-/** An agent's past runs, newest-first (run history, Story 5.3). Best-effort — a read failure returns
- *  `[]` so the history never white-screens; the row summaries carry the outcome + cause + cost, and
- *  the review view fetches the full run (transcript) via getRun. */
-export async function listRuns(agentId: string): Promise<RunSummary[]> {
+/** An agent's past runs, newest-first (run history, Story 5.3). Discriminated so the history page can
+ *  tell an outage (`ok:false` → a retryable error) from a genuinely empty history (`ok:true, value:[]`)
+ *  — silently showing "No runs yet." during a backend failure would be a false negative on an
+ *  observability surface. */
+export async function listRuns(agentId: string): Promise<Result<RunSummary[]>> {
   try {
     const r = await fetch(`${base}/runs?agentId=${encodeURIComponent(agentId)}`, { credentials: "include" });
-    if (!r.ok) return [];
+    if (!r.ok) return { ok: false, error: `Couldn't load runs (${r.status}).` };
     const body = (await r.json()) as { runs?: RunSummary[] };
-    return Array.isArray(body.runs) ? body.runs : [];
+    return { ok: true, value: Array.isArray(body.runs) ? body.runs : [] };
   } catch {
-    return [];
+    return { ok: false, error: "Can't reach the control plane." };
   }
 }
 
-/** Fetch a run (for its persisted reason + cost summary after it resolves). Best-effort. */
-export async function getRun(id: string): Promise<Run | null> {
+/** Fetch a run's full record (transcript + reason + cost). Discriminated so the review page can tell a
+ *  genuine 404 (`ok:true, value:null` → "That run doesn't exist.") from an outage (`ok:false` → a
+ *  retryable error) — the two must not both read as "doesn't exist." */
+export async function getRun(id: string): Promise<Result<Run | null>> {
   try {
     const r = await fetch(`${base}/runs/${encodeURIComponent(id)}`, { credentials: "include" });
-    if (!r.ok) return null;
-    return ((await r.json()) as { run: Run }).run;
+    if (r.status === 404) return { ok: true, value: null };
+    if (!r.ok) return { ok: false, error: `Couldn't load the run (${r.status}).` };
+    const body = (await r.json()) as { run?: Run };
+    return { ok: true, value: body.run ?? null };
   } catch {
-    return null;
+    return { ok: false, error: "Can't reach the control plane." };
   }
+}
+
+/** The legible cause line for a run's outcome (Story 5.3 AC2). Killed/failed always yield a cause —
+ *  the persisted `reason` when present, else an honest fallback (a harness `done:failed` persists no
+ *  reason, so the "error" case must never render blank). `null` for non-terminal/succeeded runs. */
+export function runCause(status: RunStatus, reason: string | null): string | null {
+  if (status !== "killed" && status !== "failed") return null;
+  if (reason) return reason;
+  return status === "failed" ? "The run failed — no cause was recorded. See the transcript." : "The run was killed.";
 }

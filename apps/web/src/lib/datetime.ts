@@ -1,5 +1,6 @@
 // Timestamp helpers (Story 5.3). Run timestamps are UTC ISO-8601 strings; render them in the
-// viewer's local time. Small $lib helper, mirroring money.ts. Timestamps render in mono (DESIGN.md).
+// viewer's local timezone (en-US format, matching money.ts's en-US convention). Small $lib helper.
+// Timestamps render in mono (DESIGN.md).
 
 const fmt = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" });
 
