@@ -31,6 +31,20 @@ describe("litellm gateway — cost keys (Story 4.5)", () => {
     expect(create.auth).toBe("Bearer sk-master");
   });
 
+  it("ensureAgentTeam serializes concurrent calls for one agent — exactly one team is created (no cap-splitting race)", async () => {
+    let created = 0;
+    const calls = stub((url) => {
+      if (url.endsWith("/team/list")) return new Response(JSON.stringify(created === 0 ? [] : [{ team_id: "team-1", team_alias: "agent-a1" }]), { status: 200 });
+      if (url.endsWith("/team/new")) { created++; return new Response(JSON.stringify({ team_id: "team-1" }), { status: 200 }); }
+      return new Response("{}", { status: 200 });
+    });
+    const g = gw();
+    const [t1, t2] = await Promise.all([g.ensureAgentTeam("a1", null), g.ensureAgentTeam("a1", null)]);
+    expect(t1).toBe("team-1");
+    expect(t2).toBe("team-1");
+    expect(calls.filter((c) => c.url.endsWith("/team/new"))).toHaveLength(1); // serialized → not two teams
+  });
+
   it("ensureAgentTeam reuses an existing team (idempotent by alias) and refreshes its budget", async () => {
     const calls = stub((url) => {
       if (url.endsWith("/team/list")) return new Response(JSON.stringify([{ team_id: "team-old", team_alias: "agent-a1" }]), { status: 200 });

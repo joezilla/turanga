@@ -3,7 +3,7 @@ baseline_commit: deceb43eb7bcedefa2b8b87360bee9014cf8ad40
 ---
 # Story 4.4: Skill execution and permission enforcement at runtime
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 

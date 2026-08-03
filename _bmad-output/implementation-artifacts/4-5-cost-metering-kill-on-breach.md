@@ -3,7 +3,7 @@ baseline_commit: 393a6a7bb92d7eba7680ed2e52ac1b2c0d793f9f
 ---
 # Story 4.5: Live cost metering and kill-on-breach
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -147,6 +147,30 @@ so that the caps I set are real.
 - [Source: ux-designs/ux-turanga-2026-07-30/DESIGN.md#components.cost-meter/#cost-caps-control (:70-72/:98/:127/:128); EXPERIENCE.md (:49/:63/:104/:105/:109), UX-DR20]
 - [Source: packages/contracts/src/index.ts; apps/control-api/src/litellm/gateway.ts; apps/egress-guard/src/guard.ts; apps/control-api/src/runs/{orchestrator,guardClient,routes,repo}.ts; packages/domain (CostCap/Money); apps/web/src/lib/money.ts]
 - [Source: _bmad-output/implementation-artifacts/4-1..4-4 story files, deferred-work.md; project-context.md]
+
+### Review Findings — Epic 4 batch (4.3–4.6), 2026-08-02
+
+_Cross-cutting Guard-security review of Stories 4.3–4.6 (diff 7b9b9ec..HEAD). Most findings land in 4.5's cost/kill machinery; 4.3/4.4/4.6 reference this section._
+
+**Patches (unchecked = to fix):**
+- [x] [Review][Patch] Callback token has no production fail-closed check — control-api `server.ts:95` + egress-guard `server.ts:20` default `GUARD_CALLBACK_TOKEN` to the well-known `"dev-guard-callback"` with no prod throw (unlike `GUARD_ADMIN_TOKEN`), so a forged `kill`/`metrics` POST could reap/corrupt any run out of the box. Mirror the admin-token prod throw. [apps/control-api/src/server.ts:95, apps/egress-guard/src/server.ts:20]
+- [x] [Review][Patch] Guard request handler isn't fail-closed on a thrown hook — the egress `filterHook` (guard.ts:278) runs before the forward `try`, so a throwing hook (a real inspector, or `JSON.stringify` on an unserializable body) rejects `forwardConnection` → the UDS handler writes no response → the request hangs (NFR-2 violated). Wrap the `handle()` dispatch in try/catch → any throw becomes a written fail-closed error. [apps/egress-guard/src/guard.ts (register request handler / forwardConnection)]
+- [x] [Review][Patch] `ensureAgentTeam` check-then-create race → duplicate teams → per-day cap bypass — two concurrent runs for the same agent (no team yet) both `/team/list`→empty→`/team/new`, creating two teams; the daily budget splits and the agent can spend ~2× the cap. Serialize per-agent team creation (in-process lock) for the single-instance MVP. [apps/control-api/src/litellm/gateway.ts:106] (NFR-3)
+- [x] [Review][Patch] `proxyModel` fails OPEN to the master key when a registered run has no cost key — `costKey = runs.get(runId)?.costKey ?? cfg.litellmMasterKey` runs a registered-but-keyless run unmetered + unkillable (master key). Refuse the model call when a registered run has no cost key (fail-closed). [apps/egress-guard/src/guard.ts:213]
+- [x] [Review][Patch] Budget breach races the in-band `done` → run mislabeled `failed` not `killed` — the async `kill` callback can land after the harness's stdout `done`, so both `if (breached)` checks see false. On a `failed` done, briefly settle (bounded ~150ms, resolvable by the controller) so an in-flight kill/final-metrics lands before finalizing; `.catch(() => {})` the `onKill` `activeHandle.kill()`. [apps/control-api/src/runs/orchestrator.ts:193/221] (AC2 live path; spend is still capped regardless)
+- [x] [Review][Patch] Cost meter renders only post-run, not live — the metrics line + run/today meter sit inside the `succeeded|failed|killed` branch; AC1/DESIGN call for a **live** meter. Render the streamed metrics/meter during `running` too. [apps/web/src/routes/(app)/agents/[id]/+page.svelte:397]
+
+**Deferred (logged to deferred-work.md):**
+- [x] [Review][Defer] Per-run cost cap can't stop a single model call — LiteLLM admits a fresh key's first call (spend 0 < budget); the harness makes one call, so only the accumulating daily/team cap bites. Enforced across calls when multi-turn lands; reserve-then-reconcile is the deferred hardening (AD-6). [Med]
+- [x] [Review][Defer] `ensureAgentTeam` `/team/update` on reuse may reset the daily budget window — verify LiteLLM doesn't reset `spend`/`budget_reset_at` on update; guard the update if it does. [Med]
+- [x] [Review][Defer] Missing/NaN `x-litellm-response-cost` header → cost silently reads 0 — verify LiteLLM emits it in prod; consider a key-spend fallback. [Low]
+- [x] [Review][Defer] In-memory controller registry / callback lost on a multi-instance control-api — same class as the in-memory RunHub + tenancy deferrals. [Low]
+- [x] [Review][Defer] Daily meter window (UTC midnight) diverges from the enforced team window; wire the daily meter to `teamSpendMicros` (currently unused). [Low]
+- [x] [Review][Defer] `budgetBreach` is coupled to LiteLLM's status/message prose — broaden / use a structured error code. [Low]
+- [x] [Review][Defer] Gmail write ops (`label`/`send`) forward unvalidated params (empty `messageId`, verbatim `raw`) — validate; the write path is gated on OAuth + the no-op filter. [Low, 4.4]
+- [x] [Review][Defer] `GET /agents/:id/cost` has no agent-ownership check — deferred multi-tenancy. [Low]
+
+**Dismissed:** send-gate aggregate-OR (documented 4.4 aggregate-enforcement model — correct for the shipped skill set where only draft-reply is send-capable + UI-gated); `GET /agents/:id/cost` returning only `todayMicros` (functionally covered — the web already holds the caps).
 
 ## Dev Agent Record
 

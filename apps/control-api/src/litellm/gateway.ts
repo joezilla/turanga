@@ -43,6 +43,35 @@ const MICROS_PER_USD = 1_000_000;
 export function httpModelGateway(litellmBaseUrl: string, masterKey: string): ModelGateway {
   const llmHeaders = { authorization: `Bearer ${masterKey}`, "content-type": "application/json" };
   const teamAlias = (agentId: string) => `agent-${agentId}`;
+  // Serialize per-agent team resolution so two concurrent runs for the same agent can't both
+  // list-empty → create, duplicating the team (which would split the daily budget). Single-instance
+  // MVP; a multi-instance deploy needs a shared lock (deferred with tenancy).
+  const teamLocks = new Map<string, Promise<string>>();
+
+  // Idempotent by alias: LiteLLM is the store. Reuse an existing team (refresh its budget so per-day
+  // cap edits apply); otherwise create a daily-resetting team. Called only under the per-agent lock.
+  async function resolveTeam(agentId: string, perDayCap: Money | null): Promise<string> {
+    const alias = teamAlias(agentId);
+    const budget = dollars(perDayCap);
+    const list = await fetch(`${litellmBaseUrl}/team/list`, { headers: llmHeaders }).catch(() => null);
+    if (list?.ok) {
+      const teams = (await list.json().catch(() => [])) as { team_id?: string; team_alias?: string }[];
+      const existing = (Array.isArray(teams) ? teams : []).find((t) => t.team_alias === alias);
+      if (existing?.team_id) {
+        await fetch(`${litellmBaseUrl}/team/update`, { method: "POST", headers: llmHeaders, body: JSON.stringify({ team_id: existing.team_id, max_budget: budget ?? null, budget_duration: budget ? "1d" : null }) }).catch(() => {});
+        return existing.team_id;
+      }
+    }
+    const res = await fetch(`${litellmBaseUrl}/team/new`, {
+      method: "POST",
+      headers: llmHeaders,
+      body: JSON.stringify({ team_alias: alias, ...(budget !== undefined ? { max_budget: budget, budget_duration: "1d" } : {}) }),
+    });
+    if (!res.ok) throw new Error(`LiteLLM /team/new failed (${res.status})`);
+    const json = (await res.json().catch(() => ({}))) as { team_id?: string };
+    if (!json.team_id) throw new Error("LiteLLM /team/new returned no team_id");
+    return json.team_id;
+  }
 
   async function addModel(modelName: string, model: string, apiKey: string, apiBase?: string): Promise<string> {
     const res = await fetch(`${litellmBaseUrl}/model/new`, {
@@ -104,28 +133,15 @@ export function httpModelGateway(litellmBaseUrl: string, masterKey: string): Mod
       return (json.data ?? []).map((m) => m.id).filter((x): x is string => typeof x === "string");
     },
     async ensureAgentTeam(agentId, perDayCap) {
-      const alias = teamAlias(agentId);
-      const budget = dollars(perDayCap);
-      // Idempotent by alias: LiteLLM is the store. Reuse an existing team (and refresh its budget so
-      // per-day cap edits apply); otherwise create a daily-resetting team.
-      const list = await fetch(`${litellmBaseUrl}/team/list`, { headers: llmHeaders }).catch(() => null);
-      if (list?.ok) {
-        const teams = (await list.json().catch(() => [])) as { team_id?: string; team_alias?: string }[];
-        const existing = (Array.isArray(teams) ? teams : []).find((t) => t.team_alias === alias);
-        if (existing?.team_id) {
-          await fetch(`${litellmBaseUrl}/team/update`, { method: "POST", headers: llmHeaders, body: JSON.stringify({ team_id: existing.team_id, max_budget: budget ?? null, budget_duration: budget ? "1d" : null }) }).catch(() => {});
-          return existing.team_id;
-        }
+      // Chain on any in-flight resolution for this agent (the lock) so create-if-absent is serialized.
+      const prior = teamLocks.get(agentId) ?? Promise.resolve();
+      const run = prior.catch(() => {}).then(() => resolveTeam(agentId, perDayCap));
+      teamLocks.set(agentId, run);
+      try {
+        return await run;
+      } finally {
+        if (teamLocks.get(agentId) === run) teamLocks.delete(agentId);
       }
-      const res = await fetch(`${litellmBaseUrl}/team/new`, {
-        method: "POST",
-        headers: llmHeaders,
-        body: JSON.stringify({ team_alias: alias, ...(budget !== undefined ? { max_budget: budget, budget_duration: "1d" } : {}) }),
-      });
-      if (!res.ok) throw new Error(`LiteLLM /team/new failed (${res.status})`);
-      const json = (await res.json().catch(() => ({}))) as { team_id?: string };
-      if (!json.team_id) throw new Error("LiteLLM /team/new returned no team_id");
-      return json.team_id;
     },
     async mintRunKey({ teamId, perRunCap, runId }) {
       const budget = dollars(perRunCap);

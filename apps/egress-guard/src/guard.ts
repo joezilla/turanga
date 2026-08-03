@@ -204,7 +204,14 @@ export function createGuard(cfg: GuardConfig) {
   // through the sandbox. `runId` is the trusted socket runId, not the body's.
   async function proxyModel(runId: string, req: GuardModelRequest): Promise<GuardModelResponse> {
     const started = Date.now();
-    const costKey = runs.get(runId)?.costKey ?? cfg.litellmMasterKey; // fall back to master pre-4.5 / unregistered
+    const state = runs.get(runId);
+    // Fail-closed (E4-AD-8/NFR-2): a REGISTERED run must carry a per-run cost key — refuse rather
+    // than borrow the unmetered master key (that would be an unkillable, uncapped run). The master
+    // fallback remains only for an unregistered call (direct unit tests; unreachable via the UDS).
+    if (state && !state.costKey) {
+      return { v: CONTRACT_VERSION, ok: false, error: "The model call was refused — this run has no cost key (misconfiguration).", latencyMs: 0 };
+    }
+    const costKey = state?.costKey ?? cfg.litellmMasterKey;
     try {
       const r = await doFetch(`${cfg.litellmBaseUrl}/v1/chat/completions`, {
         method: "POST",
@@ -343,9 +350,17 @@ export function createGuard(cfg: GuardConfig) {
         });
         httpReq.on("end", async () => {
           if (aborted) return;
-          const { status, body } = await handle(runId, raw);
-          httpRes.writeHead(status, { "content-type": "application/json" });
-          httpRes.end(JSON.stringify(body));
+          // Fail-closed (NFR-2): ANY throw in dispatch (e.g. a Filter Hook that throws, or an
+          // unserializable body) becomes a written refused response — never a hung request.
+          try {
+            const { status, body } = await handle(runId, raw);
+            httpRes.writeHead(status, { "content-type": "application/json" });
+            httpRes.end(JSON.stringify(body));
+          } catch (e) {
+            console.error(`[egress-guard] run ${runId} dispatch error:`, e instanceof Error ? e.message : e);
+            httpRes.writeHead(500, { "content-type": "application/json" });
+            httpRes.end(JSON.stringify({ v: CONTRACT_VERSION, ok: false, error: "The guard refused the request (internal error)." }));
+          }
         });
       });
       // A per-run socket error must not crash the shared guard process (blast radius = all runs).

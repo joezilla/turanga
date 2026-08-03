@@ -394,12 +394,11 @@
             {/if}
           {/each}
 
-          {#if runState === "running"}
-            <div class="resolution"><RunStatusDot status="running" /></div>
-          {:else if runState === "succeeded" || runState === "failed" || runState === "killed"}
+          {#if runState !== "empty" && runState !== "error"}
             <div class="resolution">
               <RunStatusDot status={runState} />
               {#if lastMetrics}
+                <!-- Live: streams as the Guard reports each call's cost; resolves with the terminal dot. -->
                 <span class="metrics mono-num">{fmtNum(lastMetrics.latencyMs)} ms · {fmtNum(lastMetrics.tokens)} tokens · {formatMicros(lastMetrics.costMicros)}</span>
               {/if}
             </div>

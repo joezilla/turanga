@@ -3,7 +3,7 @@ baseline_commit: 7b9b9ec9b8ac5a80d2638e41aab098333bc807bf
 ---
 # Story 4.3: Default-deny egress with the credentialed-connection gateway
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 

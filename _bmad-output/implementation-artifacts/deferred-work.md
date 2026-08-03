@@ -1,5 +1,16 @@
 # Deferred Work
 
+## Deferred from: code review of Epic 4 batch 4.3–4.6 (2026-08-02)
+- Per-run cost cap can't stop a single model call (LiteLLM admits a fresh per-run key's first call; the harness makes one call → only the daily/team cap bites). Enforced across calls once multi-turn lands; reserve-then-reconcile is the AD-6 deferred hardening.
+- `ensureAgentTeam` calls `/team/update` on every reuse — verify LiteLLM doesn't reset `spend`/`budget_reset_at` on a budget update (would slide the daily window and bypass the per-day cap); guard the update (only when the cap changed) if confirmed.
+- Missing/NaN `x-litellm-response-cost` header collapses per-call cost to 0 (silent). Verify LiteLLM emits it in prod; consider a per-run key-spend fallback for the persisted summary.
+- The Guard→orchestrator callback resolves against an in-memory `controllers` map (+ the in-memory RunHub) — kill/metrics are lost on a multi-instance / load-balanced control-api. Route callbacks by runId (sticky) or via shared state (DB/pubsub) when multi-instance lands. Same class as the tenancy deferral.
+- The daily cost meter (`sumTodayMicros`, UTC midnight) diverges from LiteLLM's enforced team window (`budget_duration:"1d"` from team creation). Source the daily meter from `teamSpendMicros` (currently unused) to match the enforced window.
+- `budgetBreach` classifies on HTTP 400 + a `budget|exceeded` regex — fragile to a LiteLLM status/wording change (a miss → no kill / wrong run-vs-day scope). Broaden + prefer a structured error code.
+- Gmail write ops (`gmailAdapter` `label`/`send`) forward unvalidated params (empty `messageId` → `/messages//modify`; verbatim `raw`). Validate required params; the write path is currently gated on OAuth + the no-op filter.
+- `GET /agents/:id/cost` (and run listing) has no agent-ownership check — any authenticated user reads any agent's spend. Close with the deferred multi-tenancy work.
+
+
 ## Deferred from: code review of 4-2-test-pane-streaming (2026-08-02)
 - Test-pane error strings in `apps/web/src/lib/runs.ts` ("The control plane returned an unexpected response.", "Couldn't start the run (${status}).", "Can't reach the control plane.") state a cause but no consequence/recovery (AC2 wants cause→consequence→recovery). Low-value copy polish, partly shared with `$lib/agents`. Revisit if the error states get a dedicated pass.
 

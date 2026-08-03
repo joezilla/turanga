@@ -66,6 +66,12 @@ async function main() {
   const runtimeKind = resolveSandboxRuntimeKind();
   const runtime = dockerRuntime(runtimeKind);
   const guard = httpRunGuard(process.env.GUARD_ADMIN_URL ?? "http://egress-guard:8081", process.env.GUARD_ADMIN_TOKEN ?? "dev-guard-admin");
+  // The Guard→orchestrator callback (Story 4.5) is control-plane and token-authed, not session-guarded
+  // — fail closed on the well-known default in production (matches the GUARD_ADMIN_TOKEN posture).
+  const guardCallbackToken = process.env.GUARD_CALLBACK_TOKEN ?? "dev-guard-callback";
+  if (process.env.NODE_ENV === "production" && guardCallbackToken === "dev-guard-callback") {
+    throw new Error("GUARD_CALLBACK_TOKEN must be set to a non-default value in production.");
+  }
   const runHub = createRunHub();
   const orchestrator = runOrchestrator({
     runsRepo,
@@ -92,7 +98,7 @@ async function main() {
     runsRepo,
     runHub,
     orchestrator,
-    guardCallbackToken: process.env.GUARD_CALLBACK_TOKEN ?? "dev-guard-callback",
+    guardCallbackToken,
   });
   serve({ fetch: app.fetch, port }, (info) => {
     console.log(`[control-api] listening on :${info.port}`);

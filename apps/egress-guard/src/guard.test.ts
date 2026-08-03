@@ -43,7 +43,7 @@ describe("guard per-run socket lifecycle", () => {
   it("register provisions a UDS in the run's own subdir that serves the model contract; teardown removes it", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "guard-"));
     const guard = createGuard({ socketDir: dir, litellmBaseUrl: "http://litellm:4000", litellmMasterKey: "sk", fetchImpl: okFetch });
-    const { socketPath } = await guard.register(RUN);
+    const { socketPath } = await guard.register(RUN, { connections: [], grants: [], costKey: "sk-run-lifecycle" }); // a registered run carries a cost key (4.5)
     expect(fs.existsSync(socketPath)).toBe(true);
     expect(socketPath).toContain(`${RUN}/run.sock`); // per-run subdir (isolation)
     expect(guard.activeRuns()).toEqual([RUN]);
@@ -312,5 +312,18 @@ describe("guard cost metering + kill-on-breach (4.5)", () => {
     expect(events.some((e) => e.event.type === "kill")).toBe(false);
     expect(events.some((e) => e.event.type === "metrics")).toBe(true); // metrics still reported
     await cleanup();
+  });
+
+  it("fail-closed: a REGISTERED run with no cost key refuses the model call (never borrows the master key)", async () => {
+    const { impl, calls } = costFetch(200);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "guard-"));
+    const guard = createGuard({ socketDir: dir, litellmBaseUrl: "http://x", litellmMasterKey: "sk-master", fetchImpl: impl });
+    await guard.register(RUN, { connections: [], grants: [] }); // registered but NO costKey (misconfig)
+    const res = await guard.proxyModel(RUN, modelReq);
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/no cost key/i);
+    expect(calls).toHaveLength(0); // never called LiteLLM (no unmetered master-key run)
+    await guard.teardown(RUN);
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 });

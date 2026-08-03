@@ -3,7 +3,7 @@ baseline_commit: f8d28d91280a84fe19bc6bedd9b6d27d91121bbd
 ---
 # Story 4.6: Filter hook seam
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 

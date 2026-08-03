@@ -159,6 +159,10 @@ export function runOrchestrator(deps: OrchestratorDeps) {
     let breached: { scope: "run" | "day" } | null = null; // set by the Guard callback (E4-AD-10)
     let costMicros = 0; // accumulated from the Guard's metrics events (the persisted summary = this, AC3)
     let timer: ReturnType<typeof setTimeout> | undefined;
+    // The breach `kill` is an async Guard→control-api callback that can land just after the harness's
+    // in-band `done`. This resolvable lets us briefly settle for it so the terminal is `killed`, not `failed`.
+    let signalBreach: (() => void) | null = null;
+    const breachSignal = new Promise<void>((resolve) => (signalBreach = resolve));
     try {
       // Step 2 (E4-AD-8): mint the per-run cost key under the agent's daily-budget team. Fail-closed:
       // a mint failure fails the Run (no unmetered run). Absent gateway ⇒ no key (Guard uses master).
@@ -192,7 +196,8 @@ export function runOrchestrator(deps: OrchestratorDeps) {
         },
         onKill(scope) {
           breached = { scope };
-          void activeHandle.kill(); // reap the run that can no longer progress → the stream ends → killed
+          signalBreach?.(); // wake a post-`done` settle so the terminal resolves as killed, not failed
+          void activeHandle.kill().catch(() => {}); // reap the run that can no longer progress
         },
       });
 
@@ -212,6 +217,12 @@ export function runOrchestrator(deps: OrchestratorDeps) {
           seen = parsed.data.status;
           break;
         }
+      }
+      // On a `failed` done, the cause may be a budget breach whose out-of-band `kill` callback is
+      // still in flight — briefly settle for it so the breach WINS the terminal (killed, not failed).
+      // The happy path (succeeded) never waits.
+      if (seen === "failed" && !breached && !timedOut) {
+        await Promise.race([breachSignal, new Promise<void>((r) => setTimeout(r, 250).unref?.())]);
       }
       // A budget breach or the wall-clock timeout WINS the terminal (over the harness's `done`).
       const killReason = (): string => {
