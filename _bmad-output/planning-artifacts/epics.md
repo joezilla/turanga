@@ -143,6 +143,9 @@ Agents gain **tools**: capabilities they invoke at runtime beyond the model. Est
 ### Epic 7: Self-deployed tool containers
 The builder can deploy their **own** trusted tool containers into turanga and have them registered as tools once they satisfy a packaging contract. Inherits Epic 6's contract wholesale; adds the container packaging contract (MCP-HTTP + `/health` + manifest), UI deploy with **legible per-clause contract verification**, the tool as a long-lived (one-per-operator) guard-fronted node with its **own** Guard-mediated egress (a tool can have its own connections), and the Guard's client-side tool→world broker. Containers are trusted (operator-authored, trusted SDLC); "untrust it" (gVisor, input screening) is a later flag. *(Post-MVP; captured 2026-08-03. AD-1, AD-5, AD-10.)*
 
+### Epic 8: Agent memory — the self-improving loop
+Agents **learn from their runs**. turanga already records every run (the transcript) but nothing reads it back. This epic closes the loop: a control-plane **memory store** (pgvector), a **recall** step that injects the most relevant memories into the immutable job spec at run start, and a post-run **reflection** step that distills the transcript into durable, scoped memories — so an agent that fails a task once can succeed the next time because it *remembered* (the Hermes-style do → reflect → remember → recall → improve loop, on turanga's isolation rails). Memory is **off by default and three-level configurable — per individual agent (enable/disable, recall vs reflect, per kind) governed by global defaults an operator sets once** — because it is a privacy-sensitive, data-collecting surface; the toggle is enforced control-plane (AD-7). All storage/retrieval/consolidation is control-plane; the sandbox never touches memory (AD-1); memories are secret-free spec content (AD-10); recall is zero-cost (embedding-only) and reflection is observed-not-metered. mempalace's distinctives (scoped recall, temporal knowledge graph, memory-as-a-tool) are additive later phases. *(Post-MVP; captured 2026-08-03. AD-1, AD-7, AD-9, AD-10, FR-7.)*
+
 > **Cross-cutting UX conventions** (applied as ACs across all UI stories, not standalone): UX-DR14 interaction primitives, UX-DR15 accessibility floor, UX-DR16 voice/microcopy, UX-DR19 Lucide icons. Established as project conventions in Story 1.2 and re-asserted per surface.
 
 ## Epic 1: Foundation & Access
@@ -716,3 +719,133 @@ The builder deploys their **own** tool containers into turanga; once a container
 - One guard instance brokering all tools vs. a guard edge per tool container.
 - Credential-refresh mechanics for long-lived held creds (OAuth refresh vs. static keys).
 - Whether "which contract clause failed" verification can be made deterministic/e2e-testable without a real image (likely gated/manual, like provider connect).
+
+---
+
+## Epic 8: Agent memory — the self-improving loop
+
+Agents **learn from their runs**. turanga already records every run (the transcript — turns, tool calls, refusals, outcomes) but nothing reads it back. This epic closes the loop: a control-plane **memory store**, a **recall** step that injects the most relevant memories into the run at start, and a post-run **reflection** step that distills the transcript into durable, scoped memories — so an agent that fails a task once can succeed the next time because it *remembered*. It ships the **Hermes-style loop** (do → reflect → remember → recall → improve) on turanga's existing isolation rails, with **mempalace's** structured-recall / temporal-graph / memory-as-a-tool ideas sequenced as additive later phases.
+
+**The keystone:** turanga's isolation architecture already provides the memory plumbing. Memory is not a new plane — recall is a control-plane similarity query injected into the immutable job spec; reflection is a post-run control-plane step; **the sandbox never touches memory** (it can't reach a DB — AD-1). Epics 4 and 6 built the rails this reuses.
+
+**Configurability is first-class (operator decision, 2026-08-03):** given the isolation/security stance, memory is a **privacy-sensitive, data-collecting** surface — so it is **off by default**, **configurable per individual agent** (enable/disable, recall-vs-reflect independently, per memory kind), and **governed by global defaults** an operator sets once. The effective toggle is resolved + **enforced control-plane** (AD-7); the harness never decides whether to remember.
+
+### Architecture & scope decisions (binding constraints)
+- **Control-plane-only, three seams around one store.** Store = a new **pgvector** table in Postgres, **single-writer** (a control-api `memory` module; the orchestrator calls it — AD-7). Recall = a similarity query run in the orchestrator **before the job spec is built** → a new sandbox-visible `JobSpec.memories` field (CONTRACT_VERSION bump) → folded into the model's system context by the harness. Reflect = a **post-run** step reading the completed transcript. The sandbox owns none of it (AD-1/AD-9).
+- **Memory is secret-free spec content (AD-10).** Injected memories are text, like instructions/task input — never a credential or endpoint. Embedding compute uses the LiteLLM `/embeddings` path (control-plane or Guard-proxied); no embedding key enters the sandbox.
+- **Off by default; three-level configurable.** Global defaults (an operator Settings surface) → per-agent override (`inherit | on | off`) → per-capability granularity (**recall** and **reflect** toggled independently; memory **kinds** — episodic/semantic/procedure — selectable). A global **kill switch** disables memory platform-wide; per-agent disable optionally **purges** that agent's memories.
+- **Per-agent isolation by default (FR-7-adjacent).** An agent's memories are scoped to its `agentId`; no cross-agent recall. A "shared across a builder's agents" scope is an explicit, later opt-in — never the default.
+- **Observed, not metered.** Recall is embedding-similarity only (zero LLM cost per query — the mempalace property that doesn't fight the cost cap). The one LLM call is the batched post-run reflection, **recorded but not metered against the run's cost cap and not killed on breach** (the Story 6.5 tool-observability precedent).
+- **Auditable causality.** Every recall records *which* memories it injected into *which* run; every memory records its `sourceRunId`. The "it learned and it changed the next run" chain is inspectable — the acceptance bar.
+- **AD-1 / AD-7 / AD-9 / AD-10 all hold.**
+
+### Story 8.1: The memory model, store, and configuration spine
+
+As the builder,
+I want turanga to model memory + its per-agent and global configuration as first-class things before anything reads or writes them,
+So that memory is a stable, governed, opt-in capability from the start.
+
+**Acceptance Criteria:**
+
+**Given** the domain + contracts
+**When** memory is modeled
+**Then** a `Memory` is a control-plane record (`kind`: episodic | semantic | procedure; verbatim content + summary; embedding; topic/scope; salience; `sourceRunId`; temporal validity; usage) keyed by `agentId`, and a `MemoryConfig` models the three-level toggle (global defaults → per-agent `inherit|on|off` → recall/reflect + per-kind granularity) — no secret ever in a memory (AD-10).
+
+**Given** the store
+**When** it is created
+**Then** an `agent_memories` table (**pgvector**) lands with **control-api as its sole writer** (AD-7); pgvector is enabled in the Postgres image/init; IDs/timestamps follow project conventions.
+
+**Given** the security stance
+**When** memory ships
+**Then** it is **off by default** — an agent has no memory behavior until explicitly enabled (globally or per-agent).
+
+### Story 8.2: Global memory settings + per-agent memory controls
+
+As the builder,
+I want a global memory settings screen and a per-agent memory toggle,
+So that I decide — per agent, and by default — whether an agent remembers, what it remembers, and whether it recalls, reflects, or both.
+
+**Acceptance Criteria:**
+
+**Given** Settings → Memory (a new surface alongside Model providers / Data connections / Tools)
+**When** it is used
+**Then** the operator sets the **global defaults**: the memory on/off default for new agents, the embedding model, the consolidation trigger + retention/decay policy, the privacy/scope default, and a global **kill switch** — control-api is the sole writer (AD-7); status is dot + word (NFR-6).
+
+**Given** the agent-definition surface
+**When** the **Memory** section (next to Tools) is used
+**Then** the builder sets this agent's memory to `inherit` (the global default), `on`, or `off`; independently toggles **recall** and **reflect**; and selects which memory **kinds** apply — default-inherit, most-restrictive when unset (mirrors the Skills/Tools grant posture, FR-3).
+
+**Given** the toggles
+**When** a run executes
+**Then** the effective config is resolved + **enforced control-plane** — the orchestrator skips recall/reflect the agent isn't configured for; the harness never decides (AD-7/AD-9). Disabling an agent's memory optionally purges its memories.
+
+### Story 8.3: Recall — inject relevant memories into a run
+
+As the builder,
+I want a memory-enabled agent to start each run with what it has learned that's relevant to the task,
+So that it doesn't repeat past mistakes or re-derive what it already knows.
+
+**Acceptance Criteria:**
+
+**Given** a memory-enabled agent with recall on
+**When** a run is launched
+**Then** the orchestrator (control-plane, **before** building the job spec) embeds the task input (LiteLLM `/embeddings`), runs a **scoped similarity query** over the agent's memories (filtered by temporal validity + salience), and injects the top-k as a **sandbox-visible `JobSpec.memories`** field (secret-free, immutable at run start — AD-9/AD-10; CONTRACT_VERSION bump).
+
+**Given** the harness
+**When** it assembles the model context
+**Then** it folds the recalled memories into the system context (mirroring the tool-outcome fold), and the run **records which memories it recalled** (auditable causality).
+
+**Given** recall
+**When** it runs
+**Then** it is **embedding-similarity only** — zero LLM cost per query, never on the run's cost cap.
+
+### Story 8.4: Reflect — the post-run consolidation loop (the "it learns" story)
+
+As the builder,
+I want turanga to distill each run into durable memories,
+So that the agent's next run is better than its last — the self-improving loop.
+
+**Acceptance Criteria:**
+
+**Given** a memory-enabled agent with reflect on
+**When** a run completes
+**Then** a **control-plane post-run step** reads the completed transcript and distills it (one LiteLLM call) into **semantic memories** (durable facts, preferences, lessons) and — when the run had ≥N tool calls — **learned procedures** (reusable workflows, Hermes-style); written via the sole memory writer; the harness never writes memory (AD-7/AD-9).
+
+**Given** consolidation
+**When** it writes
+**Then** it **scores → promotes → forgets** (the mempalace-evolve equivalent): dedupes against existing memories, bumps salience on reuse, marks superseded facts via temporal validity, prunes low-salience — so memory improves rather than bloats.
+
+**Given** reflection's LLM call
+**When** it executes
+**Then** it is **observed, not metered** — recorded per the run, not charged to the cost cap, not killed on breach (Story 6.5 precedent).
+
+### Story 8.5: Memory observability + management
+
+As the builder,
+I want to see and curate what an agent has learned,
+So that I can trust the loop — inspect what it knows, see which memory changed a run, and forget anything wrong.
+
+**Acceptance Criteria:**
+
+**Given** a memory-enabled agent
+**When** its memory is viewed
+**Then** the builder sees the agent's memories (kind, summary, salience, last used, source run) and, per run, **which memories it recalled** — the visible "learned → improved" causal chain (NFR-4).
+
+**Given** a memory
+**When** the builder acts on it
+**Then** they can **pin** (protect from decay), **edit**, or **forget** it (control-api sole writer) — the curation surface; memories that can carry real user data are handled per the privacy/redaction default set in 8.2.
+
+### Provisional later-phase sketch (NOT broken down — the mempalace distinctives, additive)
+- **Structured/scoped recall** — topic/room scoping + verbatim-plus-summary duality (recall quality beyond flat top-k).
+- **Temporal knowledge graph** — entity→relationship edges with validity windows: *the differentiator* — an agent with real access must never act on a stale fact (a changed endpoint, a rotated format).
+- **Memory-as-a-Guard-tool** — expose the store through Epic 6's tool broker so an agent can `recall()`/`remember()` **mid-run** (mempalace's self-managed model), reusing the shipped, code-reviewed tool path.
+- (Deferred flags noted, not built: shared-per-builder memory scope; a local/bundled embedding model; automatic PII redaction; memory-as-a-tool self-management.)
+
+### Open questions (resolve at story time)
+- **Naming clash:** turanga already has **"Skills"** (Gmail read/send scopes) — the Hermes "skill" (a distilled procedure) is a *different* thing. Name ours **learned procedures / playbooks**.
+- Embedding model: LiteLLM-hosted (`text-embedding-3-small`) vs a bundled local model (mempalace's zero-cost path).
+- Consolidation trigger: every run vs a threshold; synchronous post-run vs a background sweep.
+- Salience/decay policy; how aggressively to forget; a per-agent memory budget/cap.
+- Memory privacy: memories can carry real user data (email contents) — redaction rules; and per-agent isolation vs the later shared-per-builder scope.
+- e2e/testability: a `fakeEmbedder` + `fakeReflector` (mirroring `fakeMcpVerifier`) so recall/reflect are deterministically testable without a live model.
+- Config precedence + retroactivity: does turning memory **off** stop recall only, or also purge? Does changing a global default apply to `inherit` agents immediately?
