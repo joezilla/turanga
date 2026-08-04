@@ -508,3 +508,136 @@ describe("agent model validation against enabled models (Story 2.4)", () => {
     expect((await app.request(`/agents/${agent.id}`, { ...jsonPatch({ model: "openai/gpt-4o" }), headers: { "content-type": "application/json", cookie } })).status).toBe(200);
   });
 });
+
+// Draft → publish (the design's explicit save model). The agents row is always the working
+// draft; publishing snapshots it into agent_versions and bumps published_version.
+describe("publish", () => {
+  const withCookie = (cookie: string) => ({ headers: { "content-type": "application/json", cookie } });
+
+  it("a new agent is dirty with every publishable field unpublished", async () => {
+    const { app, cookie } = await appWithSession();
+    const agent = await createAgent(app, cookie, "Ops steward");
+    const res = await app.request(`/agents/${agent.id}`, { headers: { cookie } });
+    const body = (await res.json()) as { agent: { dirty: boolean; changedFields: string[]; publishedVersion: number | null } };
+    expect(body.agent.publishedVersion).toBeNull();
+    expect(body.agent.dirty).toBe(true);
+    expect(body.agent.changedFields).toContain("name");
+    expect(body.agent.changedFields).toContain("costCap");
+  });
+
+  it("publish creates v1 and clears dirty", async () => {
+    const { app, cookie } = await appWithSession();
+    const agent = await createAgent(app, cookie);
+    const res = await app.request(`/agents/${agent.id}/publish`, { method: "POST", headers: { cookie } });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { agent: { dirty: boolean; changedFields: string[]; publishedVersion: number }; version: { version: number; publishedBy: string | null } };
+    expect(body.version.version).toBe(1);
+    expect(body.version.publishedBy).toBe(EMAIL); // attributed to the session that published
+    expect(body.agent.publishedVersion).toBe(1);
+    expect(body.agent.dirty).toBe(false);
+    expect(body.agent.changedFields).toEqual([]);
+  });
+
+  it("refuses to republish an unchanged draft", async () => {
+    const { app, cookie } = await appWithSession();
+    const agent = await createAgent(app, cookie);
+    await app.request(`/agents/${agent.id}/publish`, { method: "POST", headers: { cookie } });
+    const again = await app.request(`/agents/${agent.id}/publish`, { method: "POST", headers: { cookie } });
+    expect(again.status).toBe(400);
+    expect(((await again.json()) as { error: string }).error).toMatch(/no unpublished changes/i);
+  });
+
+  it("a PATCH after publish reports only the fields that actually changed", async () => {
+    const { app, cookie } = await appWithSession();
+    const agent = await createAgent(app, cookie);
+    await app.request(`/agents/${agent.id}/publish`, { method: "POST", headers: { cookie } });
+
+    const patched = await app.request(`/agents/${agent.id}`, { ...jsonPatch({ instructions: "Read before you write." }), ...withCookie(cookie) });
+    const body = (await patched.json()) as { agent: { dirty: boolean; changedFields: string[] } };
+    expect(body.agent.dirty).toBe(true);
+    expect(body.agent.changedFields).toEqual(["instructions"]);
+
+    // Publishing again lands v2 and clears it.
+    const republished = await app.request(`/agents/${agent.id}/publish`, { method: "POST", headers: { cookie } });
+    expect(((await republished.json()) as { version: { version: number } }).version.version).toBe(2);
+  });
+
+  it("writing a field back to its published value clears dirty again", async () => {
+    const { app, cookie } = await appWithSession();
+    const agent = await createAgent(app, cookie, "Steward");
+    await app.request(`/agents/${agent.id}/publish`, { method: "POST", headers: { cookie } });
+    await app.request(`/agents/${agent.id}`, { ...jsonPatch({ name: "Renamed" }), ...withCookie(cookie) });
+    const back = await app.request(`/agents/${agent.id}`, { ...jsonPatch({ name: "Steward" }), ...withCookie(cookie) });
+    expect(((await back.json()) as { agent: { dirty: boolean } }).agent.dirty).toBe(false);
+  });
+
+  it("lifecycle state is not part of a version — activating doesn't make an agent dirty", async () => {
+    const { app, cookie } = await appWithSession({ connectionsRepo: await connectedProviders() });
+    const agent = await createAgent(app, cookie);
+    await app.request(`/agents/${agent.id}`, { ...jsonPatch({ model: "openai/gpt-4o", costCap: { perRun: { minor: 50, currency: "USD" }, perDay: { minor: 500, currency: "USD" } } }), ...withCookie(cookie) });
+    await app.request(`/agents/${agent.id}/publish`, { method: "POST", headers: { cookie } });
+    const activated = await app.request(`/agents/${agent.id}/activate`, { method: "POST", headers: { cookie } });
+    expect(activated.status).toBe(200);
+    expect(((await activated.json()) as { agent: { dirty: boolean; state: string } }).agent).toMatchObject({ state: "active", dirty: false });
+  });
+
+  it("lists versions newest first, each with its snapshot", async () => {
+    const { app, cookie } = await appWithSession();
+    const agent = await createAgent(app, cookie, "First");
+    await app.request(`/agents/${agent.id}/publish`, { method: "POST", headers: { cookie } });
+    await app.request(`/agents/${agent.id}`, { ...jsonPatch({ name: "Second" }), ...withCookie(cookie) });
+    await app.request(`/agents/${agent.id}/publish`, { method: "POST", headers: { cookie } });
+
+    const res = await app.request(`/agents/${agent.id}/versions`, { headers: { cookie } });
+    const { versions } = (await res.json()) as { versions: { version: number; snapshot: { name: string } }[] };
+    expect(versions.map((v) => v.version)).toEqual([2, 1]);
+    expect(versions[0].snapshot.name).toBe("Second");
+    expect(versions[1].snapshot.name).toBe("First"); // the published snapshot is immutable
+  });
+
+  it("404s publish/versions for an unknown agent", async () => {
+    const { app, cookie } = await appWithSession();
+    expect((await app.request("/agents/nope/publish", { method: "POST", headers: { cookie } })).status).toBe(404);
+    expect((await app.request("/agents/nope/versions", { headers: { cookie } })).status).toBe(404);
+  });
+
+  it("requires a session", async () => {
+    const { app } = await appWithSession();
+    expect((await app.request("/agents/x/publish", { method: "POST" })).status).toBe(401);
+    expect((await app.request("/agents/x/versions")).status).toBe(401);
+    expect((await app.request("/agents/x/duplicate", { method: "POST" })).status).toBe(401);
+  });
+});
+
+describe("duplicate", () => {
+  it("copies the definition into a new, never-published draft", async () => {
+    const { app, cookie } = await appWithSession({ connectionsRepo: await connectedProviders() });
+    const agent = await createAgent(app, cookie, "Ops steward");
+    await app.request(`/agents/${agent.id}`, {
+      ...jsonPatch({ instructions: "Read before write.", model: "openai/gpt-4o" }),
+      headers: { "content-type": "application/json", cookie },
+    });
+    await app.request(`/agents/${agent.id}/publish`, { method: "POST", headers: { cookie } });
+    await app.request(`/agents/${agent.id}/activate`, { method: "POST", headers: { cookie } });
+
+    const res = await app.request(`/agents/${agent.id}/duplicate`, { method: "POST", headers: { cookie } });
+    expect(res.status).toBe(201);
+    const copy = ((await res.json()) as { agent: { id: string; name: string; state: string; instructions: string; publishedVersion: number | null; dirty: boolean } }).agent;
+    expect(copy.id).not.toBe(agent.id);
+    expect(copy.name).toBe("Ops steward copy");
+    expect(copy.instructions).toBe("Read before write.");
+    expect(copy.state).toBe("draft"); // a copy never inherits Active
+    expect(copy.publishedVersion).toBeNull();
+    expect(copy.dirty).toBe(true);
+
+    // Editing the copy leaves the original alone.
+    await app.request(`/agents/${copy.id}`, { ...jsonPatch({ instructions: "Different." }), headers: { "content-type": "application/json", cookie } });
+    const original = await app.request(`/agents/${agent.id}`, { headers: { cookie } });
+    expect(((await original.json()) as { agent: { instructions: string } }).agent.instructions).toBe("Read before write.");
+  });
+
+  it("404s for an unknown agent", async () => {
+    const { app, cookie } = await appWithSession();
+    expect((await app.request("/agents/nope/duplicate", { method: "POST", headers: { cookie } })).status).toBe(404);
+  });
+});

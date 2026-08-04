@@ -4,13 +4,14 @@ import { setCookie, getCookie, deleteCookie } from "hono/cookie";
 import { ulid } from "@turanga/domain";
 import type { AuthRepo } from "./repo.js";
 import { normalizeEmail } from "./repo.js";
-import { verifyPassword, decoyHash } from "./password.js";
+import { verifyPassword, decoyHash, hashPassword } from "./password.js";
 import { newToken, hashToken, SESSION_TTL_MS } from "./sessions.js";
 
 const GENERIC = "Email or password is incorrect."; // same for unknown email + bad password (no enumeration)
 const MAX_BODY_BYTES = 4096;
 const MAX_EMAIL_LEN = 320;
 const MAX_PASSWORD_LEN = 1024;
+const MIN_PASSWORD_LEN = 12;
 
 // Basic per-client login throttle: blunts online brute-force and the argon2 CPU/memory
 // flood (each attempt costs ~19 MiB). In-memory is fine for a single-instance control plane.
@@ -77,6 +78,42 @@ export function authRoutes(repo: AuthRepo, opts: { secureCookie: boolean }) {
     const su = await repo.findSessionUser(hashToken(token), new Date());
     if (!su) return c.json({ error: "unauthenticated" }, 401);
     return c.json({ email: su.email });
+  });
+
+  // Change the signed-in user's password (Account modal). Requires the current password —
+  // a live session alone is not enough to take the account over. On success every OTHER
+  // session for that user is dropped, so a stolen cookie dies with the old password.
+  app.post("/auth/password", async (c) => {
+    if (Number(c.req.header("content-length") ?? "0") > MAX_BODY_BYTES) {
+      return c.json({ error: "That request was too large to read." }, 413);
+    }
+    const token = getCookie(c, "session");
+    if (!token) return c.json({ error: "unauthenticated" }, 401);
+    const tokenHash = hashToken(token);
+    const su = await repo.findSessionUser(tokenHash, new Date());
+    if (!su) return c.json({ error: "unauthenticated" }, 401);
+
+    if (rateLimited(clientKey(c), Date.now())) {
+      return c.json({ error: "Too many attempts. Try again in a minute." }, 429);
+    }
+
+    const body = (await c.req.json().catch(() => ({}))) as { currentPassword?: unknown; newPassword?: unknown };
+    const current = body.currentPassword;
+    const next = body.newPassword;
+    if (typeof current !== "string" || typeof next !== "string" || current.length > MAX_PASSWORD_LEN || next.length > MAX_PASSWORD_LEN) {
+      return c.json({ error: "Send your current password and a new one." }, 400);
+    }
+    if (next.length < MIN_PASSWORD_LEN) {
+      return c.json({ error: `A password needs at least ${MIN_PASSWORD_LEN} characters. Pick a longer one.` }, 400);
+    }
+
+    const user = await repo.findUserByEmail(normalizeEmail(su.email));
+    const ok = await verifyPassword(user?.passwordHash ?? (await decoyHash()), current);
+    if (!user || !ok) return c.json({ error: "That current password is incorrect. The password was not changed." }, 401);
+
+    await repo.updatePassword(user.id, await hashPassword(next));
+    await repo.deleteUserSessionsExcept(user.id, tokenHash); // this session survives; others don't
+    return c.json({ ok: true });
   });
 
   app.post("/auth/logout", async (c) => {

@@ -11,6 +11,7 @@ Warm Ink is the **baseline design system for this repository**. Every UX/UI deci
 - `readme.md` — the full design rationale: colour/type/space/shape/motion foundations, content voice, and caveats.
 - `tokens/*.css` — the actual CSS custom properties. Import `styles.css` (which `@import`s all token files) into production code.
 - `foundations/*.html` and `Foundations.dc.html` — reviewable specimen cards.
+- `Agent Management.dc.html` — the canonical **layout** spec for the product surfaces (nav rail, list column, content header, tab bar, dirty bar, docked drawer, dialog). Read it before laying out a new screen; see DESIGN.md#Screens for the measurements.
 
 ## How to use it
 - **Production code:** import `styles.css`, consume only the semantic tokens (`--bg-canvas`, `--text-primary`, `--action-primary-bg`, `--state-running`, …). They re-declare per theme, so components need no light/dark branches. Read `readme.md` to internalise the rules before designing.

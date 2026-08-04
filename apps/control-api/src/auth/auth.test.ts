@@ -89,3 +89,60 @@ describe("auth routes", () => {
     expect(me.status).toBe(401);
   });
 });
+
+describe("change password", () => {
+  const NEW_PW = "a much longer replacement passphrase";
+
+  async function signedIn() {
+    const app = await appWithUser();
+    const login = await app.request("/auth/login", jsonPost({ email: EMAIL, password: PW }));
+    return { app, cookie: sessionCookie(login) };
+  }
+
+  it("is 401 without a session", async () => {
+    const app = await appWithUser();
+    const res = await app.request("/auth/password", jsonPost({ currentPassword: PW, newPassword: NEW_PW }));
+    expect(res.status).toBe(401);
+  });
+
+  it("rejects a wrong current password and leaves the old one working", async () => {
+    const { app, cookie } = await signedIn();
+    const res = await app.request("/auth/password", {
+      ...jsonPost({ currentPassword: "not it", newPassword: NEW_PW }),
+      headers: { "content-type": "application/json", cookie },
+    });
+    expect(res.status).toBe(401);
+    const still = await app.request("/auth/login", jsonPost({ email: EMAIL, password: PW }));
+    expect(still.status).toBe(200);
+  });
+
+  it("rejects a new password under the minimum length", async () => {
+    const { app, cookie } = await signedIn();
+    const res = await app.request("/auth/password", {
+      ...jsonPost({ currentPassword: PW, newPassword: "short" }),
+      headers: { "content-type": "application/json", cookie },
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toContain("12 characters");
+  });
+
+  it("changes the password, keeps this session, and drops the others", async () => {
+    const app = await appWithUser();
+    const first = sessionCookie(await app.request("/auth/login", jsonPost({ email: EMAIL, password: PW })));
+    const second = sessionCookie(await app.request("/auth/login", jsonPost({ email: EMAIL, password: PW })));
+
+    const res = await app.request("/auth/password", {
+      ...jsonPost({ currentPassword: PW, newPassword: NEW_PW }),
+      headers: { "content-type": "application/json", cookie: second },
+    });
+    expect(res.status).toBe(200);
+
+    // The session that made the change survives; the other one is gone.
+    expect((await app.request("/auth/me", { headers: { cookie: second } })).status).toBe(200);
+    expect((await app.request("/auth/me", { headers: { cookie: first } })).status).toBe(401);
+
+    // The old password no longer logs in; the new one does.
+    expect((await app.request("/auth/login", jsonPost({ email: EMAIL, password: PW }))).status).toBe(401);
+    expect((await app.request("/auth/login", jsonPost({ email: EMAIL, password: NEW_PW }))).status).toBe(200);
+  });
+});

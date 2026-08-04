@@ -1,0 +1,1643 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="./styles.css">
+<style>
+  body { margin: 0; background: var(--bg-canvas); }
+  a { color: var(--text-link); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  @keyframes om-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+  input, textarea, select, button { font: inherit; }
+  input[type="checkbox"] { accent-color: var(--signal-500); }
+  ::placeholder { color: var(--text-tertiary); }
+  *::-webkit-scrollbar { width: 10px; height: 10px; }
+  *::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 999px; border: 3px solid transparent; background-clip: content-box; }
+</style>
+</helmet>
+<div style="display: flex; height: 100vh; overflow-x: auto; overflow-y: hidden; font-family: var(--font-sans); background: var(--bg-canvas); color: var(--text-primary); -webkit-font-smoothing: antialiased">
+
+  <nav style="width: 52px; flex: none; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 12px 0; border-right: 1px solid var(--border-hairline); background: var(--bg-sunken)">
+    <div style="width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; border-radius: var(--radius-md); background: var(--ink-900); color: var(--ink-25); font-size: 13px; font-weight: 600; letter-spacing: -0.02em; margin-bottom: 10px">T</div>
+    <button type="button" title="Agents" onClick="{{ goToAgents }}" style="{{ navAgentsStyle }}" style-hover="color: var(--text-primary)">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M9 9h6v6H9z"></path></svg>
+    </button>
+    <button type="button" title="Chat" onClick="{{ goToChat }}" style="{{ navChatStyle }}" style-hover="color: var(--text-primary)">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path></svg>
+    </button>
+    <button type="button" title="Runs" style="width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; border-radius: var(--radius-md); cursor: pointer; border: 1px solid transparent; background: transparent; color: var(--text-tertiary)" style-hover="color: var(--text-primary); background: var(--surface-hover)">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16"></path><path d="M4 12h10"></path><path d="M4 18h13"></path></svg>
+    </button>
+    <button type="button" title="Tools" style="width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; border-radius: var(--radius-md); cursor: pointer; border: 1px solid transparent; background: transparent; color: var(--text-tertiary)" style-hover="color: var(--text-primary); background: var(--surface-hover)">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path></svg>
+    </button>
+    <button type="button" title="Settings" onClick="{{ goToSettings }}" style="{{ navSettingsStyle }}" style-hover="color: var(--text-primary)">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-2.82 1.17V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+    </button>
+    <div style="flex: 1"></div>
+    <button type="button" onClick="{{ toggleTheme }}" title="{{ themeLabel }}" style="width: 30px; height: 30px; margin-bottom: 6px; display: flex; align-items: center; justify-content: center; border-radius: var(--radius-md); cursor: pointer; border: 1px solid transparent; background: transparent; color: var(--text-tertiary)" style-hover="color: var(--text-primary); background: var(--surface-hover)">
+      <sc-if value="{{ isDark }}" hint-placeholder-val="{{ true }}">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2"></path><path d="M12 20v2"></path><path d="M4.9 4.9l1.4 1.4"></path><path d="M17.7 17.7l1.4 1.4"></path><path d="M2 12h2"></path><path d="M20 12h2"></path><path d="M6.3 17.7l-1.4 1.4"></path><path d="M19.1 4.9l-1.4 1.4"></path></svg>
+      </sc-if>
+      <sc-if value="{{ isLight }}" hint-placeholder-val="{{ false }}">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A8.5 8.5 0 1 1 11.2 3a6.6 6.6 0 0 0 9.8 9.8z"></path></svg>
+      </sc-if>
+    </button>
+    <button type="button" onClick="{{ openAccount }}" title="Account" style="{{ avatarStyle }}" style-hover="border-color: var(--border-strong); color: var(--text-primary)">{{ initials }}</button>
+  </nav>
+
+  <sc-if value="{{ isAgentsView }}" hint-placeholder-val="{{ true }}">
+  <aside style="width: 264px; flex: none; display: flex; flex-direction: column; border-right: 1px solid var(--border-hairline); background: var(--bg-sunken); min-height: 0">
+    <div style="height: 48px; flex: none; display: flex; align-items: center; justify-content: space-between; padding: 0 10px 0 14px; border-bottom: 1px solid var(--border-hairline)">
+      <span style="font-size: 14px; font-weight: 500; letter-spacing: -0.008em">Agents</span>
+      <button type="button" style="height: 26px; padding: 0 9px; display: flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 500; color: var(--action-secondary-fg); background: var(--action-secondary-bg); border: 1px solid var(--border-strong); border-radius: var(--radius-md); cursor: pointer" style-hover="background: var(--surface-hover)">New</button>
+    </div>
+    <div style="padding: 10px; border-bottom: 1px solid var(--border-hairline)">
+      <input type="text" placeholder="Search agents" style="width: 100%; height: 28px; box-sizing: border-box; padding: 0 9px; font-size: 13px; color: var(--text-primary); background: var(--surface-inset); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); outline: none" style-focus="border-color: var(--border-focus); background: var(--surface-card)">
+    </div>
+    <div style="flex: 1; overflow-y: auto; padding: 6px 0">
+      <sc-for list="{{ agents }}" as="a" hint-placeholder-count="6">
+        <button type="button" onClick="{{ a.select }}" style="{{ a.style }}" style-hover="background: var(--surface-hover)">
+          <span style="display: flex; align-items: center; gap: 7px; min-width: 0">
+            <span style="width: 6px; height: 6px; flex: none; border-radius: 999px; background: {{ a.dot }}; animation: {{ a.anim }}"></span>
+            <span style="font-size: 13px; font-weight: 500; letter-spacing: -0.004em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{ a.name }}</span>
+            <sc-if value="{{ a.dirty }}" hint-placeholder-val="{{ false }}">
+              <span style="font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--caution-500); flex: none">draft</span>
+            </sc-if>
+          </span>
+          <span style="display: flex; align-items: center; justify-content: space-between; gap: 8px; font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary)">
+            <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{ a.id }}</span>
+            <span style="flex: none">{{ a.when }}</span>
+          </span>
+        </button>
+      </sc-for>
+    </div>
+    <div style="flex: none; padding: 10px 14px; border-top: 1px solid var(--border-hairline); font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-tertiary)">6 agents · 2 drafts</div>
+  </aside>
+
+  <main style="flex: 1; min-width: 700px; display: flex; flex-direction: column; min-height: 0">
+
+    <header style="flex: none; height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 16px; border-bottom: 1px solid var(--border-hairline); background: var(--surface-card)">
+      <div style="display: flex; align-items: center; gap: 10px; min-width: 0">
+        <span style="font-size: 15px; font-weight: 500; letter-spacing: -0.012em; white-space: nowrap">{{ agentName }}</span>
+        <span style="font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary)">{{ agentId }}</span>
+        <span style="display: flex; align-items: center; gap: 6px; height: 20px; padding: 0 8px 0 7px; border: 1px solid var(--border-subtle); border-radius: var(--radius-full); font-size: 11px; color: var(--text-secondary)">
+          <span style="width: 5px; height: 5px; border-radius: 999px; background: var(--state-succeeded)"></span>Live
+        </span>
+        <span style="font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary)">v2.14</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px">
+        <sc-if value="{{ dirty }}" hint-placeholder-val="{{ false }}">
+          <span style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--caution-500)">
+            <span style="width: 5px; height: 5px; border-radius: 999px; background: var(--caution-500)"></span>{{ dirtyLabel }}
+          </span>
+        </sc-if>
+        <button type="button" onClick="{{ toggleConsole }}" style="{{ consoleButtonStyle }}">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 8l4 4-4 4"></path><path d="M13 16h4"></path></svg>
+          Test
+        </button>
+        <button type="button" style="height: 28px; padding: 0 10px; font-size: 12px; font-weight: 500; color: var(--action-ghost-fg); background: transparent; border: 1px solid transparent; border-radius: var(--radius-md); cursor: pointer" style-hover="background: var(--surface-hover); color: var(--text-primary)">History</button>
+        <button type="button" style="height: 28px; padding: 0 10px; font-size: 12px; font-weight: 500; color: var(--action-secondary-fg); background: var(--action-secondary-bg); border: 1px solid var(--border-strong); border-radius: var(--radius-md); cursor: pointer" style-hover="background: var(--surface-hover)">Duplicate</button>
+        <button type="button" onClick="{{ publish }}" style="{{ publishStyle }}">Publish v2.15</button>
+      </div>
+    </header>
+
+    <div style="flex: none; display: flex; align-items: stretch; gap: 2px; padding: 0 12px; border-bottom: 1px solid var(--border-hairline); background: var(--surface-card)">
+      <sc-for list="{{ tabs }}" as="t" hint-placeholder-count="4">
+        <button type="button" onClick="{{ t.select }}" style="{{ t.style }}">
+          {{ t.label }}
+          <sc-if value="{{ t.count }}" hint-placeholder-val="{{ false }}">
+            <span style="font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary)">{{ t.count }}</span>
+          </sc-if>
+          <sc-if value="{{ t.changed }}" hint-placeholder-val="{{ false }}">
+            <span style="width: 4px; height: 4px; border-radius: 999px; background: var(--caution-500)"></span>
+          </sc-if>
+        </button>
+      </sc-for>
+    </div>
+
+    <div style="position: relative; flex: 1; min-height: 0; display: flex">
+
+      <div style="flex: 1; min-width: 700px; display: flex; flex-direction: column; min-height: 0">
+
+        <sc-if value="{{ isDefinition }}" hint-placeholder-val="{{ false }}">
+          <div style="flex: 1; overflow-y: auto; padding: 24px 28px 96px">
+            <div style="max-width: 720px; display: flex; flex-direction: column; gap: 28px">
+
+              <section style="display: flex; flex-direction: column; gap: 14px">
+                <div style="font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.075em; text-transform: uppercase; color: var(--text-tertiary)">Identity</div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px">
+                  <label style="display: flex; flex-direction: column; gap: 6px">
+                    <span style="font-size: 12px; color: var(--text-secondary)">Name</span>
+                    <input type="text" value="{{ agentName }}" onChange="{{ setName }}" style="height: 32px; box-sizing: border-box; padding: 0 10px; font-size: 13px; color: var(--text-primary); background: var(--surface-card); border: 1px solid var(--border-strong); border-radius: var(--radius-md); outline: none" style-focus="border-color: var(--border-focus)">
+                  </label>
+                  <label style="display: flex; flex-direction: column; gap: 6px">
+                    <span style="font-size: 12px; color: var(--text-secondary)">Model</span>
+                    <select onChange="{{ setModel }}" value="{{ model }}" style="height: 32px; box-sizing: border-box; padding: 0 8px; font-size: 13px; color: var(--text-primary); background: var(--surface-card); border: 1px solid var(--border-strong); border-radius: var(--radius-md); outline: none" style-focus="border-color: var(--border-focus)">
+                      <option value="claude-sonnet-4-6">claude-sonnet-4-6</option>
+                      <option value="claude-opus-4-1">claude-opus-4-1</option>
+                      <option value="claude-haiku-4-5">claude-haiku-4-5</option>
+                    </select>
+                  </label>
+                </div>
+                <label style="display: flex; flex-direction: column; gap: 6px">
+                  <span style="font-size: 12px; color: var(--text-secondary)">Description</span>
+                  <input type="text" value="{{ description }}" onChange="{{ setDescription }}" style="height: 32px; box-sizing: border-box; padding: 0 10px; font-size: 13px; color: var(--text-primary); background: var(--surface-card); border: 1px solid var(--border-strong); border-radius: var(--radius-md); outline: none" style-focus="border-color: var(--border-focus)">
+                </label>
+              </section>
+
+              <section style="display: flex; flex-direction: column; gap: 10px">
+                <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px">
+                  <div style="font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.075em; text-transform: uppercase; color: var(--text-tertiary)">Definition files</div>
+                  <div style="display: flex; align-items: center; gap: 12px; font-size: 12px; color: var(--text-tertiary)">
+                    <span style="font-family: var(--font-mono)">{{ activeFileChars }}</span>
+                    <a href="#reference">Variable reference</a>
+                  </div>
+                </div>
+
+                <div style="display: flex; gap: 2px; padding: 2px; background: var(--surface-inset); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); width: fit-content">
+                  <sc-for list="{{ files }}" as="f" hint-placeholder-count="3">
+                    <button type="button" onClick="{{ f.select }}" style="{{ f.style }}">
+                      {{ f.name }}
+                      <sc-if value="{{ f.edited }}" hint-placeholder-val="{{ false }}">
+                        <span style="width: 4px; height: 4px; border-radius: 999px; background: var(--caution-500)"></span>
+                      </sc-if>
+                      <sc-if value="{{ f.inherited }}" hint-placeholder-val="{{ false }}">
+                        <span style="font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--signal-500)">shared</span>
+                      </sc-if>
+                    </button>
+                  </sc-for>
+                </div>
+
+                <div style="font-size: 12px; line-height: 18px; color: var(--text-secondary)">{{ activeFileHint }}</div>
+
+                <sc-if value="{{ fileLocked }}" hint-placeholder-val="{{ false }}">
+                  <div style="display: flex; align-items: center; gap: 10px; padding: 9px 12px; background: var(--signal-100); border: 1px solid var(--border-hairline); border-radius: var(--radius-md)">
+                    <span style="width: 6px; height: 6px; flex: none; border-radius: 999px; background: var(--signal-500)"></span>
+                    <span style="font-size: 12px; line-height: 18px; color: var(--text-secondary); flex: 1">Inherited from the shared soul <span style="font-family: var(--font-mono); color: var(--text-primary)">{{ soulName }}</span>. Edits here would fork it away from {{ soulUsage }}.</span>
+                    <button type="button" onClick="{{ overrideSoul }}" style="height: 24px; padding: 0 9px; flex: none; font-size: 12px; font-weight: 500; color: var(--action-secondary-fg); background: var(--action-secondary-bg); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); cursor: pointer" style-hover="background: var(--surface-hover)">Override for this agent</button>
+                  </div>
+                </sc-if>
+
+                <textarea value="{{ activeFileText }}" onChange="{{ setFileText }}" readOnly="{{ fileLocked }}" rows="14" style="{{ textareaStyle }}" style-focus="border-color: var(--border-focus)"></textarea>
+              </section>
+
+              <section style="display: flex; flex-direction: column; gap: 12px">
+                <div style="font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.075em; text-transform: uppercase; color: var(--text-tertiary)">Metadata</div>
+                <div style="border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); overflow: hidden; background: var(--surface-card)">
+                  <div style="display: grid; grid-template-columns: 220px 1fr 32px; gap: 12px; align-items: center; height: 30px; padding: 0 12px; background: var(--surface-inset); border-bottom: 1px solid var(--border-hairline); font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.075em; text-transform: uppercase; color: var(--text-tertiary)">
+                    <span>key</span><span>value</span><span></span>
+                  </div>
+                  <sc-for list="{{ metadata }}" as="m" hint-placeholder-count="3">
+                    <div style="display: grid; grid-template-columns: 220px 1fr 32px; gap: 12px; align-items: center; height: 36px; padding: 0 12px; border-bottom: 1px solid var(--border-hairline); font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary)">
+                      <span style="color: var(--text-primary)">{{ m.key }}</span>
+                      <span>{{ m.value }}</span>
+                      <button type="button" title="Remove pair" style="height: 22px; width: 22px; display: flex; align-items: center; justify-content: center; color: var(--text-tertiary); background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm); cursor: pointer" style-hover="color: var(--critical-500); background: var(--surface-hover)">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18"></path><path d="M6 6l12 12"></path></svg>
+                      </button>
+                    </div>
+                  </sc-for>
+                  <div style="padding: 8px 12px">
+                    <button type="button" style="height: 26px; padding: 0 9px; font-size: 12px; font-weight: 500; color: var(--action-ghost-fg); background: transparent; border: 1px dashed var(--border-strong); border-radius: var(--radius-md); cursor: pointer" style-hover="color: var(--text-primary); background: var(--surface-hover)">Add pair</button>
+                  </div>
+                </div>
+              </section>
+
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isTools }}" hint-placeholder-val="{{ true }}">
+          <div style="flex: 1; min-height: 0; display: flex; flex-direction: column">
+
+            <div style="flex: none; display: flex; flex-direction: column; gap: 10px; padding: 14px 20px 12px; border-bottom: 1px solid var(--border-hairline); background: var(--surface-card)">
+              <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; row-gap: 8px">
+                <div style="position: relative; flex: 1 1 240px; min-width: 240px; max-width: 380px">
+                  <input type="text" value="{{ search }}" onInput="{{ setSearch }}" placeholder="Filter tools by name or description" style="width: 100%; height: 30px; box-sizing: border-box; padding: 0 34px 0 10px; font-size: 13px; color: var(--text-primary); background: var(--surface-inset); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); outline: none" style-focus="border-color: var(--border-focus); background: var(--surface-card)">
+                  <span style="position: absolute; top: 7px; right: 8px; font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary); border: 1px solid var(--border-subtle); border-radius: var(--radius-xs); padding: 1px 4px">/</span>
+                </div>
+                <div style="display: flex; gap: 2px; padding: 2px; background: var(--surface-inset); border: 1px solid var(--border-subtle); border-radius: var(--radius-md)">
+                  <sc-for list="{{ riskFilters }}" as="r" hint-placeholder-count="4">
+                    <button type="button" onClick="{{ r.select }}" style="{{ r.style }}">{{ r.label }}</button>
+                  </sc-for>
+                </div>
+                <label style="display: flex; align-items: center; gap: 6px; margin-left: 4px; font-size: 12px; color: var(--text-secondary); cursor: pointer">
+                  <input type="checkbox" checked="{{ selectedOnly }}" onChange="{{ toggleSelectedOnly }}" style="width: 13px; height: 13px; margin: 0">
+                  Enabled only
+                </label>
+                <div style="flex: 1 1 0; min-width: 0"></div>
+                <button type="button" onClick="{{ enableAllResults }}" style="height: 28px; padding: 0 10px; font-size: 12px; font-weight: 500; color: var(--action-secondary-fg); background: var(--action-secondary-bg); border: 1px solid var(--border-strong); border-radius: var(--radius-md); cursor: pointer" style-hover="background: var(--surface-hover)">{{ enableAllLabel }}</button>
+                <button type="button" onClick="{{ disableAll }}" style="height: 28px; padding: 0 10px; font-size: 12px; font-weight: 500; color: var(--action-ghost-fg); background: transparent; border: 1px solid transparent; border-radius: var(--radius-md); cursor: pointer" style-hover="background: var(--surface-hover); color: var(--text-primary)">Clear all</button>
+              </div>
+
+              <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap">
+                <sc-for list="{{ groupFilters }}" as="g" hint-placeholder-count="7">
+                  <button type="button" onClick="{{ g.select }}" style="{{ g.style }}">
+                    {{ g.label }}
+                    <span style="font-family: var(--font-mono); font-size: 10px; opacity: 0.7">{{ g.count }}</span>
+                  </button>
+                </sc-for>
+              </div>
+
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 2px">
+                <div style="font-size: 12px; color: var(--text-secondary)">
+                  <span style="font-family: var(--font-mono); color: var(--text-primary)">{{ enabledCount }}</span> of <span style="font-family: var(--font-mono)">{{ totalCount }}</span> tools enabled · <span style="font-family: var(--font-mono)">{{ resultCount }}</span> shown
+                </div>
+                <sc-if value="{{ hasDestructive }}" hint-placeholder-val="{{ false }}">
+                  <div style="display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text-secondary)">
+                    <span style="width: 5px; height: 5px; border-radius: 999px; background: var(--critical-500)"></span>
+                    {{ destructiveLabel }}
+                  </div>
+                </sc-if>
+              </div>
+            </div>
+
+            <div style="flex: 1; overflow-y: auto; padding: 8px 20px 96px">
+              <sc-for list="{{ groups }}" as="g" hint-placeholder-count="4">
+                <div style="border-bottom: 1px solid var(--border-hairline)">
+                  <div style="position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 10px; height: 34px; background: var(--bg-canvas)">
+                    <button type="button" onClick="{{ g.toggleOpen }}" style="display: flex; align-items: center; gap: 8px; padding: 0; background: transparent; border: none; cursor: pointer; color: var(--text-primary)">
+                      <span style="display: flex; align-items: center; justify-content: center; width: 10px; color: var(--text-tertiary); transform: {{ g.caretRotate }}">
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"></path></svg>
+                      </span>
+                      <span style="font-size: 13px; font-weight: 500; letter-spacing: -0.004em">{{ g.name }}</span>
+                      <span style="font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary)">{{ g.ratio }}</span>
+                    </button>
+                    <div style="flex: 1"></div>
+                    <button type="button" onClick="{{ g.enableAll }}" style="height: 22px; padding: 0 7px; font-size: 11px; font-weight: 500; color: var(--action-ghost-fg); background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm); cursor: pointer" style-hover="background: var(--surface-hover); color: var(--text-primary)">{{ g.bulkLabel }}</button>
+                  </div>
+                  <sc-if value="{{ g.open }}" hint-placeholder-val="{{ true }}">
+                    <div style="display: flex; flex-direction: column; padding-bottom: 8px">
+                      <sc-for list="{{ g.rows }}" as="t" hint-placeholder-count="5">
+                        <label style="{{ t.style }}" style-hover="background: var(--surface-hover)">
+                          <input type="checkbox" checked="{{ t.on }}" onChange="{{ t.toggle }}" style="width: 13px; height: 13px; margin: 5px 0 0 0; flex: none">
+                          <span style="min-width: 0; display: flex; flex-direction: column; gap: 2px">
+                            <span style="display: flex; align-items: center; gap: 8px">
+                              <span style="font-family: var(--font-mono); font-size: 12px; color: var(--text-primary)">{{ t.name }}</span>
+                              <span style="font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: {{ t.riskColor }}">{{ t.risk }}</span>
+                            </span>
+                            <span style="font-size: 12px; line-height: 18px; color: var(--text-secondary); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical">{{ t.desc }}</span>
+                          </span>
+                        </label>
+                      </sc-for>
+                    </div>
+                  </sc-if>
+                </div>
+              </sc-for>
+              <sc-if value="{{ noResults }}" hint-placeholder-val="{{ false }}">
+                <div style="padding: 40px 0; text-align: center; font-size: 13px; color: var(--text-tertiary)">No tools match this filter.</div>
+              </sc-if>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isLibrary }}" hint-placeholder-val="{{ false }}">
+          <div style="flex: 1; overflow-y: auto; padding: 24px 28px 96px">
+            <div style="max-width: 860px; display: flex; flex-direction: column; gap: 32px">
+
+              <section style="display: flex; flex-direction: column; gap: 12px">
+                <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 16px">
+                  <div style="display: flex; align-items: baseline; gap: 12px">
+                    <div style="font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.075em; text-transform: uppercase; color: var(--text-tertiary)">Soul</div>
+                    <span style="font-size: 12px; color: var(--text-secondary)">One per agent. Defines character, tone and standing commitments.</span>
+                  </div>
+                  <a href="#library">Open soul library</a>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 8px">
+                  <sc-for list="{{ souls }}" as="s" hint-placeholder-count="4">
+                    <label style="{{ s.style }}" style-hover="background: var(--surface-hover)">
+                      <input type="radio" name="soul" checked="{{ s.on }}" onChange="{{ s.select }}" style="width: 13px; height: 13px; margin: 4px 0 0 0; flex: none; accent-color: var(--signal-500)">
+                      <span style="min-width: 0; display: flex; flex-direction: column; gap: 3px">
+                        <span style="display: flex; align-items: center; gap: 9px">
+                          <span style="font-size: 13px; font-weight: 500; letter-spacing: -0.004em">{{ s.title }}</span>
+                          <span style="font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary)">{{ s.id }}</span>
+                          <span style="font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary)">{{ s.version }}</span>
+                        </span>
+                        <span style="font-size: 12px; line-height: 18px; color: var(--text-secondary)">{{ s.body }}</span>
+                      </span>
+                      <span style="flex: none; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-tertiary); padding-top: 3px">{{ s.usage }}</span>
+                    </label>
+                  </sc-for>
+                </div>
+              </section>
+
+              <section style="display: flex; flex-direction: column; gap: 12px">
+                <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; row-gap: 8px">
+                  <div style="display: flex; align-items: baseline; gap: 12px">
+                    <div style="font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.075em; text-transform: uppercase; color: var(--text-tertiary)">Skills</div>
+                    <span style="font-size: 12px; color: var(--text-secondary)">Shared procedures. Attach as many as the agent needs.</span>
+                  </div>
+                  <div style="display: flex; align-items: center; gap: 8px">
+                    <input type="text" value="{{ skillSearch }}" onInput="{{ setSkillSearch }}" placeholder="Filter skills" style="height: 28px; width: 200px; box-sizing: border-box; padding: 0 9px; font-size: 12px; color: var(--text-primary); background: var(--surface-inset); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); outline: none" style-focus="border-color: var(--border-focus); background: var(--surface-card)">
+                    <span style="font-size: 12px; color: var(--text-secondary)"><span style="font-family: var(--font-mono); color: var(--text-primary)">{{ skillsAttached }}</span> attached</span>
+                  </div>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 8px">
+                  <sc-for list="{{ skills }}" as="k" hint-placeholder-count="6">
+                    <label style="{{ k.style }}" style-hover="background: var(--surface-hover)">
+                      <input type="checkbox" checked="{{ k.on }}" onChange="{{ k.toggle }}" style="width: 13px; height: 13px; margin: 4px 0 0 0; flex: none">
+                      <span style="min-width: 0; display: flex; flex-direction: column; gap: 3px">
+                        <span style="display: flex; align-items: center; gap: 9px; flex-wrap: wrap">
+                          <span style="font-size: 13px; font-weight: 500; letter-spacing: -0.004em">{{ k.title }}</span>
+                          <span style="font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary)">{{ k.id }}</span>
+                          <span style="font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary)">{{ k.version }}</span>
+                          <sc-if value="{{ k.pinned }}" hint-placeholder-val="{{ false }}">
+                            <span style="font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--caution-500)">pinned</span>
+                          </sc-if>
+                        </span>
+                        <span style="font-size: 12px; line-height: 18px; color: var(--text-secondary)">{{ k.body }}</span>
+                      </span>
+                      <span style="flex: none; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-tertiary); padding-top: 3px">{{ k.usage }}</span>
+                    </label>
+                  </sc-for>
+                </div>
+                <sc-if value="{{ noSkills }}" hint-placeholder-val="{{ false }}">
+                  <div style="padding: 28px 0; text-align: center; font-size: 13px; color: var(--text-tertiary)">No skills match this filter.</div>
+                </sc-if>
+              </section>
+
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isLimits }}" hint-placeholder-val="{{ false }}">
+          <div style="flex: 1; overflow-y: auto; padding: 24px 28px 96px">
+            <div style="max-width: 720px; display: flex; flex-direction: column; gap: 28px">
+              <section style="display: flex; flex-direction: column; gap: 14px">
+                <div style="font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.075em; text-transform: uppercase; color: var(--text-tertiary)">Run limits</div>
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px">
+                  <sc-for list="{{ limits }}" as="l" hint-placeholder-count="3">
+                    <label style="display: flex; flex-direction: column; gap: 6px">
+                      <span style="font-size: 12px; color: var(--text-secondary)">{{ l.label }}</span>
+                      <input type="text" value="{{ l.value }}" style="height: 32px; box-sizing: border-box; padding: 0 10px; font-family: var(--font-mono); font-size: 12px; color: var(--text-primary); background: var(--surface-card); border: 1px solid var(--border-strong); border-radius: var(--radius-md); outline: none" style-focus="border-color: var(--border-focus)">
+                      <span style="font-size: 11px; color: var(--text-tertiary)">{{ l.hint }}</span>
+                    </label>
+                  </sc-for>
+                </div>
+              </section>
+
+              <section style="display: flex; flex-direction: column; gap: 12px">
+                <div style="font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.075em; text-transform: uppercase; color: var(--text-tertiary)">Approval policy</div>
+                <div style="border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--surface-card); overflow: hidden">
+                  <sc-for list="{{ policies }}" as="p" hint-placeholder-count="3">
+                    <label style="display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border-hairline); cursor: pointer" style-hover="background: var(--surface-hover)">
+                      <input type="checkbox" checked="{{ p.on }}" onChange="{{ p.toggle }}" style="width: 13px; height: 13px; margin: 4px 0 0 0; flex: none">
+                      <span style="display: flex; flex-direction: column; gap: 3px">
+                        <span style="font-size: 13px; font-weight: 500; letter-spacing: -0.004em">{{ p.title }}</span>
+                        <span style="font-size: 12px; line-height: 18px; color: var(--text-secondary)">{{ p.body }}</span>
+                      </span>
+                    </label>
+                  </sc-for>
+                </div>
+              </section>
+
+              <section style="display: flex; flex-direction: column; gap: 12px">
+                <div style="font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.075em; text-transform: uppercase; color: var(--text-tertiary)">Self-learning</div>
+                <div style="display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; background: var(--signal-100); border: 1px solid var(--border-hairline); border-radius: var(--radius-lg)">
+                  <span style="width: 6px; height: 6px; margin-top: 7px; flex: none; border-radius: 999px; background: var(--signal-500); animation: om-pulse var(--duration-pulse) var(--ease-standard) infinite"></span>
+                  <span style="display: flex; flex-direction: column; gap: 4px">
+                    <span style="font-size: 13px; font-weight: 500">Learned a new escalation rule from 42 resolved runs.</span>
+                    <span style="font-size: 12px; line-height: 18px; color: var(--text-secondary)">Proposed rule: route refunds above $500 to a human before drafting a resolution. Applies on publish.</span>
+                  </span>
+                  <div style="flex: 1"></div>
+                  <button type="button" style="height: 26px; padding: 0 10px; flex: none; font-size: 12px; font-weight: 500; color: var(--action-secondary-fg); background: var(--action-secondary-bg); border: 1px solid var(--border-strong); border-radius: var(--radius-md); cursor: pointer" style-hover="background: var(--surface-hover)">Review</button>
+                </div>
+              </section>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ dirty }}" hint-placeholder-val="{{ true }}">
+          <div style="flex: none; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 16px; border-top: 1px solid var(--border-subtle); background: var(--surface-raised); box-shadow: var(--shadow-lg)">
+            <div style="display: flex; align-items: center; gap: 10px; min-width: 0">
+              <span style="width: 6px; height: 6px; flex: none; border-radius: 999px; background: var(--caution-500)"></span>
+              <span style="font-size: 13px; font-weight: 500">{{ dirtyLabel }}</span>
+              <span style="font-size: 12px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{ dirtyDetail }}</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px; flex: none">
+              <span style="font-size: 12px; color: var(--text-tertiary)">{{ savedAt }}</span>
+              <button type="button" onClick="{{ discard }}" style="height: 30px; padding: 0 11px; font-size: 12px; font-weight: 500; color: var(--action-ghost-fg); background: transparent; border: 1px solid transparent; border-radius: var(--radius-md); cursor: pointer" style-hover="background: var(--surface-hover); color: var(--text-primary)">Discard changes</button>
+              <button type="button" onClick="{{ save }}" style="height: 30px; padding: 0 13px; font-size: 12px; font-weight: 500; color: var(--action-primary-fg); background: var(--action-primary-bg); border: 1px solid transparent; border-radius: var(--radius-md); cursor: pointer" style-hover="background: var(--action-primary-bg-hover)">Save draft</button>
+            </div>
+          </div>
+        </sc-if>
+
+      </div>
+
+      <sc-if value="{{ consoleOpen }}" hint-placeholder-val="{{ false }}">
+      <aside style="position: fixed; top: 85px; right: 0; bottom: 0; z-index: 40; width: 420px; max-width: 100%; display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--border-subtle); background: var(--bg-sunken); box-shadow: var(--shadow-lg)">
+        <div style="flex: none; height: 40px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 10px 0 14px; border-bottom: 1px solid var(--border-hairline)">
+          <span style="font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.075em; text-transform: uppercase; color: var(--text-tertiary)">Test console · draft</span>
+          <div style="display: flex; align-items: center; gap: 4px">
+            <button type="button" style="height: 22px; padding: 0 7px; font-size: 11px; font-weight: 500; color: var(--action-ghost-fg); background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm); cursor: pointer" style-hover="background: var(--surface-hover); color: var(--text-primary)">Clear</button>
+            <button type="button" onClick="{{ toggleConsole }}" title="Close test console" style="width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; color: var(--text-tertiary); background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm); cursor: pointer" style-hover="color: var(--text-primary); background: var(--surface-hover)">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18"></path><path d="M6 6l12 12"></path></svg>
+            </button>
+          </div>
+        </div>
+        <div style="flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 14px; font-family: var(--font-mono); font-size: 11px; line-height: 18px">
+          <div style="color: var(--text-secondary)"><span style="color: var(--text-tertiary)">you</span><br>List all containers and their status.</div>
+          <div style="display: flex; flex-direction: column; gap: 6px">
+            <div style="color: var(--text-tertiary)">turanga · step 1</div>
+            <div style="display: flex; align-items: center; gap: 7px; color: var(--text-primary)">
+              <span style="width: 5px; height: 5px; border-radius: 999px; background: var(--state-succeeded)"></span>list_containers(all=true)
+            </div>
+            <pre style="margin: 0; padding: 10px; overflow-x: auto; color: var(--text-secondary); background: var(--surface-inset); border: 1px solid var(--border-hairline); border-radius: var(--radius-md)">ID    STATUS    IMAGE
+7f3c  running   system.api:2.14
+9a1e  running   task.log:1.8
+b204  running   vote.svc:0.9
+c8d7  exited    cache:7-alpine</pre>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 6px">
+            <div style="color: var(--text-tertiary)">turanga · step 2</div>
+            <div style="color: var(--text-secondary)">Three containers are running and one has exited. <span style="color: var(--text-primary)">c8d7</span> stopped 4 hours ago after an out-of-memory kill.</div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 7px; color: var(--state-review)">
+            <span style="width: 5px; height: 5px; border-radius: 999px; background: var(--state-review)"></span>remove_container(c8d7) — awaiting approval
+          </div>
+          <div style="display: flex; gap: 16px; color: var(--text-tertiary); border-top: 1px solid var(--border-hairline); padding-top: 10px">
+            <span>2 steps</span><span>1,284 ms</span><span>3,912 tokens</span><span>$0.0413</span>
+          </div>
+        </div>
+        <div style="flex: none; padding: 12px; border-top: 1px solid var(--border-hairline); display: flex; flex-direction: column; gap: 8px">
+          <textarea rows="3" placeholder="Ask the draft agent something" style="width: 100%; box-sizing: border-box; padding: 9px 10px; font-family: var(--font-mono); font-size: 12px; line-height: 18px; color: var(--text-primary); background: var(--surface-card); border: 1px solid var(--border-strong); border-radius: var(--radius-md); outline: none; resize: none" style-focus="border-color: var(--border-focus)"></textarea>
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px">
+            <span style="font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary)">runs against unsaved draft</span>
+            <button type="button" style="height: 28px; padding: 0 12px; font-size: 12px; font-weight: 500; color: var(--action-primary-fg); background: var(--action-primary-bg); border: 1px solid transparent; border-radius: var(--radius-md); cursor: pointer" style-hover="background: var(--action-primary-bg-hover)">Run</button>
+          </div>
+        </div>
+      </aside>
+      </sc-if>
+
+    </div>
+  </main>
+  </sc-if>
+
+  <sc-if value="{{ signedOut }}" hint-placeholder-val="{{ false }}">
+    <div style="position: fixed; inset: 0; z-index: 80; display: flex; align-items: center; justify-content: center; padding: 32px; background: var(--bg-canvas)">
+      <div style="width: 360px; max-width: 100%; display: flex; flex-direction: column; gap: 16px; text-align: center">
+        <div style="display: flex; justify-content: center">
+          <div style="width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: var(--radius-md); background: var(--ink-900); color: var(--ink-25); font-size: 13px; font-weight: 600; letter-spacing: -0.02em">T</div>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 7px">
+          <div style="font-size: 17px; font-weight: 500; letter-spacing: -0.012em">You are signed out of turanga</div>
+          <div style="font-size: 13px; line-height: 20px; color: var(--text-secondary); text-wrap: pretty">Running agents keep running. Heartbeats continue on schedule, and anything waiting on your approval stays paused until someone signs in.</div>
+        </div>
+        <div style="display: flex; justify-content: center">
+          <button type="button" onClick="{{ signBackIn }}" style="height: 32px; padding: 0 14px; font-size: 12px; font-weight: 500; color: var(--action-primary-fg); background: var(--action-primary-bg); border: 1px solid transparent; border-radius: var(--radius-md); cursor: pointer" style-hover="background: var(--action-primary-bg-hover)">Sign back in</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ accountOpen }}" hint-placeholder-val="{{ false }}">
+    <div style="position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 32px; background: oklch(0.138 0.006 50 / 0.55)">
+      <div style="width: 480px; max-width: 100%; max-height: 100%; display: flex; flex-direction: column; background: var(--surface-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-xl); box-shadow: var(--shadow-lg); overflow: hidden">
+
+        <div style="flex: none; height: 48px; display: flex; align-items: center; justify-content: space-between; padding: 0 12px 0 18px; border-bottom: 1px solid var(--border-hairline)">
+          <span style="font-size: 14px; font-weight: 500; letter-spacing: -0.008em">Account</span>
+          <button type="button" onClick="{{ closeAccount }}" title="Close" style="width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; color: var(--text-tertiary); background: transparent; border: 1px solid transparent; border-radius: var(--radius-md); cursor: pointer" style-hover="color: var(--text-primary); background: var(--surface-hover)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18"></path><path d="M6 6l12 12"></path></svg>
+          </button>
+        </div>
+
+        <div style="flex: 1; min-height: 0; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 22px">
+
+          <section style="display: flex; flex-direction: column; gap: 12px">
+            <div style="font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.075em; text-transform: uppercase; color: var(--text-tertiary)">Profile</div>
+            <sc-for list="{{ accountFields }}" as="f" hint-placeholder-count="4">
+              <label style="display: flex; flex-direction: column; gap: 6px">
+                <span style="font-size: 12px; color: var(--text-secondary)">{{ f.label }}</span>
+                <input type="text" value="{{ f.value }}" onChange="{{ f.set }}" readOnly="{{ f.readOnly }}" style="{{ f.style }}" style-focus="border-color: var(--border-focus)">
+                <sc-if value="{{ f.hint }}" hint-placeholder-val="{{ false }}">
+                  <span style="font-size: 11px; color: var(--text-tertiary)">{{ f.hint }}</span>
+                </sc-if>
+              </label>
+            </sc-for>
+          </section>
+
+          <section style="display: flex; flex-direction: column; gap: 12px; padding-top: 4px; border-top: 1px solid var(--border-hairline)">
+            <div style="font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.075em; text-transform: uppercase; color: var(--text-tertiary)">Password</div>
+            <sc-for list="{{ passwordFields }}" as="f" hint-placeholder-count="3">
+              <label style="display: flex; flex-direction: column; gap: 6px">
+                <span style="font-size: 12px; color: var(--text-secondary)">{{ f.label }}</span>
+                <input type="password" value="{{ f.value }}" onChange="{{ f.set }}" placeholder="{{ f.placeholder }}" style="{{ f.style }}" style-focus="border-color: var(--border-focus)">
+              </label>
+            </sc-for>
+            <div style="font-size: 12px; line-height: 18px; color: {{ passwordNoteColor }}">{{ passwordNote }}</div>
+            <button type="button" onClick="{{ updatePassword }}" style="{{ passwordButtonStyle }}">Update password</button>
+          </section>
+
+        </div>
+
+        <div style="flex: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 18px; border-top: 1px solid var(--border-hairline); background: var(--surface-raised)">
+          <button type="button" onClick="{{ signOut }}" style="height: 30px; padding: 0 11px; font-size: 12px; font-weight: 500; color: var(--action-ghost-fg); background: transparent; border: 1px solid transparent; border-radius: var(--radius-md); cursor: pointer" style-hover="color: var(--critical-500); background: var(--surface-hover)">Sign out</button>
+          <div style="display: flex; align-items: center; gap: 8px">
+            <sc-if value="{{ accountSaved }}" hint-placeholder-val="{{ false }}">
+              <span style="font-size: 12px; color: var(--text-tertiary)">{{ accountSaved }}</span>
+            </sc-if>
+            <button type="button" onClick="{{ closeAccount }}" style="height: 30px; padding: 0 11px; font-size: 12px; font-weight: 500; color: var(--action-ghost-fg); background: transparent; border: 1px solid transparent; border-radius: var(--radius-md); cursor: pointer" style-hover="background: var(--surface-hover); color: var(--text-primary)">Cancel</button>
+            <button type="button" onClick="{{ saveAccount }}" style="height: 30px; padding: 0 13px; font-size: 12px; font-weight: 500; color: var(--action-primary-fg); background: var(--action-primary-bg); border: 1px solid transparent; border-radius: var(--radius-md); cursor: pointer" style-hover="background: var(--action-primary-bg-hover)">Save changes</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ isChatView }}" hint-placeholder-val="{{ false }}">
+    <aside style="width: 264px; flex: none; display: flex; flex-direction: column; border-right: 1px solid var(--border-hairline); background: var(--bg-sunken); min-height: 0">
+      <div style="flex: none; height: 48px; display: flex; align-items: center; justify-content: space-between; padding: 0 10px 0 14px; border-bottom: 1px solid var(--border-hairline)">
+        <span style="font-size: 14px; font-weight: 500; letter-spacing: -0.008em">Chat</span>
+        <sc-if value="{{ chatPicked }}" hint-placeholder-val="{{ false }}">
+          <button type="button" onClick="{{ resetChat }}" style="height: 26px; padding: 0 9px; font-size: 12px; font-weight: 500; color: var(--action-secondary-fg); background: var(--action-secondary-bg); border: 1px solid var(--border-strong); border-radius: var(--radius-md); cursor: pointer" style-hover="background: var(--surface-hover)">New</button>
+        </sc-if>
+      </div>
+      <div style="flex: none; padding: 10px 14px 6px; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.075em; text-transform: uppercase; color: var(--text-tertiary)">Published agents</div>
+      <div style="flex: 1; overflow-y: auto; padding-bottom: 8px">
+        <sc-for list="{{ chatAgents }}" as="c" hint-placeholder-count="5">
+          <button type="button" onClick="{{ c.select }}" style="{{ c.style }}" style-hover="background: var(--surface-hover)">
+            <span style="display: flex; align-items: center; gap: 7px; min-width: 0">
+              <span style="width: 6px; height: 6px; flex: none; border-radius: 999px; background: {{ c.dot }}"></span>
+              <span style="font-size: 13px; font-weight: 500; letter-spacing: -0.004em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{ c.name }}</span>
+            </span>
+            <span style="font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{ c.sub }}</span>
+          </button>
+        </sc-for>
+      </div>
+    </aside>
+
+    <main style="flex: 1; min-width: 560px; display: flex; flex-direction: column; min-height: 0">
+      <header style="flex: none; height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 16px; border-bottom: 1px solid var(--border-hairline); background: var(--surface-card)">
+        <div style="display: flex; align-items: center; gap: 10px; min-width: 0">
+          <span style="font-size: 15px; font-weight: 500; letter-spacing: -0.012em; white-space: nowrap">{{ chatTitle }}</span>
+          <span style="font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{ chatSubtitle }}</span>
+        </div>
+        <sc-if value="{{ chatPicked }}" hint-placeholder-val="{{ false }}">
+          <button type="button" onClick="{{ goToAgents }}" style="height: 28px; padding: 0 10px; flex: none; font-size: 12px; font-weight: 500; color: var(--action-ghost-fg); background: transparent; border: 1px solid transparent; border-radius: var(--radius-md); cursor: pointer" style-hover="background: var(--surface-hover); color: var(--text-primary)">Open definition</button>
+        </sc-if>
+      </header>
+
+      <div ref="{{ logRef }}" style="flex: 1; min-height: 0; overflow-y: auto; padding: 24px 28px">
+        <sc-if value="{{ chatEmpty }}" hint-placeholder-val="{{ true }}">
+          <div style="max-width: 460px; margin: 96px auto 0; display: flex; flex-direction: column; gap: 10px; text-align: center">
+            <div style="font-size: 17px; font-weight: 500; letter-spacing: -0.012em">Pick an agent to talk to</div>
+            <div style="font-size: 13px; line-height: 20px; color: var(--text-secondary); text-wrap: pretty">Chat runs against the published version, with that agent's own soul, skills and tools. To try unsaved changes, use the test console in the editor instead.</div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ chatPicked }}" hint-placeholder-val="{{ false }}">
+          <div style="max-width: 680px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px">
+            <sc-for list="{{ chatTurns }}" as="t" hint-placeholder-count="4">
+              <div style="{{ t.wrapStyle }}">
+                <div style="font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.075em; text-transform: uppercase; color: var(--text-tertiary)">{{ t.who }}</div>
+                <div style="{{ t.bodyStyle }}">{{ t.text }}</div>
+                <sc-if value="{{ t.approval }}" hint-placeholder-val="{{ false }}">
+                  <div style="display: flex; align-items: center; gap: 10px; margin-top: 8px; padding: 10px 12px; background: var(--caution-100); border: 1px solid var(--border-hairline); border-radius: var(--radius-md)">
+                    <span style="width: 6px; height: 6px; flex: none; border-radius: 999px; background: var(--state-review)"></span>
+                    <span style="flex: 1; font-size: 12px; line-height: 18px; color: var(--text-secondary)">{{ t.approval }}</span>
+                    <button type="button" style="height: 26px; padding: 0 9px; flex: none; font-size: 12px; font-weight: 500; color: var(--action-ghost-fg); background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm); cursor: pointer" style-hover="background: var(--surface-hover); color: var(--text-primary)">Deny</button>
+                    <button type="button" style="height: 26px; padding: 0 10px; flex: none; font-size: 12px; font-weight: 500; color: var(--action-primary-fg); background: var(--action-primary-bg); border: 1px solid transparent; border-radius: var(--radius-sm); cursor: pointer" style-hover="background: var(--action-primary-bg-hover)">Approve</button>
+                  </div>
+                </sc-if>
+              </div>
+            </sc-for>
+
+            <sc-if value="{{ chatThinking }}" hint-placeholder-val="{{ false }}">
+              <div style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-secondary)">
+                <span style="width: 6px; height: 6px; border-radius: 999px; background: var(--state-running); animation: om-pulse var(--duration-pulse) var(--ease-standard) infinite"></span>
+                Working
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ showSuggestions }}" hint-placeholder-val="{{ false }}">
+              <div style="display: flex; flex-direction: column; gap: 8px">
+                <div style="font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.075em; text-transform: uppercase; color: var(--text-tertiary)">Try</div>
+                <sc-for list="{{ suggestions }}" as="s" hint-placeholder-count="3">
+                  <button type="button" onClick="{{ s.use }}" style="text-align: left; padding: 10px 12px; font-family: var(--font-sans); font-size: 13px; line-height: 19px; color: var(--text-secondary); background: var(--surface-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); cursor: pointer" style-hover="background: var(--surface-hover); color: var(--text-primary)">{{ s.text }}</button>
+                </sc-for>
+              </div>
+            </sc-if>
+          </div>
+        </sc-if>
+      </div>
+
+      <div style="flex: none; padding: 12px 28px 16px; border-top: 1px solid var(--border-hairline); background: var(--surface-card)">
+        <div style="max-width: 680px; margin: 0 auto; display: flex; flex-direction: column; gap: 8px">
+          <textarea value="{{ chatDraft }}" onChange="{{ setChatDraft }}" placeholder="{{ chatPlaceholder }}" readOnly="{{ chatEmpty }}" rows="3" style="{{ chatInputStyle }}" style-focus="border-color: var(--border-focus)"></textarea>
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px">
+            <span style="font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary)">{{ chatFooter }}</span>
+            <button type="button" onClick="{{ sendChat }}" style="{{ chatSendStyle }}">Send</button>
+          </div>
+        </div>
+      </div>
+    </main>
+  </sc-if>
+
+  <sc-if value="{{ isSettingsView }}" hint-placeholder-val="{{ false }}">
+    <aside style="width: 264px; flex: none; display: flex; flex-direction: column; border-right: 1px solid var(--border-hairline); background: var(--bg-sunken); min-height: 0">
+      <div style="flex: none; height: 48px; display: flex; align-items: center; padding: 0 14px; border-bottom: 1px solid var(--border-hairline)">
+        <span style="font-size: 14px; font-weight: 500; letter-spacing: -0.008em">Settings</span>
+      </div>
+      <div style="flex: 1; display: flex; flex-direction: column; gap: 2px; padding: 10px">
+        <sc-for list="{{ settingsNav }}" as="s" hint-placeholder-count="4">
+          <button type="button" onClick="{{ s.select }}" style="{{ s.style }}" style-hover="background: var(--surface-hover)">
+            <span>{{ s.label }}</span>
+            <sc-if value="{{ s.count }}" hint-placeholder-val="{{ false }}">
+              <span style="font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary)">{{ s.count }}</span>
+            </sc-if>
+          </button>
+        </sc-for>
+      </div>
+      <sc-if value="{{ dirty }}" hint-placeholder-val="{{ false }}">
+        <button type="button" onClick="{{ goToAgents }}" style="flex: none; display: flex; align-items: center; gap: 8px; text-align: left; padding: 11px 14px; border: none; border-top: 1px solid var(--border-hairline); background: transparent; cursor: pointer; color: var(--text-secondary)" style-hover="background: var(--surface-hover)">
+          <span style="width: 6px; height: 6px; flex: none; border-radius: 999px; background: var(--caution-500)"></span>
+          <span style="font-size: 12px; line-height: 17px">{{ agentName }} has an unsaved draft</span>
+        </button>
+      </sc-if>
+    </aside>
+
+    <main style="flex: 1; min-width: 720px; display: flex; flex-direction: column; min-height: 0">
+      <header style="flex: none; height: 48px; display: flex; align-items: center; gap: 8px; padding: 0 16px; border-bottom: 1px solid var(--border-hairline); background: var(--surface-card)">
+        <span style="font-size: 13px; color: var(--text-tertiary)">Settings</span>
+        <span style="font-size: 13px; color: var(--text-tertiary)">/</span>
+        <span style="font-size: 13px; font-weight: 500; letter-spacing: -0.004em">{{ paneTitle }}</span>
+      </header>
+      <div style="flex: 1; min-height: 0; overflow-y: auto; padding: 24px 28px 64px">
+        <div style="max-width: 720px; display: flex; flex-direction: column; gap: 18px">
+
+              <div style="display: flex; flex-direction: column; gap: 7px">
+                <h2 style="margin: 0; font-size: 20px; line-height: 28px; letter-spacing: -0.014em; font-weight: 500">{{ paneTitle }}</h2>
+                <div style="font-size: 13px; line-height: 20px; color: var(--text-secondary); text-wrap: pretty">{{ paneBlurb }}</div>
+              </div>
+
+              <sc-if value="{{ paneBanner }}" hint-placeholder-val="{{ false }}">
+                <div style="display: flex; align-items: flex-start; gap: 10px; padding: 11px 13px; background: var(--critical-100); border: 1px solid var(--border-hairline); border-radius: var(--radius-md)">
+                  <span style="width: 6px; height: 6px; margin-top: 6px; flex: none; border-radius: 999px; background: var(--critical-500)"></span>
+                  <span style="flex: 1; font-size: 12px; line-height: 18px; color: var(--text-secondary)">{{ paneBanner }}</span>
+                  <button type="button" onClick="{{ dismissBanner }}" style="font-size: 12px; font-weight: 500; color: var(--action-ghost-fg); background: transparent; border: none; cursor: pointer; padding: 0" style-hover="color: var(--text-primary)">Dismiss</button>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{ isProfile }}" hint-placeholder-val="{{ false }}">
+                <div style="display: flex; flex-direction: column; gap: 18px">
+                  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px">
+                    <sc-for list="{{ profileFields }}" as="p" hint-placeholder-count="4">
+                      <label style="display: flex; flex-direction: column; gap: 6px">
+                        <span style="font-size: 12px; color: var(--text-secondary)">{{ p.label }}</span>
+                        <input type="text" value="{{ p.value }}" onChange="{{ p.set }}" readOnly="{{ p.readOnly }}" style="{{ p.style }}" style-focus="border-color: var(--border-focus)">
+                        <sc-if value="{{ p.hint }}" hint-placeholder-val="{{ false }}">
+                          <span style="font-size: 11px; color: var(--text-tertiary)">{{ p.hint }}</span>
+                        </sc-if>
+                      </label>
+                    </sc-for>
+                  </div>
+                  <div style="display: flex; flex-direction: column; gap: 8px">
+                    <div style="font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.075em; text-transform: uppercase; color: var(--text-tertiary)">Preferences</div>
+                    <div style="border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); overflow: hidden">
+                      <sc-for list="{{ preferences }}" as="p" hint-placeholder-count="3">
+                        <label style="display: flex; align-items: flex-start; gap: 10px; padding: 11px 13px; border-bottom: 1px solid var(--border-hairline); cursor: pointer" style-hover="background: var(--surface-hover)">
+                          <input type="checkbox" checked="{{ p.on }}" onChange="{{ p.toggle }}" style="width: 13px; height: 13px; margin: 3px 0 0 0; flex: none">
+                          <span style="display: flex; flex-direction: column; gap: 3px">
+                            <span style="font-size: 13px; font-weight: 500; letter-spacing: -0.004em">{{ p.title }}</span>
+                            <span style="font-size: 12px; line-height: 18px; color: var(--text-secondary)">{{ p.body }}</span>
+                          </span>
+                        </label>
+                      </sc-for>
+                    </div>
+                  </div>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{ isConnections }}" hint-placeholder-val="{{ true }}">
+                <div style="display: flex; flex-direction: column; gap: 12px">
+
+                  <div style="display: flex; align-items: center; gap: 8px">
+                    <button type="button" onClick="{{ toggleAdd }}" style="{{ addButtonStyle }}">{{ addButtonLabel }}</button>
+                    <sc-if value="{{ listCount }}" hint-placeholder-val="{{ false }}">
+                      <span style="font-size: 12px; color: var(--text-tertiary)">{{ listCount }}</span>
+                    </sc-if>
+                  </div>
+
+                  <sc-if value="{{ addOpen }}" hint-placeholder-val="{{ false }}">
+                    <div style="display: flex; flex-direction: column; gap: 14px; padding: 16px; border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--surface-inset)">
+                      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px">
+                        <label style="display: flex; flex-direction: column; gap: 6px">
+                          <span style="font-size: 12px; color: var(--text-secondary)">{{ kindLabel }}</span>
+                          <select value="{{ addKind }}" onChange="{{ setAddKind }}" style="height: 32px; box-sizing: border-box; padding: 0 8px; font-size: 13px; color: var(--text-primary); background: var(--surface-card); border: 1px solid var(--border-strong); border-radius: var(--radius-md); outline: none" style-focus="border-color: var(--border-focus)">
+                            <sc-for list="{{ addKinds }}" as="k" hint-placeholder-count="3">
+                              <option value="{{ k.value }}">{{ k.label }}</option>
+                            </sc-for>
+                          </select>
+                        </label>
+                        <sc-for list="{{ addFields }}" as="f" hint-placeholder-count="2">
+                          <label style="display: flex; flex-direction: column; gap: 6px">
+                            <span style="font-size: 12px; color: var(--text-secondary)">{{ f.label }}</span>
+                            <input type="{{ f.type }}" placeholder="{{ f.placeholder }}" value="{{ f.value }}" onInput="{{ f.set }}" style="{{ f.style }}" style-focus="border-color: var(--border-focus)">
+                          </label>
+                        </sc-for>
+                      </div>
+
+                      <div style="font-size: 12px; line-height: 18px; color: var(--text-secondary)">{{ addHint }}</div>
+
+                      <sc-if value="{{ discovered }}" hint-placeholder-val="{{ false }}">
+                        <div style="display: flex; flex-direction: column; gap: 6px; padding: 11px 13px; background: var(--surface-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-md)">
+                          <div style="font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.075em; text-transform: uppercase; color: var(--text-tertiary)">{{ discoveredLabel }}</div>
+                          <sc-for list="{{ discoveredModels }}" as="m" hint-placeholder-count="3">
+                            <label style="display: flex; align-items: center; gap: 9px; font-family: var(--font-mono); font-size: 12px; color: var(--text-primary); cursor: pointer">
+                              <input type="checkbox" checked="{{ m.on }}" onChange="{{ m.toggle }}" style="width: 13px; height: 13px; margin: 0">
+                              {{ m.name }}
+                            </label>
+                          </sc-for>
+                        </div>
+                      </sc-if>
+
+                      <div style="display: flex; align-items: center; gap: 8px">
+                        <button type="button" onClick="{{ submitAdd }}" style="{{ submitStyle }}">{{ submitLabel }}</button>
+                        <sc-if value="{{ hasDiscover }}" hint-placeholder-val="{{ false }}">
+                          <button type="button" onClick="{{ discover }}" style="{{ discoverStyle }}">{{ discoverLabel }}</button>
+                        </sc-if>
+                        <button type="button" onClick="{{ toggleAdd }}" style="height: 32px; padding: 0 11px; font-size: 12px; font-weight: 500; color: var(--action-ghost-fg); background: transparent; border: 1px solid transparent; border-radius: var(--radius-md); cursor: pointer" style-hover="background: var(--surface-hover); color: var(--text-primary)">Cancel</button>
+                      </div>
+                    </div>
+                  </sc-if>
+
+                  <sc-if value="{{ listEmpty }}" hint-placeholder-val="{{ false }}">
+                    <div style="display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 28px 20px; border: 1px dashed var(--border-strong); border-radius: var(--radius-lg)">
+                      <div style="font-size: 13px; color: var(--text-secondary)">{{ emptyText }}</div>
+                      <button type="button" onClick="{{ openAdd }}" style="height: 30px; padding: 0 11px; font-size: 12px; font-weight: 500; color: var(--action-primary-fg); background: var(--action-primary-bg); border: 1px solid transparent; border-radius: var(--radius-md); cursor: pointer" style-hover="background: var(--action-primary-bg-hover)">{{ addButtonLabel }}</button>
+                    </div>
+                  </sc-if>
+
+                  <sc-for list="{{ entities }}" as="e" hint-placeholder-count="2">
+                    <div style="display: flex; flex-direction: column; gap: 11px; padding: 14px 16px; border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--surface-card)">
+
+                      <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 14px">
+                        <div style="display: flex; flex-direction: column; gap: 4px; min-width: 0">
+                          <div style="display: flex; align-items: center; gap: 8px">
+                            <span style="width: 6px; height: 6px; flex: none; border-radius: 999px; background: {{ e.dot }}; animation: {{ e.anim }}"></span>
+                            <span style="font-size: 13px; font-weight: 500; letter-spacing: -0.004em">{{ e.name }}</span>
+                            <span style="font-size: 12px; color: var(--text-secondary)">· {{ e.status }}</span>
+                          </div>
+                          <div style="font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{ e.endpoint }}</div>
+                        </div>
+                        <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex: none">
+                          <span style="font-size: 12px; color: var(--text-tertiary)">{{ e.kind }}</span>
+                          <span style="font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary)">{{ e.credential }}</span>
+                        </div>
+                      </div>
+
+                      <sc-if value="{{ e.detailLabel }}" hint-placeholder-val="{{ false }}">
+                        <div style="border-top: 1px solid var(--border-hairline); padding-top: 10px; display: flex; flex-direction: column; gap: 9px">
+                          <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px">
+                            <button type="button" onClick="{{ e.toggleDetail }}" style="display: flex; align-items: center; gap: 8px; padding: 0; background: transparent; border: none; cursor: pointer; color: var(--text-primary)">
+                              <span style="display: flex; align-items: center; justify-content: center; width: 10px; color: var(--text-tertiary); transform: {{ e.caretRotate }}">
+                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"></path></svg>
+                              </span>
+                              <span style="font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary)">{{ e.detailLabel }}</span>
+                            </button>
+                            <sc-if value="{{ e.detailAction }}" hint-placeholder-val="{{ false }}">
+                              <button type="button" onClick="{{ e.runDetailAction }}" style="height: 26px; padding: 0 9px; font-size: 12px; font-weight: 500; color: var(--action-secondary-fg); background: var(--action-secondary-bg); border: 1px solid var(--border-strong); border-radius: var(--radius-md); cursor: pointer" style-hover="background: var(--surface-hover)">{{ e.detailAction }}</button>
+                            </sc-if>
+                          </div>
+
+                          <sc-if value="{{ e.detailOpen }}" hint-placeholder-val="{{ false }}">
+                            <div style="display: flex; flex-direction: column; gap: 7px">
+                              <sc-for list="{{ e.catalog }}" as="c" hint-placeholder-count="2">
+                                <label style="display: flex; align-items: center; gap: 9px; font-family: var(--font-mono); font-size: 12px; color: var(--text-primary); cursor: pointer">
+                                  <input type="checkbox" checked="{{ c.on }}" onChange="{{ c.toggle }}" style="width: 13px; height: 13px; margin: 0">
+                                  {{ c.name }}
+                                </label>
+                              </sc-for>
+                              <sc-if value="{{ e.opsText }}" hint-placeholder-val="{{ false }}">
+                                <div style="font-family: var(--font-mono); font-size: 11px; line-height: 19px; color: var(--text-secondary); max-height: 180px; overflow-y: auto; padding: 10px; background: var(--surface-inset); border: 1px solid var(--border-hairline); border-radius: var(--radius-md); word-break: break-word">{{ e.opsText }}</div>
+                              </sc-if>
+                            </div>
+                          </sc-if>
+                        </div>
+                      </sc-if>
+
+                      <sc-if value="{{ e.confirming }}" hint-placeholder-val="{{ false }}">
+                        <div style="display: flex; align-items: flex-start; gap: 10px; padding: 11px 13px; background: var(--critical-100); border: 1px solid var(--border-hairline); border-radius: var(--radius-md)">
+                          <span style="width: 6px; height: 6px; margin-top: 6px; flex: none; border-radius: 999px; background: var(--critical-500)"></span>
+                          <div style="flex: 1; display: flex; flex-direction: column; gap: 3px">
+                            <span style="font-size: 12px; font-weight: 500">{{ e.confirmTitle }}</span>
+                            <span style="font-size: 12px; line-height: 18px; color: var(--text-secondary)">{{ e.confirmBody }}</span>
+                          </div>
+                          <div style="display: flex; gap: 8px; flex: none">
+                            <button type="button" onClick="{{ e.cancelRemove }}" style="height: 26px; padding: 0 9px; font-size: 12px; font-weight: 500; color: var(--action-ghost-fg); background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm); cursor: pointer" style-hover="background: var(--surface-hover); color: var(--text-primary)">Keep</button>
+                            <button type="button" onClick="{{ e.confirmRemove }}" style="height: 26px; padding: 0 9px; font-size: 12px; font-weight: 500; color: var(--text-inverse); background: var(--critical-600); border: 1px solid transparent; border-radius: var(--radius-sm); cursor: pointer">{{ e.confirmVerb }}</button>
+                          </div>
+                        </div>
+                      </sc-if>
+
+                      <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap">
+                        <sc-for list="{{ e.actions }}" as="a" hint-placeholder-count="2">
+                          <button type="button" onClick="{{ a.run }}" style="height: 28px; padding: 0 10px; font-size: 12px; font-weight: 500; color: var(--action-secondary-fg); background: var(--action-secondary-bg); border: 1px solid var(--border-strong); border-radius: var(--radius-md); cursor: pointer" style-hover="background: var(--surface-hover)">{{ a.label }}</button>
+                        </sc-for>
+                        <button type="button" onClick="{{ e.startRemove }}" style="height: 28px; padding: 0 10px; font-size: 12px; font-weight: 500; color: var(--action-ghost-fg); background: transparent; border: 1px solid transparent; border-radius: var(--radius-md); cursor: pointer" style-hover="background: var(--surface-hover); color: var(--critical-500)">{{ e.removeLabel }}</button>
+                      </div>
+                    </div>
+                  </sc-for>
+                </div>
+              </sc-if>
+
+        </div>
+      </div>
+    </main>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1560,&quot;height&quot;:900},&quot;theme&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;dark&quot;,&quot;light&quot;],&quot;default&quot;:&quot;dark&quot;,&quot;tsType&quot;:&quot;'dark' | 'light'&quot;,&quot;section&quot;:&quot;Theme&quot;}}">
+const TOOLS = [
+  ['Containers', [
+    ['list_containers', 'read', 'List containers on the host, optionally including stopped ones.'],
+    ['inspect_container', 'read', 'Return the full configuration and runtime state of one container.'],
+    ['container_logs', 'read', 'Stream stdout and stderr for a container, with optional tail and since filters.'],
+    ['container_stats', 'read', 'Sample CPU, memory, network and block IO for a running container.'],
+    ['container_top', 'read', 'List the processes running inside a container.'],
+    ['container_diff', 'read', 'Show filesystem changes made since the container was created.'],
+    ['create_container', 'write', 'Create a container from an image without starting it.'],
+    ['start_container', 'write', 'Start a created or stopped container.'],
+    ['restart_container', 'write', 'Restart a running container with an optional grace period.'],
+    ['stop_container', 'write', 'Send SIGTERM, then SIGKILL after the timeout expires.'],
+    ['pause_container', 'write', 'Suspend all processes in a container using the freezer cgroup.'],
+    ['rename_container', 'write', 'Change a container name; references by ID are unaffected.'],
+    ['update_container', 'write', 'Change resource limits on a running container.'],
+    ['exec_in_container', 'write', 'Run a command inside a running container and return its output.'],
+    ['copy_to_container', 'write', 'Copy a local file or directory into a container path.'],
+    ['kill_container', 'destructive', 'Send SIGKILL immediately, with no graceful shutdown.'],
+    ['remove_container', 'destructive', 'Delete a container and, optionally, its anonymous volumes.'],
+    ['prune_containers', 'destructive', 'Delete every stopped container on the host.']
+  ]],
+  ['Images', [
+    ['list_images', 'read', 'List images in the local store with size and tag information.'],
+    ['inspect_image', 'read', 'Return image metadata, layer digests and default config.'],
+    ['image_history', 'read', 'Show the layer history and build commands for an image.'],
+    ['search_registry', 'read', 'Search the configured registry for images by name.'],
+    ['pull_image', 'write', 'Fetch an image or tag from a registry into the local store.'],
+    ['build_image', 'write', 'Build an image from a Dockerfile and build context.'],
+    ['tag_image', 'write', 'Add an additional tag to an existing image.'],
+    ['push_image', 'write', 'Upload a tagged image to the configured registry.'],
+    ['export_image', 'write', 'Save an image to a tar archive for transfer.'],
+    ['remove_image', 'destructive', 'Delete an image; fails while containers still reference it.'],
+    ['prune_images', 'destructive', 'Delete all dangling images and reclaim their layers.']
+  ]],
+  ['Networks', [
+    ['list_networks', 'read', 'List networks with their driver, scope and subnet.'],
+    ['inspect_network', 'read', 'Return network configuration and connected containers.'],
+    ['create_network', 'write', 'Create a network with an optional subnet and gateway.'],
+    ['connect_network', 'write', 'Attach a container to a network with an optional alias.'],
+    ['disconnect_network', 'write', 'Detach a container from a network.'],
+    ['remove_network', 'destructive', 'Delete a network; fails while endpoints remain attached.'],
+    ['prune_networks', 'destructive', 'Delete every network with no connected containers.']
+  ]],
+  ['Volumes', [
+    ['list_volumes', 'read', 'List named volumes with driver and mount point.'],
+    ['inspect_volume', 'read', 'Return volume labels, options and usage data.'],
+    ['create_volume', 'write', 'Create a named volume with driver options.'],
+    ['backup_volume', 'write', 'Archive volume contents to a tar file on the host.'],
+    ['remove_volume', 'destructive', 'Delete a volume and all data it holds.'],
+    ['prune_volumes', 'destructive', 'Delete every volume not referenced by a container.']
+  ]],
+  ['Compose', [
+    ['list_stacks', 'read', 'List Compose projects known to the host.'],
+    ['stack_config', 'read', 'Resolve and return the merged Compose configuration.'],
+    ['stack_up', 'write', 'Create and start all services in a Compose project.'],
+    ['stack_restart', 'write', 'Restart the services in a Compose project.'],
+    ['stack_scale', 'write', 'Change the replica count for one service.'],
+    ['stack_down', 'destructive', 'Stop and remove all services, networks and volumes in a project.']
+  ]],
+  ['Host', [
+    ['host_info', 'read', 'Return daemon version, storage driver and resource totals.'],
+    ['disk_usage', 'read', 'Report space used by images, containers, volumes and build cache.'],
+    ['events_stream', 'read', 'Subscribe to the daemon event stream with filters.'],
+    ['read_file', 'read', 'Read a file from an allow-listed path on the host.'],
+    ['write_file', 'write', 'Write a file to an allow-listed path on the host.'],
+    ['prune_system', 'destructive', 'Reclaim space across containers, networks, images and build cache.']
+  ]]
+];
+
+const DEFAULT_ON = new Set(['list_containers', 'inspect_container', 'container_logs', 'container_stats',
+  'start_container', 'stop_container', 'restart_container', 'exec_in_container', 'create_container',
+  'list_images', 'inspect_image', 'pull_image', 'build_image', 'list_networks', 'inspect_network',
+  'list_volumes', 'inspect_volume', 'list_stacks', 'stack_config', 'stack_up', 'host_info',
+  'disk_usage', 'remove_container']);
+
+const FLAT = TOOLS.flatMap(([group, rows]) => rows.map(([name, risk, desc]) => ({ name, risk, desc, group })));
+
+const RISK_COLOR = { read: 'var(--text-tertiary)', write: 'var(--caution-500)', destructive: 'var(--critical-500)' };
+
+const SOULS = [
+  ['soul_ops_steward', 'Operations steward', 'v1.8', 'Cautious, evidence-first character for agents that touch production. Reports before acting, never assumes intent, escalates rather than guesses.', 9,
+    '# Soul — Operations steward\n\nYou are careful with other people\u2019s systems. You would rather be slow and correct than fast and sorry.\n\n## Character\n\nYou state facts before opinions. You quote IDs, counts and timestamps rather than describing them. You do not reassure.\n\n## Standing commitments\n\n- Read before write. Write before delete. Never delete without a named target.\n- Say what you did not check, not only what you checked.\n- When two readings disagree, report both and stop.\n\n## Refusals\n\nYou decline requests phrased as urgency without a target: "clean up the host", "free some space", "kill whatever is stuck".'],
+  ['soul_analyst', 'Analyst', 'v2.2', 'Quantitative and literal. Answers with numbers and their provenance, refuses to round, flags any figure it could not verify.', 6,
+    '# Soul — Analyst\n\nYou answer with numbers and where they came from.\n\n## Character\n\nYou are literal. You do not round, smooth or annualise unless asked. Every figure carries its window and its source.\n\n## Standing commitments\n\n- Name the query or tool behind each number.\n- Separate what the data shows from what it suggests, and label the second as inference.\n- Report sample size and coverage gaps before conclusions.\n\n## Refusals\n\nYou decline to estimate when the underlying figure is retrievable, and you decline to compare series measured over different windows.'],
+  ['soul_frontline', 'Frontline support', 'v3.1', 'Plain-language character for customer-facing agents. Acknowledges the problem, states what it can and cannot do, hands off early.', 14,
+    '# Soul — Frontline support\n\nYou speak plainly to people who are already frustrated.\n\n## Character\n\nYou acknowledge the problem in one sentence, then say what happens next. No apologising twice, no filler warmth.\n\n## Standing commitments\n\n- State what you can do and what you cannot, in that order.\n- Hand off early rather than exhaust the customer.\n- Never promise a timeline you cannot verify.\n\n## Refusals\n\nYou decline to speculate about causes in front of a customer, and you decline to reopen a decision a human already made.'],
+  [null, 'No shared soul', '—', 'Write this agent\u2019s own soul.md from scratch. Nothing is inherited and nothing is shared.', 0, '']
+];
+
+const SKILLS = [
+  ['skl_incident_report', 'Incident write-up', 'v4.0', 'Produces a timeline, blast radius and follow-up list in the standard postmortem shape.', 22, false],
+  ['skl_change_review', 'Change review', 'v2.7', 'Checks a proposed change against the deploy policy and names the approver it needs.', 17, true],
+  ['skl_cost_attribution', 'Cost attribution', 'v1.4', 'Maps spend to owners using the cost_center metadata key and reports the top movers.', 11, false],
+  ['skl_log_triage', 'Log triage', 'v3.3', 'Clusters log lines by signature, ranks by novelty and quotes the first and last occurrence.', 19, false],
+  ['skl_runbook_exec', 'Runbook execution', 'v2.0', 'Follows a numbered runbook step by step and stops at the first step whose precondition fails.', 8, true],
+  ['skl_escalation', 'Escalation drafting', 'v1.9', 'Writes the handoff: what happened, what was tried, what the human needs to decide.', 25, false],
+  ['skl_schema_diff', 'Schema diff', 'v0.6', 'Compares two schema versions and separates additive changes from breaking ones.', 4, false],
+  ['skl_summarise_thread', 'Thread summary', 'v5.1', 'Condenses a long thread into decisions, owners and open questions. No narrative.', 31, false]
+];
+
+const OPS_SAMPLE = ['get_status', 'list_serial_ports', 'configure_serial', 'enable_disk_serving', 'disable_disk_serving',
+  'list_drives', 'mount_disk', 'unmount_disk', 'set_drive_readonly', 'list_disk_images', 'create_disk_image',
+  'upload_disk_image', 'clone_disk_image', 'delete_disk_image', 'format_disk_image', 'snapshot_disk_image',
+  'list_disk_snapshots', 'rollback_disk_image', 'delete_disk_snapshot', 'get_disk_write_policy', 'set_disk_write_policy',
+  'get_multi_client_settings', 'set_multi_client_settings', 'list_clients', 'set_client_name', 'set_client_drive',
+  'clear_client_drive', 'forget_client', 'commit_client_splinter', 'save_client_splinter_as_disk', 'commit_transient',
+  'update_disk_notes', 'get_cpm_disk_info', 'list_cpm_files', 'read_cpm_file', 'write_cpm_file', 'delete_cpm_file',
+  'get_terminal_status', 'open_terminal', 'close_terminal', 'send_to_terminal', 'read_terminal_output',
+  'run_terminal_command', 'list_scripts', 'read_script', 'write_script', 'start_replay', 'cancel_replay',
+  'get_replay_status', 'list_cassettes', 'list_card_definitions', 'get_card_detail', 'validate_card_config',
+  'list_peripherals', 'author_card', 'list_machine_profiles', 'get_machine_profile', 'create_machine_profile',
+  'update_machine_profile', 'export_machine_profile', 'burn_eprom', 'erase_eprom', 'clone_machine_profile',
+  'validate_machine_profile', 'delete_machine_profile', 'list_machine_instances', 'create_transient_instance',
+  'start_machine_instance', 'stop_machine_instance', 'snapshot_machine_instance', 'restore_instance_snapshot',
+  'set_instance_speed', 'destroy_machine_instance', 'write_instance_console', 'read_instance_console'];
+
+const navRailStyle = (on) => `width:30px;height:30px;display:flex;align-items:center;justify-content:center;border-radius:var(--radius-md);cursor:pointer;border:1px solid ${on ? 'var(--border-subtle)' : 'transparent'};background:${on ? 'var(--surface-card)' : 'transparent'};color:${on ? 'var(--text-primary)' : 'var(--text-tertiary)'}`;
+
+const SETTINGS_PANES = {
+  providers: {
+    title: 'Model providers',
+    blurb: 'Where your agents get their models. Keys are stored encrypted and never shown again after you save them.',
+    add: 'Connect a provider',
+    kindLabel: 'Provider',
+    kinds: [['openai-compatible', 'OpenAI-compatible'], ['anthropic', 'Anthropic'], ['bedrock', 'Amazon Bedrock']],
+    empty: 'No providers connected, so no agent can run.'
+  },
+  data: {
+    title: 'Data connections',
+    blurb: 'Sources an agent may read from and destinations it may write to. Access is granted by OAuth and can be revoked here at any time.',
+    add: 'Connect a source',
+    kindLabel: 'Source',
+    kinds: [['gdrive', 'Google Drive'], ['s3', 'Amazon S3'], ['postgres', 'Postgres']],
+    empty: 'No sources connected. Agents will fail closed on any read request.'
+  },
+  tools: {
+    title: 'Tools',
+    blurb: 'MCP servers your agents can call at run time — a remote server or one you deploy yourself. Attach them to an agent to grant specific operations.',
+    add: 'Add a tool',
+    kindLabel: 'Transport',
+    kinds: [['remote', 'Remote MCP'], ['self-hosted', 'Self-hosted MCP'], ['container', 'Container endpoint']],
+    empty: 'No tools added. Agents can still reason, but cannot act.'
+  }
+};
+
+const FILE_META = {
+  instructions: ['instructions.md', 'Task-level direction for this agent. Written in second person; use {{ request.context }} to inject request data at run time.'],
+  soul: ['soul.md', 'Character, tone and standing commitments. Persists across every run and every workflow this agent takes part in.'],
+  heartbeat: ['heartbeat.md', 'What the agent does unprompted on its schedule: what to check, what counts as normal, and when to wake a human.']
+};
+
+class Component extends DCLogic {
+  state = {
+    tab: 'tools',
+    search: '',
+    risk: 'All',
+    group: 'All',
+    selectedOnly: false,
+    closed: {},
+    enabled: new Set(DEFAULT_ON),
+    fields: {
+      name: 'Container operations',
+      description: 'Inspects and operates Docker hosts on behalf of platform engineers.',
+      model: 'claude-sonnet-4-6'
+    },
+    activeFile: 'instructions',
+    docs: {
+      instructions: '# Instructions\n\nYou operate container hosts on behalf of platform engineers.\n\nAlways inspect before you change. Report what you found before you act on it, and quote container IDs verbatim.\n\nNever remove or prune anything the user did not name explicitly. If a request implies deleting data, stop and ask for approval with the exact command you intend to run.\n\nRequest context: {{ request.context }}',
+      soul: '# Soul\n\nWrite this agent\u2019s own character here, or attach a shared soul from the library.\n',
+      heartbeat: '# Heartbeat\n\nSchedule: every 15 minutes.\n\n## Each beat\n\n1. `host_info` and `disk_usage` — record totals.\n2. `list_containers(all=true)` — compare against the last beat.\n3. Flag any container that restarted more than twice in the window.\n\n## Normal\n\nAll expected containers running, disk under 80%, no restart loops.\n\n## Wake a human when\n\n- A container has exited with an OOM kill.\n- Disk passes 85% or grows more than 10 points in one hour.\n- Two consecutive beats fail to reach the daemon.\n\n## Never\n\nDo not remediate on a heartbeat. Heartbeats observe and report; only a person or an explicit run may change the host.'
+    },
+    editedDocs: {},
+    soulId: 'soul_ops_steward',
+    soulOverride: false,
+    attachedSkills: new Set(['skl_runbook_exec', 'skl_incident_report', 'skl_log_triage']),
+    skillSearch: '',
+    view: 'agents',
+    chatAgent: null,
+    chatDraft: '',
+    chatThinking: false,
+    chatLogs: {
+      'Container operations': [
+        { role: 'you', text: 'Anything unhealthy on the lab host right now?' },
+        { role: 'tool', text: 'list_containers(all=true) · 4 results · 312 ms' },
+        { role: 'agent', text: 'Three containers are running and one has exited. c8d7 (cache:7-alpine) stopped 4 hours ago after an out-of-memory kill and has not been restarted. Nothing else has restarted in the last 24 hours.' },
+        { role: 'you', text: 'Clear it out.' },
+        { role: 'agent', text: 'That means removing c8d7. It holds no named volume, so no data is lost, but the container is gone rather than restarted.', approval: 'remove_container(c8d7) is destructive and needs your approval.' }
+      ]
+    },
+    consoleOpen: false,
+    pane: 'providers',
+    addOpen: false,
+    addKind: 'openai-compatible',
+    addName: '',
+    addUrl: '',
+    addKey: '',
+    discovered: null,
+    detailOpen: {},
+    confirming: null,
+    banner: 'Google Drive returned access_denied on the last callback, so the connection was not created. Nothing was changed.',
+    prefs: { compact: false, notify: true, weekly: false },
+    profile: { name: 'Joe Toppe', timezone: 'America/New_York' },
+    theme: null,
+    accountOpen: false,
+    accountSaved: null,
+    pw: { current: '', next: '', confirm: '' },
+    entityData: {
+      providers: [
+        { id: 'p1', name: 'wopr', kind: 'OpenAI-compatible', endpoint: 'http://10.1.1.64:8090/v1', credential: 'sk-…2121', status: 'connected', dependents: 4,
+          catalog: [{ name: '/models/gpt-oss-20b-MXFP4.gguf', on: true }, { name: '/models/qwen3-32b-Q5.gguf', on: false }] },
+        { id: 'p2', name: 'anthropic-prod', kind: 'Anthropic', endpoint: 'api.anthropic.com', credential: 'sk-ant-…8f04', status: 'connected', dependents: 6,
+          catalog: [{ name: 'claude-sonnet-4-6', on: true }, { name: 'claude-opus-4-1', on: true }, { name: 'claude-haiku-4-5', on: false }] }
+      ],
+      data: [
+        { id: 'd1', name: 'Engineering Drive', kind: 'Google Drive', endpoint: 'drive.google.com · 3 folders · read only', credential: 'oauth · jt@turanga.io', status: 'connected', dependents: 3, catalog: [] },
+        { id: 'd2', name: 'Warehouse', kind: 'Postgres', endpoint: 'pg://warehouse.internal:5432/analytics', credential: 'credential set', status: 'reconnect required', dependents: 1, catalog: [] }
+      ],
+      tools: [
+        { id: 't1', name: 'BitsBy8', kind: 'Remote MCP', endpoint: 'http://10.1.1.94:3000/mcp', credential: 'credential set', status: 'connected', dependents: 2, ops: OPS_SAMPLE },
+        { id: 't2', name: 'Docker host', kind: 'Self-hosted MCP', endpoint: 'http://10.1.1.64:8811/mcp', credential: 'credential set', status: 'connected', dependents: 5, ops: FLAT.map(t => t.name) }
+      ]
+    },
+    policies: { destructive: true, spend: true, offhours: false },
+    dirtyKeys: new Set()
+  };
+
+  logRef = React.createRef();
+
+  pinTranscript() {
+    const st = this.state;
+    const sig = [st.view, st.chatAgent, (st.chatLogs[st.chatAgent] || []).length, st.chatThinking].join('|');
+    if (sig === this._logSig) return;
+    this._logSig = sig;
+    const el = this.logRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }
+
+  get theme() { return this.state.theme || this.props.theme || 'dark'; }
+
+  componentDidMount() {
+    document.documentElement.setAttribute('data-theme', this.theme);
+    this.pinTranscript();
+  }
+  componentDidUpdate() {
+    document.documentElement.setAttribute('data-theme', this.theme);
+    this.pinTranscript();
+  }
+
+  mark(key) {
+    const d = new Set(this.state.dirtyKeys); d.add(key); return d;
+  }
+
+  matches(t) {
+    const q = this.state.search.trim().toLowerCase();
+    if (q && !(t.name.includes(q) || t.desc.toLowerCase().includes(q))) return false;
+    if (this.state.risk !== 'All' && t.risk !== this.state.risk.toLowerCase()) return false;
+    if (this.state.group !== 'All' && t.group !== this.state.group) return false;
+    if (this.state.selectedOnly && !this.state.enabled.has(t.name)) return false;
+    return true;
+  }
+
+  toggleTool(name) {
+    const e = new Set(this.state.enabled);
+    e.has(name) ? e.delete(name) : e.add(name);
+    this.setState({ enabled: e, dirtyKeys: this.mark('Tools') });
+  }
+
+  patchEntity(pane, id, patch) {
+    const list = this.state.entityData[pane].map(e => e.id === id ? { ...e, ...patch } : e);
+    this.setState({ entityData: { ...this.state.entityData, [pane]: list } });
+  }
+
+  accountVals() {
+    const st = this.state;
+    const dark = this.theme === 'dark';
+    const fieldStyle = 'height:32px;box-sizing:border-box;padding:0 10px;font-size:13px;color:var(--text-primary);background:var(--surface-card);border:1px solid var(--border-strong);border-radius:var(--radius-md);outline:none';
+    const lockedStyle = fieldStyle + ';color:var(--text-secondary);background:var(--surface-inset)';
+    const pwStyle = fieldStyle.replace('font-size:13px', 'font-family:var(--font-mono);font-size:12px');
+    const next = st.pw.next, confirm = st.pw.confirm;
+    const longEnough = next.length >= 12;
+    const matches = next !== '' && next === confirm;
+    const canUpdate = st.pw.current !== '' && longEnough && matches;
+    const note = next === ''
+      ? ['At least 12 characters. You stay signed in on this device; other sessions end.', 'var(--text-tertiary)']
+      : !longEnough
+        ? ['Too short — 12 characters minimum.', 'var(--caution-500)']
+        : confirm === ''
+          ? ['Re-enter the new password to confirm.', 'var(--text-tertiary)']
+          : !matches
+            ? ['The two entries do not match.', 'var(--critical-500)']
+            : ['Ready to update. Other sessions will be signed out.', 'var(--text-secondary)'];
+
+    return {
+      isDark: dark,
+      isLight: !dark,
+      themeLabel: dark ? 'Switch to light' : 'Switch to dark',
+      toggleTheme: () => this.setState({ theme: dark ? 'light' : 'dark' }),
+      initials: 'JT',
+      avatarStyle: 'width:26px;height:26px;border-radius:var(--radius-full);background:var(--surface-raised);border:1px solid var(--border-subtle);font-family:var(--font-sans);font-size:11px;font-weight:500;display:flex;align-items:center;justify-content:center;color:var(--text-secondary);cursor:pointer',
+      accountOpen: st.accountOpen,
+      openAccount: () => this.setState({ accountOpen: true, accountSaved: null }),
+      closeAccount: () => this.setState({ accountOpen: false, pw: { current: '', next: '', confirm: '' } }),
+      accountFields: [
+        { label: 'Name', value: st.profile.name, readOnly: false, hint: null, style: fieldStyle,
+          set: e => this.setState({ profile: { ...st.profile, name: e.target.value } }) },
+        { label: 'Email', value: 'jt@turanga.io', readOnly: true, hint: 'Managed by your identity provider.', style: lockedStyle, set: () => {} },
+        { label: 'Role', value: 'Platform admin', readOnly: true, hint: null, style: lockedStyle, set: () => {} },
+        { label: 'Time zone', value: st.profile.timezone, readOnly: false, hint: 'Used for heartbeat schedules and run timestamps.', style: fieldStyle,
+          set: e => this.setState({ profile: { ...st.profile, timezone: e.target.value } }) }
+      ],
+      passwordFields: [
+        { label: 'Current password', value: st.pw.current, placeholder: '', style: pwStyle, set: e => this.setState({ pw: { ...st.pw, current: e.target.value } }) },
+        { label: 'New password', value: st.pw.next, placeholder: 'at least 12 characters', style: pwStyle, set: e => this.setState({ pw: { ...st.pw, next: e.target.value } }) },
+        { label: 'Confirm new password', value: st.pw.confirm, placeholder: '', style: pwStyle, set: e => this.setState({ pw: { ...st.pw, confirm: e.target.value } }) }
+      ],
+      passwordNote: note[0],
+      passwordNoteColor: note[1],
+      passwordButtonStyle: `height:30px;width:fit-content;padding:0 12px;font-family:var(--font-sans);font-size:12px;font-weight:500;color:var(--action-secondary-fg);background:var(--action-secondary-bg);border:1px solid var(--border-strong);border-radius:var(--radius-md);cursor:${canUpdate ? 'pointer' : 'not-allowed'};opacity:${canUpdate ? 1 : 0.45}`,
+      updatePassword: () => canUpdate && this.setState({ pw: { current: '', next: '', confirm: '' }, accountSaved: 'Password updated' }),
+      accountSaved: st.accountSaved,
+      saveAccount: () => this.setState({ accountSaved: 'Saved', accountOpen: false }),
+      signedOut: st.signedOut === true,
+      signOut: () => this.setState({
+        signedOut: true,
+        accountOpen: false,
+        accountSaved: null,
+        consoleOpen: false,
+        pw: { current: '', next: '', confirm: '' }
+      }),
+      signBackIn: () => this.setState({ signedOut: false, view: 'agents' })
+    };
+  }
+
+  chatVals() {
+    const st = this.state;
+    const picked = st.chatAgent;
+    const roster = [
+      ['Container operations', 'claude-sonnet-4-6 · v2.14', 'succeeded', 23, true],
+      ['Inbound triage', 'claude-sonnet-4-6 · v4.02', 'succeeded', 9, true],
+      ['Release notes writer', 'claude-haiku-4-5 · v1.9', 'idle', 4, false],
+      ['Cost anomaly watch', 'claude-opus-4-1 · v0.8', 'review', 6, false],
+      ['Log summariser', 'claude-haiku-4-5 · v3.3', 'succeeded', 5, false]
+    ];
+    const pickedRow = roster.find(r => r[0] === picked);
+    const turns = picked ? (st.chatLogs[picked] || []) : [];
+    const suggestionSets = {
+      'Container operations': ['What changed on the lab host in the last hour?', 'Show me the logs for the container that keeps restarting.', 'How much disk is the build cache holding?'],
+      'Inbound triage': ['Summarise the tickets waiting on a human right now.', 'Which escalation rule fired most this week?', 'Draft a reply for the oldest open ticket.'],
+      'Release notes writer': ['Draft notes for everything merged since v2.13.', 'Which changes are user-visible?', 'Rewrite the last release in plain language.'],
+      'Cost anomaly watch': ['What drove yesterday\u2019s spend increase?', 'Which agent is the most expensive per run?', 'Show spend by cost_center this month.'],
+      'Log summariser': ['Cluster today\u2019s errors by signature.', 'What is new since yesterday?', 'Quote the first occurrence of the timeout error.']
+    };
+    const canSend = !!picked && st.chatDraft.trim() !== '' && !st.chatThinking;
+
+    const send = () => {
+      if (!canSend) return;
+      const text = st.chatDraft.trim();
+      const log = (st.chatLogs[picked] || []).concat([{ role: 'you', text }]);
+      this.setState({ chatLogs: { ...st.chatLogs, [picked]: log }, chatDraft: '', chatThinking: true });
+      setTimeout(() => {
+        const reply = { role: 'agent', text: 'Checked against the published definition. I can answer that with the tools I have; here is what I found, with the calls I made listed above each step.' };
+        this.setState(s => ({
+          chatLogs: { ...s.chatLogs, [picked]: (s.chatLogs[picked] || []).concat([reply]) },
+          chatThinking: false
+        }));
+      }, 900);
+    };
+
+    return {
+      logRef: this.logRef,
+      chatAgents: roster.map(([name, sub, state, , ]) => ({
+        name, sub,
+        dot: `var(--state-${state})`,
+        select: () => this.setState({ chatAgent: name, chatDraft: '' }),
+        style: `width:100%;box-sizing:border-box;display:flex;flex-direction:column;gap:3px;align-items:stretch;text-align:left;padding:8px 14px;background:${picked === name ? 'var(--surface-selected)' : 'transparent'};border:none;border-left:2px solid ${picked === name ? 'var(--text-primary)' : 'transparent'};cursor:pointer;color:var(--text-primary)`
+      })),
+      chatPicked: !!picked,
+      chatEmpty: !picked,
+      chatTitle: picked || 'Choose an agent',
+      chatSubtitle: pickedRow ? pickedRow[1] : '5 published agents',
+      chatTurns: turns.map(t => ({
+        who: t.role === 'you' ? 'you' : t.role === 'tool' ? 'tool call' : picked,
+        text: t.text,
+        approval: t.approval || null,
+        wrapStyle: t.role === 'you' ? 'display:flex;flex-direction:column;gap:5px;align-items:flex-end' : 'display:flex;flex-direction:column;gap:5px',
+        bodyStyle: t.role === 'you'
+          ? 'max-width:78%;padding:10px 13px;font-size:13px;line-height:20px;background:var(--surface-inset);border:1px solid var(--border-hairline);border-radius:var(--radius-lg);color:var(--text-primary)'
+          : t.role === 'tool'
+            ? 'font-family:var(--font-mono);font-size:11px;line-height:18px;color:var(--text-secondary)'
+            : 'font-size:13px;line-height:21px;color:var(--text-primary);max-width:100%;text-wrap:pretty'
+      })),
+      chatThinking: st.chatThinking,
+      showSuggestions: !!picked && turns.length === 0,
+      suggestions: (suggestionSets[picked] || []).map(text => ({
+        text, use: () => this.setState({ chatDraft: text })
+      })),
+      chatDraft: st.chatDraft,
+      setChatDraft: e => this.setState({ chatDraft: e.target.value }),
+      chatPlaceholder: picked ? 'Message ' + picked : 'Pick an agent first',
+      chatInputStyle: `width:100%;box-sizing:border-box;padding:10px 12px;font-family:var(--font-sans);font-size:13px;line-height:20px;color:var(--text-primary);background:${picked ? 'var(--surface-card)' : 'var(--surface-inset)'};border:1px solid var(--border-strong);border-radius:var(--radius-md);outline:none;resize:none`,
+      chatFooter: pickedRow
+        ? 'published ' + pickedRow[1].split(' · ')[1] + ' · ' + pickedRow[3] + ' tools' + (pickedRow[4] ? ' · destructive calls need approval' : '')
+        : 'no agent selected',
+      chatSendStyle: `height:30px;padding:0 14px;font-family:var(--font-sans);font-size:12px;font-weight:500;color:var(--action-primary-fg);background:var(--action-primary-bg);border:1px solid transparent;border-radius:var(--radius-md);cursor:${canSend ? 'pointer' : 'not-allowed'};opacity:${canSend ? 1 : 0.45}`,
+      sendChat: send,
+      resetChat: () => this.setState({ chatLogs: { ...st.chatLogs, [picked]: [] }, chatDraft: '' })
+    };
+  }
+
+  settingsVals() {
+    const st = this.state;
+    const pane = st.pane;
+    const meta = SETTINGS_PANES[pane];
+    const rows = pane === 'profile' ? [] : st.entityData[pane];
+    const isOpenAiCompatible = pane === 'providers' && st.addKind === 'openai-compatible';
+    const isOauth = pane === 'data';
+
+    const navItems = [['providers', 'Model providers'], ['data', 'Data connections'], ['tools', 'Tools'], ['profile', 'Profile']];
+
+    const fieldStyle = 'height:32px;box-sizing:border-box;padding:0 10px;font-size:13px;color:var(--text-primary);background:var(--surface-card);border:1px solid var(--border-strong);border-radius:var(--radius-md);outline:none';
+    const monoFieldStyle = fieldStyle.replace('font-size:13px', 'font-family:var(--font-mono);font-size:12px');
+    const primary = (on) => `height:32px;padding:0 12px;font-family:var(--font-sans);font-size:12px;font-weight:500;color:var(--action-primary-fg);background:var(--action-primary-bg);border:1px solid transparent;border-radius:var(--radius-md);cursor:${on ? 'pointer' : 'not-allowed'};opacity:${on ? 1 : 0.45}`;
+    const secondary = (on) => `height:32px;padding:0 11px;font-family:var(--font-sans);font-size:12px;font-weight:500;color:var(--action-secondary-fg);background:var(--action-secondary-bg);border:1px solid var(--border-strong);border-radius:var(--radius-md);cursor:${on ? 'pointer' : 'not-allowed'};opacity:${on ? 1 : 0.45}`;
+
+    let addFields = [{ label: 'Name', placeholder: 'e.g. openrouter', type: 'text', value: st.addName, style: fieldStyle, set: e => this.setState({ addName: e.target.value }) }];
+    if (pane === 'providers') {
+      if (isOpenAiCompatible) {
+        addFields.push({ label: 'Base URL', placeholder: 'https://…/v1', type: 'text', value: st.addUrl, style: monoFieldStyle, set: e => this.setState({ addUrl: e.target.value, discovered: null }) });
+      }
+      addFields.push({ label: 'API key', placeholder: 'stored encrypted', type: 'password', value: st.addKey, style: monoFieldStyle, set: e => this.setState({ addKey: e.target.value, discovered: null }) });
+    } else if (pane === 'tools') {
+      addFields.push({ label: 'Server URL', placeholder: 'http://…/mcp', type: 'text', value: st.addUrl, style: monoFieldStyle, set: e => this.setState({ addUrl: e.target.value }) });
+      addFields.push({ label: 'Bearer token', placeholder: 'optional', type: 'password', value: st.addKey, style: monoFieldStyle, set: e => this.setState({ addKey: e.target.value }) });
+    }
+
+    const canDiscover = isOpenAiCompatible && st.addUrl.trim() !== '' && st.addKey.trim() !== '';
+    const canSubmit = isOauth ? true : (st.addName.trim() !== '' && (pane === 'providers' ? (isOpenAiCompatible ? !!st.discovered : st.addKey.trim() !== '') : st.addUrl.trim() !== ''));
+
+    const hint = isOauth
+      ? 'You will be redirected to the provider to grant access. Turanga stores the token, never your password.'
+      : isOpenAiCompatible
+        ? 'Enter the base URL and API key, then discover the available models.'
+        : pane === 'tools'
+          ? 'Turanga performs an MCP handshake on save and lists the operations the server advertises.'
+          : 'The key is verified once on save and then stored encrypted.';
+
+    const entities = rows.map(e => {
+      const detailLabel = pane === 'providers'
+        ? e.catalog.filter(c => c.on).length + ' of ' + e.catalog.length + ' models enabled'
+        : pane === 'tools' ? e.ops.length + ' operations' : null;
+      const open = st.detailOpen[e.id] === true;
+      const dot = e.status === 'connected' ? 'var(--state-succeeded)'
+        : e.status === 'connecting' ? 'var(--state-running)'
+        : e.status === 'reconnect required' ? 'var(--state-review)' : 'var(--state-failed)';
+      const actions = [];
+      if (pane === 'providers') actions.push({ label: 'Update key', run: () => this.setState({ addOpen: true, addKind: 'openai-compatible', addName: e.name }) });
+      if (pane === 'data' && e.status !== 'connected') actions.push({ label: 'Reconnect', run: () => this.patchEntity(pane, e.id, { status: 'connected' }) });
+      return {
+        ...e, dot,
+        anim: e.status === 'connecting' ? 'om-pulse var(--duration-pulse) var(--ease-standard) infinite' : 'none',
+        detailLabel, detailOpen: open,
+        caretRotate: open ? 'rotate(90deg)' : 'none',
+        detailAction: pane === 'providers' ? 'Refresh models' : null,
+        runDetailAction: () => this.patchEntity(pane, e.id, {}),
+        catalog: (e.catalog || []).map((c, i) => ({
+          ...c,
+          toggle: () => this.patchEntity(pane, e.id, { catalog: e.catalog.map((x, j) => j === i ? { ...x, on: !x.on } : x) })
+        })),
+        opsText: pane === 'tools' && open ? e.ops.join(', ') : null,
+        toggleDetail: () => this.setState({ detailOpen: { ...st.detailOpen, [e.id]: !open } }),
+        actions,
+        removeLabel: pane === 'data' ? 'Revoke' : 'Remove',
+        confirmVerb: pane === 'data' ? 'Revoke access' : 'Remove anyway',
+        confirming: st.confirming === e.id,
+        confirmTitle: (pane === 'data' ? 'Revoke ' : 'Remove ') + e.name + '?',
+        confirmBody: e.dependents
+          ? e.dependents + (e.dependents === 1 ? ' agent depends' : ' agents depend') + ' on this. Their next run fails closed until you point them somewhere else.'
+          : 'Nothing depends on this today.',
+        startRemove: () => this.setState({ confirming: e.id }),
+        cancelRemove: () => this.setState({ confirming: null }),
+        confirmRemove: () => this.setState({
+          confirming: null,
+          entityData: { ...st.entityData, [pane]: rows.filter(r => r.id !== e.id) }
+        })
+      };
+    });
+
+    return {
+      consoleOpen: st.consoleOpen,
+      toggleConsole: () => this.setState({ consoleOpen: !st.consoleOpen }),
+      consoleButtonStyle: `height:28px;padding:0 10px;display:flex;align-items:center;gap:6px;font-family:var(--font-sans);font-size:12px;font-weight:500;border-radius:var(--radius-md);cursor:pointer;border:1px solid ${st.consoleOpen ? 'var(--border-strong)' : 'transparent'};background:${st.consoleOpen ? 'var(--surface-selected)' : 'transparent'};color:${st.consoleOpen ? 'var(--text-primary)' : 'var(--action-ghost-fg)'}`,
+      isAgentsView: st.view === 'agents',
+      isSettingsView: st.view === 'settings',
+      isChatView: st.view === 'chat',
+      goToAgents: () => this.setState({ view: 'agents' }),
+      goToSettings: () => this.setState({ view: 'settings' }),
+      goToChat: () => this.setState({ view: 'chat' }),
+      navAgentsStyle: navRailStyle(st.view === 'agents'),
+      navSettingsStyle: navRailStyle(st.view === 'settings'),
+      navChatStyle: navRailStyle(st.view === 'chat'),
+      ...this.chatVals(),
+      ...this.accountVals(),
+      settingsNav: navItems.map(([key, label]) => ({
+        label,
+        count: key === 'profile' ? null : String(st.entityData[key].length),
+        select: () => this.setState({ pane: key, addOpen: false, confirming: null, discovered: null }),
+        style: `display:flex;align-items:center;justify-content:space-between;gap:8px;height:32px;padding:0 10px;font-family:var(--font-sans);font-size:13px;font-weight:500;letter-spacing:-0.004em;text-align:left;border-radius:var(--radius-md);cursor:pointer;border:1px solid ${pane === key ? 'var(--border-subtle)' : 'transparent'};background:${pane === key ? 'var(--surface-card)' : 'transparent'};color:${pane === key ? 'var(--text-primary)' : 'var(--text-secondary)'}`
+      })),
+      isProfile: pane === 'profile',
+      isConnections: pane !== 'profile',
+      paneTitle: pane === 'profile' ? 'Profile' : meta.title,
+      paneBlurb: pane === 'profile'
+        ? 'Your account and how Turanga reaches you. Organisation-wide settings live under the other three sections.'
+        : meta.blurb,
+      paneBanner: pane === 'data' && st.banner ? st.banner : null,
+      dismissBanner: () => this.setState({ banner: null }),
+
+      profileFields: [
+        { label: 'Name', value: st.profile.name, readOnly: false, hint: null, style: fieldStyle,
+          set: e => this.setState({ profile: { ...st.profile, name: e.target.value } }) },
+        { label: 'Email', value: 'jt@turanga.io', readOnly: true, hint: 'Managed by your identity provider.', style: fieldStyle + ';color:var(--text-secondary);background:var(--surface-inset)', set: () => {} },
+        { label: 'Role', value: 'Platform admin', readOnly: true, hint: 'Grants access to all four settings sections.', style: fieldStyle + ';color:var(--text-secondary);background:var(--surface-inset)', set: () => {} },
+        { label: 'Time zone', value: st.profile.timezone, readOnly: false, hint: 'Used for heartbeat schedules and run timestamps.', style: fieldStyle,
+          set: e => this.setState({ profile: { ...st.profile, timezone: e.target.value } }) }
+      ],
+      preferences: [
+        { title: 'Compact tables', body: 'Reduce run and tool rows from 40px to 32px.', on: st.prefs.compact, toggle: () => this.setState({ prefs: { ...st.prefs, compact: !st.prefs.compact } }) },
+        { title: 'Notify me on approval requests', body: 'Email when any agent pauses and waits for a human.', on: st.prefs.notify, toggle: () => this.setState({ prefs: { ...st.prefs, notify: !st.prefs.notify } }) },
+        { title: 'Weekly self-learning digest', body: 'One summary of every rule your agents proposed that week.', on: st.prefs.weekly, toggle: () => this.setState({ prefs: { ...st.prefs, weekly: !st.prefs.weekly } }) }
+      ],
+
+      addOpen: st.addOpen,
+      addButtonLabel: meta ? meta.add : 'Add',
+      addButtonStyle: primary(true),
+      toggleAdd: () => this.setState({ addOpen: !st.addOpen, discovered: null, addName: '', addUrl: '', addKey: '' }),
+      openAdd: () => this.setState({ addOpen: true }),
+      listCount: rows.length ? rows.length + (rows.length === 1 ? ' connected' : ' connected') : null,
+      listEmpty: rows.length === 0 && !st.addOpen,
+      emptyText: meta ? meta.empty : '',
+      kindLabel: meta ? meta.kindLabel : '',
+      addKind: st.addKind,
+      addKinds: (meta ? meta.kinds : []).map(([value, label]) => ({ value, label })),
+      setAddKind: e => this.setState({ addKind: e.target.value, discovered: null }),
+      addFields,
+      addHint: hint,
+      hasDiscover: isOpenAiCompatible,
+      discoverLabel: 'Discover models',
+      discoverStyle: secondary(canDiscover),
+      discover: () => canDiscover && this.setState({
+        discovered: [{ name: '/models/gpt-oss-20b-MXFP4.gguf', on: true }, { name: '/models/qwen3-32b-Q5.gguf', on: false }, { name: '/models/llama-3.3-70b-Q4.gguf', on: false }]
+      }),
+      discovered: !!st.discovered,
+      discoveredLabel: st.discovered ? st.discovered.length + ' models found · pick what agents may use' : '',
+      discoveredModels: (st.discovered || []).map((m, i) => ({
+        ...m, toggle: () => this.setState({ discovered: st.discovered.map((x, j) => j === i ? { ...x, on: !x.on } : x) })
+      })),
+      submitLabel: isOauth ? 'Continue to provider' : pane === 'tools' ? 'Add tool' : 'Connect provider',
+      submitStyle: primary(canSubmit),
+      submitAdd: () => {
+        if (!canSubmit) return;
+        const id = pane[0] + Date.now();
+        const kindLabel = (meta.kinds.find(k => k[0] === st.addKind) || [])[1] || '';
+        const row = pane === 'tools'
+          ? { id, name: st.addName, kind: kindLabel, endpoint: st.addUrl, credential: st.addKey ? 'credential set' : 'no credential', status: 'connecting', dependents: 0, ops: [] }
+          : pane === 'providers'
+            ? { id, name: st.addName, kind: kindLabel, endpoint: st.addUrl || 'api.' + st.addKind + '.com', credential: 'sk-…' + String(Date.now()).slice(-4), status: 'connected', dependents: 0, catalog: (st.discovered || [{ name: 'default', on: true }]) }
+            : { id, name: kindLabel, kind: kindLabel, endpoint: 'awaiting first sync', credential: 'oauth · jt@turanga.io', status: 'connected', dependents: 0, catalog: [] };
+        this.setState({
+          entityData: { ...st.entityData, [pane]: rows.concat([row]) },
+          addOpen: false, addName: '', addUrl: '', addKey: '', discovered: null
+        });
+        if (pane === 'tools') {
+          setTimeout(() => this.patchEntity('tools', id, { status: 'connected', ops: OPS_SAMPLE.slice(0, 24) }), 1400);
+        }
+      },
+      entities
+    };
+  }
+
+  renderVals() {
+    const st = this.state;
+    const results = FLAT.filter(t => this.matches(t));
+    const resultNames = results.map(r => r.name);
+    const allShown = resultNames.length > 0 && resultNames.every(n => st.enabled.has(n));
+
+    const tabDef = [
+      ['definition', 'Definition', null],
+      ['library', 'Skills & souls', String(st.attachedSkills.size + (st.soulId ? 1 : 0))],
+      ['tools', 'Tools', String(st.enabled.size)],
+      ['limits', 'Limits & approvals', null]
+    ];
+    const tabStyle = (on) => `height:37px;padding:0 12px;display:flex;align-items:center;gap:7px;font-family:var(--font-sans);font-size:13px;font-weight:500;letter-spacing:-0.004em;background:transparent;border:none;border-bottom:2px solid ${on ? 'var(--text-primary)' : 'transparent'};color:${on ? 'var(--text-primary)' : 'var(--text-tertiary)'};cursor:pointer;margin-bottom:-1px`;
+
+    const chip = (on) => `height:24px;padding:0 9px;display:flex;align-items:center;gap:6px;font-family:var(--font-sans);font-size:12px;font-weight:500;border-radius:var(--radius-full);cursor:pointer;border:1px solid ${on ? 'transparent' : 'var(--border-subtle)'};background:${on ? 'var(--action-primary-bg)' : 'var(--surface-card)'};color:${on ? 'var(--action-primary-fg)' : 'var(--text-secondary)'}`;
+    const seg = (on) => `height:24px;padding:0 9px;font-family:var(--font-sans);font-size:12px;font-weight:500;border-radius:var(--radius-sm);cursor:pointer;border:1px solid ${on ? 'var(--border-subtle)' : 'transparent'};background:${on ? 'var(--surface-card)' : 'transparent'};color:${on ? 'var(--text-primary)' : 'var(--text-tertiary)'}`;
+
+    const groups = TOOLS.map(([name, rows]) => {
+      const shown = rows.map(([n, risk, desc]) => ({ name: n, risk, desc, group: name })).filter(t => this.matches(t));
+      if (!shown.length) return null;
+      const on = rows.filter(([n]) => st.enabled.has(n)).length;
+      const open = !st.closed[name];
+      const allOn = shown.every(t => st.enabled.has(t.name));
+      return {
+        name, open, caretRotate: open ? 'rotate(90deg)' : 'none',
+        ratio: on + '/' + rows.length,
+        bulkLabel: allOn ? 'Disable these' : 'Enable these',
+        toggleOpen: () => this.setState({ closed: { ...st.closed, [name]: open } }),
+        enableAll: () => {
+          const e = new Set(st.enabled);
+          shown.forEach(t => allOn ? e.delete(t.name) : e.add(t.name));
+          this.setState({ enabled: e, dirtyKeys: this.mark('Tools') });
+        },
+        rows: shown.map(t => {
+          const isOn = st.enabled.has(t.name);
+          return {
+            ...t, on: isOn,
+            riskColor: RISK_COLOR[t.risk],
+            toggle: () => this.toggleTool(t.name),
+            style: `display:grid;grid-template-columns:13px 1fr;gap:10px;align-items:start;padding:7px 10px;border-radius:var(--radius-md);cursor:pointer;background:${isOn ? 'var(--surface-inset)' : 'transparent'}`
+          };
+        })
+      };
+    }).filter(Boolean);
+
+    const soulRow = SOULS.find(s => s[0] === st.soulId) || SOULS[SOULS.length - 1];
+    const soul = { rawId: soulRow[0], title: soulRow[1], usage: soulRow[4] ? soulRow[4] + ' other agents' : 'other agents', body: soulRow[5] };
+    const locked = st.activeFile === 'soul' && !!soul.rawId && !st.soulOverride;
+    const activeText = locked ? soul.body : st.docs[st.activeFile];
+    const sq = st.skillSearch.trim().toLowerCase();
+    const visibleSkills = SKILLS.filter(([id, title, , body]) =>
+      !sq || id.includes(sq) || title.toLowerCase().includes(sq) || body.toLowerCase().includes(sq));
+
+    const destructiveOn = FLAT.filter(t => t.risk === 'destructive' && st.enabled.has(t.name)).length;
+    const dirtyKeys = [...st.dirtyKeys];
+
+    const agentDefs = [
+      ['Container operations', 'agt_7f3c91de', 'running', '2m ago', dirtyKeys.length > 0],
+      ['Inbound triage', 'agt_2b40aa17', 'succeeded', '18m ago', false],
+      ['Release notes writer', 'agt_9de40c02', 'idle', '3h ago', false],
+      ['Cost anomaly watch', 'agt_c1180fb5', 'review', '5h ago', true],
+      ['Log summariser', 'agt_44e2d7a9', 'succeeded', 'Yesterday', false],
+      ['Schema migration aide', 'agt_0ab73e51', 'failed', '2d ago', false]
+    ];
+
+    return {
+      ...this.settingsVals(),
+      agents: agentDefs.map(([name, id, state, when, isDirty], i) => ({
+        name, id, when, dirty: isDirty,
+        dot: `var(--state-${state})`,
+        anim: state === 'running' ? 'om-pulse var(--duration-pulse) var(--ease-standard) infinite' : 'none',
+        select: () => {},
+        style: `width:100%;box-sizing:border-box;display:flex;flex-direction:column;gap:3px;align-items:stretch;text-align:left;padding:8px 14px;background:${i === 0 ? 'var(--surface-selected)' : 'transparent'};border:none;border-left:2px solid ${i === 0 ? 'var(--text-primary)' : 'transparent'};cursor:pointer;color:var(--text-primary)`
+      })),
+
+      tabs: tabDef.map(([key, label, count]) => ({
+        label, count,
+        changed: key === 'tools' ? st.dirtyKeys.has('Tools')
+          : key === 'definition' ? st.dirtyKeys.has('Definition')
+          : key === 'library' ? st.dirtyKeys.has('Skills & souls')
+          : st.dirtyKeys.has('Approvals'),
+        style: tabStyle(st.tab === key),
+        select: () => this.setState({ tab: key })
+      })),
+      isDefinition: st.tab === 'definition',
+      isLibrary: st.tab === 'library',
+      isTools: st.tab === 'tools',
+      isLimits: st.tab === 'limits',
+
+      agentName: st.fields.name,
+      agentId: 'agt_7f3c91de',
+      description: st.fields.description,
+      model: st.fields.model,
+      files: ['instructions', 'soul', 'heartbeat'].map(key => ({
+        name: FILE_META[key][0],
+        edited: st.editedDocs[key] === true,
+        inherited: key === 'soul' && !!soul.rawId && !st.soulOverride,
+        select: () => this.setState({ activeFile: key }),
+        style: `height:26px;padding:0 10px;display:flex;align-items:center;gap:7px;font-family:var(--font-mono);font-size:11px;border-radius:var(--radius-sm);cursor:pointer;border:1px solid ${st.activeFile === key ? 'var(--border-subtle)' : 'transparent'};background:${st.activeFile === key ? 'var(--surface-card)' : 'transparent'};color:${st.activeFile === key ? 'var(--text-primary)' : 'var(--text-tertiary)'}`
+      })),
+      activeFileText: activeText,
+      activeFileChars: activeText.length + ' chars',
+      activeFileHint: FILE_META[st.activeFile][1],
+      fileLocked: locked,
+      textareaStyle: `width:100%;box-sizing:border-box;padding:12px;font-family:var(--font-mono);font-size:12px;line-height:20px;color:${locked ? 'var(--text-secondary)' : 'var(--text-primary)'};background:${locked ? 'var(--surface-inset)' : 'var(--surface-card)'};border:1px solid var(--border-strong);border-radius:var(--radius-md);outline:none;resize:vertical`,
+      setFileText: e => this.setState({
+        docs: { ...st.docs, [st.activeFile]: e.target.value },
+        editedDocs: { ...st.editedDocs, [st.activeFile]: true },
+        dirtyKeys: this.mark('Definition')
+      }),
+      soulName: soul.title,
+      soulUsage: soul.usage,
+      overrideSoul: () => this.setState({
+        soulOverride: true,
+        docs: { ...st.docs, soul: soul.body },
+        dirtyKeys: this.mark('Skills & souls')
+      }),
+
+      souls: SOULS.map(([id, title, version, body, used]) => ({
+        id: id || '—', title, version, body,
+        usage: used ? used + ' agents' : 'not shared',
+        on: st.soulId === id,
+        select: () => this.setState({ soulId: id, soulOverride: false, dirtyKeys: this.mark('Skills & souls') }),
+        style: `display:grid;grid-template-columns:13px 1fr auto;gap:12px;align-items:start;padding:11px 13px;border:1px solid ${st.soulId === id ? 'var(--border-strong)' : 'var(--border-subtle)'};border-radius:var(--radius-lg);background:${st.soulId === id ? 'var(--surface-inset)' : 'var(--surface-card)'};cursor:pointer`
+      })),
+      skills: visibleSkills.map(([id, title, version, body, used, pinned]) => {
+        const on = st.attachedSkills.has(id);
+        return {
+          id, title, version, body, pinned,
+          usage: used + ' agents',
+          on,
+          toggle: () => {
+            const s = new Set(st.attachedSkills);
+            on ? s.delete(id) : s.add(id);
+            this.setState({ attachedSkills: s, dirtyKeys: this.mark('Skills & souls') });
+          },
+          style: `display:grid;grid-template-columns:13px 1fr auto;gap:12px;align-items:start;padding:11px 13px;border:1px solid ${on ? 'var(--border-strong)' : 'var(--border-subtle)'};border-radius:var(--radius-lg);background:${on ? 'var(--surface-inset)' : 'var(--surface-card)'};cursor:pointer`
+        };
+      }),
+      noSkills: visibleSkills.length === 0,
+      skillSearch: st.skillSearch,
+      setSkillSearch: e => this.setState({ skillSearch: e.target.value }),
+      skillsAttached: String(st.attachedSkills.size),
+      setName: e => this.setState({ fields: { ...st.fields, name: e.target.value }, dirtyKeys: this.mark('Definition') }),
+      setDescription: e => this.setState({ fields: { ...st.fields, description: e.target.value }, dirtyKeys: this.mark('Definition') }),
+      setModel: e => this.setState({ fields: { ...st.fields, model: e.target.value }, dirtyKeys: this.mark('Definition') }),
+      setInstructions: e => this.setState({ fields: { ...st.fields, instructions: e.target.value }, dirtyKeys: this.mark('Definition') }),
+      metadata: [
+        { key: 'owner', value: 'platform-infra' },
+        { key: 'environment', value: 'production' },
+        { key: 'cost_center', value: 'CC-4820' }
+      ],
+
+      search: st.search,
+      setSearch: e => this.setState({ search: e.target.value }),
+      selectedOnly: st.selectedOnly,
+      toggleSelectedOnly: () => this.setState({ selectedOnly: !st.selectedOnly }),
+      riskFilters: ['All', 'Read', 'Write', 'Destructive'].map(label => ({
+        label, style: seg(st.risk === label), select: () => this.setState({ risk: label })
+      })),
+      groupFilters: [{ label: 'All groups', count: String(FLAT.length), key: 'All' }].concat(
+        TOOLS.map(([name, rows]) => ({ label: name, count: String(rows.length), key: name }))
+      ).map(g => ({ label: g.label, count: g.count, style: chip(st.group === g.key), select: () => this.setState({ group: g.key }) })),
+      groups,
+      noResults: results.length === 0,
+      enabledCount: String(st.enabled.size),
+      totalCount: String(FLAT.length),
+      resultCount: String(results.length),
+      enableAllLabel: allShown ? 'Disable ' + results.length + ' shown' : 'Enable ' + results.length + ' shown',
+      enableAllResults: () => {
+        const e = new Set(st.enabled);
+        resultNames.forEach(n => allShown ? e.delete(n) : e.add(n));
+        this.setState({ enabled: e, dirtyKeys: this.mark('Tools') });
+      },
+      disableAll: () => this.setState({ enabled: new Set(), dirtyKeys: this.mark('Tools') }),
+      hasDestructive: destructiveOn > 0,
+      destructiveLabel: destructiveOn === 1 ? '1 destructive tool requires human approval' : destructiveOn + ' destructive tools require human approval',
+
+      limits: [
+        { label: 'Max steps', value: '25', hint: 'Run halts and reports when reached.' },
+        { label: 'Max tokens', value: '120,000', hint: 'Counted across all steps.' },
+        { label: 'Max spend per run', value: '$2.50', hint: 'Hard stop, not a warning.' }
+      ],
+      policies: [
+        { title: 'Require approval for destructive tools', body: 'Any remove, kill or prune call pauses the run and waits for a human.', on: st.policies.destructive, toggle: () => this.setState({ policies: { ...st.policies, destructive: !st.policies.destructive }, dirtyKeys: this.mark('Approvals') }) },
+        { title: 'Require approval above spend threshold', body: 'Pause when a single run passes $1.00 in model spend.', on: st.policies.spend, toggle: () => this.setState({ policies: { ...st.policies, spend: !st.policies.spend }, dirtyKeys: this.mark('Approvals') }) },
+        { title: 'Block writes outside business hours', body: 'Read tools stay available; write and destructive tools are refused 20:00–07:00 UTC.', on: st.policies.offhours, toggle: () => this.setState({ policies: { ...st.policies, offhours: !st.policies.offhours }, dirtyKeys: this.mark('Approvals') }) }
+      ],
+
+      dirty: dirtyKeys.length > 0,
+      dirtyLabel: dirtyKeys.length === 1 ? '1 unsaved section' : dirtyKeys.length + ' unsaved sections',
+      dirtyDetail: dirtyKeys.join(' · '),
+      savedAt: 'Last saved 14:02',
+      discard: () => this.setState({
+        enabled: new Set(DEFAULT_ON),
+        editedDocs: {},
+        soulOverride: false,
+        dirtyKeys: new Set()
+      }),
+      save: () => this.setState({ dirtyKeys: new Set() }),
+      publish: () => this.setState({ dirtyKeys: new Set() }),
+      publishStyle: `height:28px;padding:0 12px;font-family:var(--font-sans);font-size:12px;font-weight:500;color:var(--action-primary-fg);background:var(--action-primary-bg);border:1px solid transparent;border-radius:var(--radius-md);cursor:${dirtyKeys.length ? 'not-allowed' : 'pointer'};opacity:${dirtyKeys.length ? 0.45 : 1}`
+    };
+  }
+}
+</script>
+</body>
+</html>

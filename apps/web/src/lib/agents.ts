@@ -34,9 +34,23 @@ export interface CostCap {
   perDay: Money | null;
 }
 
+/** The definition fields a publish snapshots — the tab dots and the dirty bar read from this. */
+export const PUBLISHED_FIELDS = [
+  "name",
+  "description",
+  "model",
+  "instructions",
+  "variables",
+  "skills",
+  "attachedTools",
+  "costCap",
+] as const;
+export type PublishedField = (typeof PUBLISHED_FIELDS)[number];
+
 export interface Agent {
   id: string;
   name: string;
+  description: string;
   state: LifecycleState;
   model: string | null; // "provider/model-id" (Story 3.2); null until selected
   instructions: string; // Story 3.3
@@ -44,11 +58,23 @@ export interface Agent {
   skills: AttachedSkill[]; // Story 3.4
   attachedTools: AttachedTool[]; // Story 6.3
   costCap: CostCap; // Story 3.5
+  publishedVersion: number | null; // null = never published
+  publishedAt: string | null;
+  dirty: boolean; // server-derived: the draft differs from the published snapshot
+  changedFields: PublishedField[]; // server-derived: which fields differ
   createdAt: string;
+}
+
+export interface AgentVersion {
+  version: number;
+  publishedAt: string;
+  publishedBy: string | null;
+  snapshot: Record<string, unknown>;
 }
 
 export interface AgentPatch {
   name?: string;
+  description?: string;
   model?: string | null;
   instructions?: string;
   variables?: AgentVariable[];
@@ -124,3 +150,35 @@ export async function deactivateAgent(id: string): Promise<Result<Agent>> {
   const r = await req<{ agent: Agent }>(`/agents/${encodeURIComponent(id)}/deactivate`, { method: "POST" });
   return r.ok ? { ok: true, value: r.value.agent } : r;
 }
+
+/** Snapshot the working draft as the next version. 400 when nothing has changed. */
+export async function publishAgent(id: string): Promise<Result<Agent>> {
+  const r = await req<{ agent: Agent }>(`/agents/${encodeURIComponent(id)}/publish`, { method: "POST" });
+  return r.ok ? { ok: true, value: r.value.agent } : r;
+}
+
+/** Publish history, newest first. */
+export async function listVersions(id: string): Promise<Result<AgentVersion[]>> {
+  const r = await req<{ versions?: AgentVersion[] }>(`/agents/${encodeURIComponent(id)}/versions`);
+  if (!r.ok) return r;
+  if (!Array.isArray(r.value.versions)) return { ok: false, error: "The control plane returned an unexpected response." };
+  return { ok: true, value: r.value.versions };
+}
+
+/** Copy this definition into a new, never-published draft. */
+export async function duplicateAgent(id: string): Promise<Result<Agent>> {
+  const r = await req<{ agent: Agent }>(`/agents/${encodeURIComponent(id)}/duplicate`, { method: "POST" });
+  return r.ok ? { ok: true, value: r.value.agent } : r;
+}
+
+/** The tab a changed field belongs to — drives the per-tab "unpublished change" dot. */
+export const FIELD_TAB: Record<PublishedField, "definition" | "tools" | "skills" | "limits"> = {
+  name: "definition",
+  description: "definition",
+  model: "definition",
+  instructions: "definition",
+  variables: "definition",
+  attachedTools: "tools",
+  skills: "skills",
+  costCap: "limits",
+};

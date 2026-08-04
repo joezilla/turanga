@@ -39,6 +39,26 @@ export async function login(email: string, password: string): Promise<LoginResul
   }
 }
 
+// Change the signed-in user's password (Account modal). The control-api re-verifies the
+// current password and drops every other session; this session survives.
+export type PasswordResult = { ok: true } | { ok: false; error: string };
+
+export async function changePassword(currentPassword: string, newPassword: string): Promise<PasswordResult> {
+  try {
+    const r = await fetch(`${base}/auth/password`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ currentPassword, newPassword }),
+    });
+    if (r.ok) return { ok: true };
+    const body = (await r.json().catch(() => ({}))) as { error?: string };
+    return { ok: false, error: body.error ?? "Couldn't change the password. Try again." };
+  } catch {
+    return { ok: false, error: "Can't reach the control plane. The password was not changed." };
+  }
+}
+
 export async function logout(): Promise<void> {
   try {
     await fetch(`${base}/auth/logout`, { method: "POST", credentials: "include" });

@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, jsonb, integer } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, jsonb, integer, uniqueIndex } from "drizzle-orm/pg-core";
 
 // users + sessions — the first control-api tables (AD-7: control-api owns this state).
 export const users = pgTable("users", {
@@ -57,6 +57,7 @@ export const dataConnections = pgTable("data_connections", {
 export const agents = pgTable("agents", {
   id: text("id").primaryKey(), // ULID
   name: text("name").notNull(),
+  description: text("description").notNull().default(""), // one-line summary shown in the editor's identity block
   state: text("state").notNull(), // 'draft' | 'active' (LifecycleState)
   model: text("model"), // "provider/model-id" (Story 3.2); null until a model is selected
   instructions: text("instructions").notNull().default(""), // Story 3.3
@@ -67,8 +68,39 @@ export const agents = pgTable("agents", {
     .$type<{ perRun: { minor: number; currency: string } | null; perDay: { minor: number; currency: string } | null }>()
     .notNull()
     .default({ perRun: null, perDay: null }), // Story 3.5
+  // The row above is always the WORKING DRAFT. These two point at the newest immutable snapshot
+  // in agent_versions; null means the agent has never been published.
+  publishedVersion: integer("published_version"),
+  publishedAt: timestamp("published_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+// Immutable published snapshots of an agent's definition. Written only by POST /agents/:id/publish
+// (AD-7). The draft lives on `agents`; publishing copies the publishable fields here and bumps
+// agents.published_version. Nothing ever updates a row in this table.
+export const agentVersions = pgTable(
+  "agent_versions",
+  {
+    id: text("id").primaryKey(), // ULID
+    agentId: text("agent_id").notNull(),
+    version: integer("version").notNull(), // 1-based, per agent
+    snapshot: jsonb("snapshot")
+      .$type<{
+        name: string;
+        description: string;
+        model: string | null;
+        instructions: string;
+        variables: { name: string; value: string }[];
+        skills: { skill: string; scope: string; send: boolean }[];
+        attachedTools: { toolId: string; operations: string[] }[];
+        costCap: { perRun: { minor: number; currency: string } | null; perDay: { minor: number; currency: string } | null };
+      }>()
+      .notNull(),
+    publishedBy: text("published_by"), // user email at publish time; null for system publishes
+    publishedAt: timestamp("published_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("agent_versions_agent_version_idx").on(t.agentId, t.version)],
+);
 
 // Runs (Epic 4). Written ONLY by the run-orchestrator (AD-7). The transcript is the merged
 // control-channel event stream; spend + refusal detail fill in as Stories 4.4/4.5 land.

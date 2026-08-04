@@ -40,7 +40,6 @@
   }
 </script>
 
-<h1>Data connections</h1>
 
 {#if callbackError}
   <p class="error" role="alert">Google sign-in was cancelled or failed. Try connecting again.</p>
@@ -86,14 +85,6 @@
 {/if}
 
 <style>
-  h1 {
-    margin: 0 0 var(--space-4);
-    font-size: var(--text-2xl);
-    line-height: var(--lh-2xl);
-    font-weight: var(--weight-semibold);
-    letter-spacing: var(--tracking-heading);
-    color: var(--text-primary);
-  }
   .connect {
     height: var(--control-h-md);
     padding: 0 var(--space-4);

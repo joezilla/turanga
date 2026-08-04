@@ -187,6 +187,29 @@ Consume the **semantic aliases** (`--bg-canvas`, `--surface-card`, `--text-prima
 
 4px grid with 2px/6px half-steps: 8px inside controls, 12–16px inside cards, 24–32px between regions, 56px page margins. Control heights 26/32/38px; table rows 40px. Sidebar 248px, top bar 48px, content max 1240px.
 
+## Screens
+
+`Agent Management.dc.html` is the canonical **layout** reference for the product surfaces — the foundations files
+cover tokens and components; this file covers how they assemble. Read it before laying out a new screen. Its
+inline `style=` attributes are a spec, not code to paste: translate them into scoped styles that consume the same
+token names.
+
+The workspace chrome it fixes:
+
+| Region | Spec |
+|---|---|
+| Nav rail | 52px, `--bg-sunken`, `--border-hairline` right edge. 26px wordmark tile, 30px icon buttons, spacer, theme toggle, avatar. |
+| List column | 264px, `--bg-sunken`. 48px header (title + one action), search below it, scrolling rows, micro-caps footer count. |
+| Content header | 48px on `--surface-card`, `--border-hairline` bottom. Title, mono id, status pill, mono version, then actions right-aligned. |
+| Tab bar | Directly under the header on `--surface-card`; per-tab mono count, `--caution-500` 4px dot for unsaved change. |
+| Content pane | `24px 28px` padding, `max-width: 720px` for forms / `860px` for list-and-detail, 96px bottom gutter to clear the dirty bar. |
+| Dirty bar | Sticky bottom, `--surface-raised` + `--shadow-lg`, caution dot + label left, Discard/Save right. |
+| Docked drawer | 420px, `--bg-sunken`, `--border-subtle` left edge, `--shadow-lg`. |
+| Dialog | 480px, `--surface-card`, `{rounded.xl}`, `--shadow-lg`, scrim `--ink-1000` at 55%. |
+
+Micro-caps section labels (`--font-mono`, 10px, `--tracking-micro`, uppercase, `--text-tertiary`) separate regions
+inside a pane — they replace headings below the pane title.
+
 ## Elevation & Depth
 
 Separation is **hairlines first**: `--border-hairline` (10% alpha, tables/rows), `--border-subtle` (14%, cards), `--border-strong` (26%, inputs/secondary buttons). Alpha-based, so borders sit correctly on any surface in either theme. Shadows are **warm-tinted** (ink hue, not black) and near-invisible: `xs/sm` for cards; `md/lg` **only** for things that genuinely float — popovers, dialogs, command palette. Transparency/blur is used only for scrim (`ink-1000` at 40%) and sticky-header protection — never frosted glass as decoration.

@@ -57,6 +57,7 @@ export interface AttachedSkill {
 export interface Agent {
   id: Ulid;
   name: string;
+  description?: string; // one-line summary shown in the editor's identity block
   model?: string; // "provider/model-id"
   instructions: string;
   variables?: AgentVariable[];
@@ -64,7 +65,31 @@ export interface Agent {
   attachedTools: AttachedTool[]; // Story 6.3 — tools granted to this agent, per-operation (default-deny)
   costCap: CostCap; // Story 3.5 — always present; sides default null until set
   state: LifecycleState;
+  publishedVersion?: number | null; // newest published version; null/absent = never published
+  publishedAt?: string | null; // UTC ISO-8601 of that publish
   createdAt: string; // UTC ISO-8601
+}
+
+// The agent-definition fields a publish snapshots. `state` is deliberately absent: lifecycle
+// (Activate/Deactivate) is orthogonal to publishing, and a run must be sandboxed regardless.
+export const PUBLISHED_FIELDS = [
+  "name",
+  "description",
+  "model",
+  "instructions",
+  "variables",
+  "skills",
+  "attachedTools",
+  "costCap",
+] as const;
+export type PublishedField = (typeof PUBLISHED_FIELDS)[number];
+
+/** An immutable published snapshot of an agent's definition. */
+export interface AgentVersion {
+  version: number; // 1-based, per agent
+  publishedAt: string; // UTC ISO-8601
+  publishedBy: string | null;
+  snapshot: Pick<Agent, PublishedField>;
 }
 
 export interface Connection {

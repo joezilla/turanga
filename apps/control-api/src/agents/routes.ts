@@ -1,8 +1,9 @@
 import { Hono } from "hono";
 import { ulid, activationBlockers } from "@turanga/domain";
-import type { AgentsRepo, AgentRow, AgentPatch, AgentVariable, AttachedSkill, AttachedTool, CostCap, Money } from "./repo.js";
+import { toView, type AgentsRepo, type AgentRow, type AgentPatch, type AgentVariable, type AttachedSkill, type AttachedTool, type CostCap, type Money } from "./repo.js";
 import type { ConnectionsRepo } from "../connections/repo.js";
 import type { ToolsRepo } from "../tools/repo.js";
+import type { SessionVars } from "../auth/guard.js";
 
 // Story 5.1: is the agent's model ("<prefix>/<id>") served by a currently-connected provider? The
 // prefix is the provider kind (openai/anthropic) or the connection name (openai-compatible).
@@ -16,6 +17,7 @@ async function modelProviderConnected(model: string | null, connectionsRepo: Con
 // Bound the display name / model string so one oversized value can't bloat payloads.
 const MAX_NAME_LEN = 200;
 const MAX_MODEL_LEN = 200;
+const MAX_DESCRIPTION_LEN = 300;
 const MAX_INSTRUCTIONS_LEN = 20000; // Story 3.3
 const MAX_VAR_VALUE_LEN = 2000;
 const MAX_VARIABLES = 50;
@@ -138,7 +140,7 @@ async function parseTools(input: unknown, toolsRepo: ToolsRepo): Promise<{ ok: t
 }
 
 export function agentRoutes(repo: AgentsRepo, connectionsRepo: ConnectionsRepo, toolsRepo: ToolsRepo) {
-  const app = new Hono();
+  const app = new Hono<{ Variables: SessionVars }>();
 
   app.get("/agents", async (c) => c.json({ agents: await repo.list() }));
 
@@ -147,9 +149,10 @@ export function agentRoutes(repo: AgentsRepo, connectionsRepo: ConnectionsRepo, 
     const body = ((await c.req.json().catch(() => ({}))) ?? {}) as { name?: unknown };
     const trimmed = typeof body.name === "string" ? body.name.trim() : "";
     const name = (trimmed || "Untitled agent").slice(0, MAX_NAME_LEN);
-    const row: AgentRow = { id: ulid(Date.now()), name, state: "draft", model: null, instructions: "", variables: [], skills: [], attachedTools: [], costCap: { perRun: null, perDay: null }, createdAt: new Date().toISOString() };
+    const row: AgentRow = { id: ulid(Date.now()), name, description: "", state: "draft", model: null, instructions: "", variables: [], skills: [], attachedTools: [], costCap: { perRun: null, perDay: null }, publishedVersion: null, publishedAt: null, createdAt: new Date().toISOString() };
     await repo.create(row);
-    return c.json({ agent: row }, 201);
+    // A brand-new agent has never been published, so everything about it is unpublished.
+    return c.json({ agent: toView(row, null) }, 201);
   });
 
   app.get("/agents/:id", async (c) => {
@@ -162,6 +165,7 @@ export function agentRoutes(repo: AgentsRepo, connectionsRepo: ConnectionsRepo, 
   app.patch("/agents/:id", async (c) => {
     const body = ((await c.req.json().catch(() => ({}))) ?? {}) as {
       name?: unknown;
+      description?: unknown;
       model?: unknown;
       instructions?: unknown;
       variables?: unknown;
@@ -176,6 +180,12 @@ export function agentRoutes(repo: AgentsRepo, connectionsRepo: ConnectionsRepo, 
         return c.json({ error: "A name can't be empty." }, 400);
       }
       patch.name = body.name.trim().slice(0, MAX_NAME_LEN);
+    }
+    if (body.description !== undefined) {
+      if (typeof body.description !== "string") {
+        return c.json({ error: "A description must be text." }, 400);
+      }
+      patch.description = body.description.slice(0, MAX_DESCRIPTION_LEN); // empty is allowed
     }
     if (body.model !== undefined) {
       if (body.model === null) {
@@ -250,6 +260,38 @@ export function agentRoutes(repo: AgentsRepo, connectionsRepo: ConnectionsRepo, 
     if (!agent) return c.json({ error: "That agent doesn't exist." }, 404);
     const updated = await repo.update(c.req.param("id"), { state: "draft" });
     return c.json({ agent: updated });
+  });
+
+  // Snapshot the working draft as the next immutable version. Publishing is NOT gated the way
+  // Activate is: a version is a record of what the definition said, and an incomplete definition
+  // is still worth recording. The activation gate remains the thing that stops a broken agent
+  // from going live. Republishing an unchanged draft is refused rather than silently no-op'd, so
+  // the version numbers a user sees always correspond to a real change.
+  app.post("/agents/:id/publish", async (c) => {
+    // requireSession stashes the session email; it is always set on this route.
+    const result = await repo.publish(c.req.param("id"), c.get("sessionEmail") ?? null);
+    if (result.ok) return c.json({ agent: result.agent, version: result.version });
+    if (result.reason === "not-found") return c.json({ error: "That agent doesn't exist." }, 404);
+    return c.json({ error: "There are no unpublished changes to publish." }, 400);
+  });
+
+  // Publish history, newest first. Each entry carries the full snapshot, so a future
+  // "restore this version" story can diff or re-apply without another round trip.
+  app.get("/agents/:id/versions", async (c) => {
+    const agent = await repo.get(c.req.param("id"));
+    if (!agent) return c.json({ error: "That agent doesn't exist." }, 404);
+    return c.json({ versions: await repo.listVersions(c.req.param("id")) });
+  });
+
+  // Copy a definition into a new, never-published draft. The copy never inherits Active state:
+  // an agent going live is always a deliberate act on that agent.
+  app.post("/agents/:id/duplicate", async (c) => {
+    const source = await repo.get(c.req.param("id"));
+    if (!source) return c.json({ error: "That agent doesn't exist." }, 404);
+    const name = `${source.name} copy`.slice(0, MAX_NAME_LEN);
+    const copy = await repo.duplicate(c.req.param("id"), ulid(Date.now()), name, new Date().toISOString());
+    if (!copy) return c.json({ error: "That agent doesn't exist." }, 404);
+    return c.json({ agent: copy }, 201);
   });
 
   return app;

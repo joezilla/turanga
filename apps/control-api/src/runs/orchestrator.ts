@@ -185,6 +185,11 @@ export function runOrchestrator(deps: OrchestratorDeps) {
     // execute() branches on agent.state. Do NOT add a state condition — a run must always be sandboxed
     // and guarded regardless of lifecycle. (Asserted by the "Active agent runs under the same
     // Sandbox/Guard" test in runs.test.ts.)
+    //
+    // DECISION (draft/publish): a run resolves the WORKING DRAFT, not the published version. The
+    // test console exists precisely to try unsaved-since-publish edits, so pinning it to the
+    // published snapshot would defeat it. A future Chat surface — which talks to the published
+    // version — must resolve `agentsRepo.listVersions()` itself rather than assume this call site.
     const agent = await agentsRepo.get(agentId);
     if (!agent) return { ok: false, error: "That agent doesn't exist.", status: 404 };
     if (!agent.model) return { ok: false, error: "An agent needs a model to run.", status: 400 };

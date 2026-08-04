@@ -126,6 +126,7 @@ ink with a single signal accent — no photography, no 3D renders.
 | `tokens/motion.css` | Durations, easings, control transition |
 | `Foundations.dc.html` | The reviewable foundations page (light/dark, hue + radius tweaks) |
 | `foundations/*.html` | 17 specimen cards — Colors, Type, Spacing, Shape, Motion |
+| `Agent Management.dc.html` | The product-screen layout spec — nav rail, list column, tabbed editor, dirty bar, drawer, dialog |
 | `SKILL.md` | Agent Skills wrapper for use in Claude Code |
 
 ### Theming

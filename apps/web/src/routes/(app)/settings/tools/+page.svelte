@@ -68,8 +68,6 @@
   const endpointLabel = (e: string) => (e === "remote" ? "Remote MCP" : "Container");
 </script>
 
-<h1>Tools</h1>
-<p class="lede">Tools are MCP servers your agents can call at runtime — a remote server or one you deploy yourself. Attach them to an agent to grant specific operations.</p>
 
 <!-- Add / connect a remote MCP tool (Story 6.2) -->
 {#if showAdd}
@@ -140,20 +138,6 @@
 {/if}
 
 <style>
-  h1 {
-    margin: 0 0 var(--space-2);
-    font-size: var(--text-2xl);
-    line-height: var(--lh-2xl);
-    font-weight: var(--weight-semibold);
-    letter-spacing: var(--tracking-heading);
-    color: var(--text-primary);
-  }
-  .lede {
-    margin: 0 0 var(--space-5);
-    max-width: 560px;
-    font-size: var(--text-sm);
-    color: var(--text-secondary);
-  }
   .head {
     margin: 0 0 var(--space-3);
   }

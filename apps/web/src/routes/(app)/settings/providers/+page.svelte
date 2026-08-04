@@ -172,7 +172,6 @@
   }
 </script>
 
-<h1>Model providers</h1>
 
 <!-- Add provider -->
 <form class="card add" onsubmit={onConnect}>
@@ -324,14 +323,6 @@
 {/if}
 
 <style>
-  h1 {
-    margin: 0 0 var(--space-4);
-    font-size: var(--text-2xl);
-    line-height: var(--lh-2xl);
-    font-weight: var(--weight-semibold);
-    letter-spacing: var(--tracking-heading);
-    color: var(--text-primary);
-  }
   .card {
     background: var(--surface-card);
     border: 1px solid var(--border-subtle);

@@ -36,10 +36,12 @@ test("wrong credentials show a generic inline error and stay on /login", async (
 
 test("sign in lands on the shell and reaches the control plane (regression)", async ({ page }) => {
   await signIn(page);
-  await expect(page.getByText("turanga", { exact: true })).toBeVisible();
+  // The control-plane readout moved from the retired topbar into the agents list-column footer.
   await expect(page.getByTestId("control-status")).toHaveText("control plane: connected", { timeout: 10000 });
   await expect(page.getByRole("link", { name: "Agents" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Settings" })).toBeVisible();
+  // Chat is designed but not built — the rail states that rather than hiding it.
+  await expect(page.getByRole("button", { name: /^Chat/ })).toBeDisabled();
 });
 
 test("active nav highlights and navigation works", async ({ page }) => {
@@ -73,8 +75,9 @@ test("theme toggle changes the background and persists across reload", async ({ 
 
 test("logout returns to /login", async ({ page }) => {
   await signIn(page);
-  await page.getByRole("button", { name: "Account menu" }).click();
-  await page.getByRole("menuitem", { name: "Log out" }).click();
+  await page.getByRole("button", { name: "Account" }).click();
+  await expect(page.getByRole("dialog", { name: "Account" })).toBeVisible();
+  await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page).toHaveURL(/\/login$/);
   // Session cleared: app routes redirect again.
   await page.goto("/agents");
