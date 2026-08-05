@@ -288,7 +288,10 @@ export function agentRoutes(repo: AgentsRepo, connectionsRepo: ConnectionsRepo, 
   app.post("/agents/:id/duplicate", async (c) => {
     const source = await repo.get(c.req.param("id"));
     if (!source) return c.json({ error: "That agent doesn't exist." }, 404);
-    const name = `${source.name} copy`.slice(0, MAX_NAME_LEN);
+    // Trim the base first so the " copy" suffix always survives (a 200-char source name would
+    // otherwise have the suffix sliced back off, making the copy name-identical to the source).
+    const SUFFIX = " copy";
+    const name = `${source.name.slice(0, MAX_NAME_LEN - SUFFIX.length)}${SUFFIX}`;
     const copy = await repo.duplicate(c.req.param("id"), ulid(Date.now()), name, new Date().toISOString());
     if (!copy) return c.json({ error: "That agent doesn't exist." }, 404);
     return c.json({ agent: copy }, 201);

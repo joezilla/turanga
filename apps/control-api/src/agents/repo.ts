@@ -1,4 +1,4 @@
-import { desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, or } from "drizzle-orm";
 import {
   ulid,
   PUBLISHED_FIELDS,
@@ -139,17 +139,18 @@ function applyPatch(row: AgentRow, patch: AgentPatch): AgentRow {
 }
 
 export function drizzleAgentsRepo(db: Db): AgentsRepo {
-  // The snapshot each agent's `publishedVersion` points at, for a batch of agents.
+  // The snapshot each agent's `publishedVersion` points at, for a batch of agents. Fetch ONLY each
+  // agent's current published version (the exact (agentId, version) pair) — not its whole history —
+  // so a `GET /agents` render doesn't materialize every past snapshot just to derive `dirty`.
   async function publishedSnapshots(rows: AgentRow[]): Promise<Map<string, AgentSnapshot>> {
     const withVersion = rows.filter((r) => r.publishedVersion !== null);
     if (withVersion.length === 0) return new Map();
     const found = await db
-      .select()
+      .select({ agentId: agentVersions.agentId, snapshot: agentVersions.snapshot })
       .from(agentVersions)
-      .where(inArray(agentVersions.agentId, withVersion.map((r) => r.id)));
-    const wanted = new Map(withVersion.map((r) => [r.id, r.publishedVersion]));
+      .where(or(...withVersion.map((r) => and(eq(agentVersions.agentId, r.id), eq(agentVersions.version, r.publishedVersion!)))));
     const out = new Map<string, AgentSnapshot>();
-    for (const v of found) if (wanted.get(v.agentId) === v.version) out.set(v.agentId, v.snapshot as AgentSnapshot);
+    for (const v of found) out.set(v.agentId, v.snapshot as AgentSnapshot);
     return out;
   }
 
@@ -211,8 +212,13 @@ export function drizzleAgentsRepo(db: Db): AgentsRepo {
       const version = (view.publishedVersion ?? 0) + 1;
       const publishedAt = new Date();
       const snapshot = snapshotOf(view);
-      await db.insert(agentVersions).values({ id: ulid(publishedAt.getTime()), agentId: id, version, snapshot, publishedBy, publishedAt });
-      await db.update(agents).set({ publishedVersion: version, publishedAt }).where(eq(agents.id, id));
+      // Atomic: the version row and the pointer bump commit together or not at all. A crash between
+      // them would otherwise commit v=N+1 while `publishedVersion` stayed N, and every future publish
+      // would recompute N+1 and hit the unique index forever (permanently un-republishable).
+      await db.transaction(async (tx) => {
+        await tx.insert(agentVersions).values({ id: ulid(publishedAt.getTime()), agentId: id, version, snapshot, publishedBy, publishedAt });
+        await tx.update(agents).set({ publishedVersion: version, publishedAt }).where(eq(agents.id, id));
+      });
       const after = await repo.get(id);
       if (!after) return { ok: false, reason: "not-found" }; // deleted mid-publish
       return { ok: true, agent: after, version: { version, publishedAt: publishedAt.toISOString(), publishedBy, snapshot } };

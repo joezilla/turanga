@@ -93,7 +93,9 @@ export function authRoutes(repo: AuthRepo, opts: { secureCookie: boolean }) {
     const su = await repo.findSessionUser(tokenHash, new Date());
     if (!su) return c.json({ error: "unauthenticated" }, 401);
 
-    if (rateLimited(clientKey(c), Date.now())) {
+    // Own rate-limit bucket (namespaced) so password-change attempts don't share the login budget —
+    // otherwise other accounts' login failures from a shared IP could 429 a legitimate change.
+    if (rateLimited(`pw:${clientKey(c)}`, Date.now())) {
       return c.json({ error: "Too many attempts. Try again in a minute." }, 429);
     }
 
@@ -105,6 +107,10 @@ export function authRoutes(repo: AuthRepo, opts: { secureCookie: boolean }) {
     }
     if (next.length < MIN_PASSWORD_LEN) {
       return c.json({ error: `A password needs at least ${MIN_PASSWORD_LEN} characters. Pick a longer one.` }, 400);
+    }
+    if (next === current) {
+      // A no-op change still rehashes and drops the user's other sessions — reject it.
+      return c.json({ error: "The new password must be different from your current one." }, 400);
     }
 
     const user = await repo.findUserByEmail(normalizeEmail(su.email));
