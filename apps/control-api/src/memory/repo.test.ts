@@ -204,3 +204,50 @@ describe("memory repo — recall (Story 8.3)", () => {
     await repo.markRecalled("A", []); // no-op
   });
 });
+
+describe("memory repo — evolve primitives (Story 8.4)", () => {
+  const embedded = (over: Partial<MemoryRow> & { content: string }) => memRow({ ...over, embedding: fakeEmbed(over.content) });
+
+  it("findSimilar returns the nearest same-kind valid memory within the distance, else null (agent-scoped)", async () => {
+    const repo = memoryMemoryRepo();
+    await repo.createMemory(embedded({ id: "cats", agentId: "A", kind: "semantic", content: "the user loves cats" }));
+    await repo.createMemory(embedded({ id: "taxes", agentId: "A", kind: "semantic", content: "quarterly taxes due in April" }));
+    await repo.createMemory(embedded({ id: "b-cats", agentId: "B", kind: "semantic", content: "the user loves cats" }));
+
+    // An exact-content query is distance 0 → the matching row, within a tight threshold.
+    const hit = await repo.findSimilar("A", fakeEmbed("the user loves cats"), "semantic", 0.05);
+    expect(hit?.id).toBe("cats");
+    // A different-content query is far → null under a tight threshold.
+    expect(await repo.findSimilar("A", fakeEmbed("something unrelated entirely"), "semantic", 0.05)).toBeNull();
+    // Kind mismatch → null.
+    expect(await repo.findSimilar("A", fakeEmbed("the user loves cats"), "procedure", 0.05)).toBeNull();
+    // FR-7: never crosses the agent boundary (B's identical memory isn't visible to A beyond A's own).
+    const onlyA = await repo.findSimilar("A", fakeEmbed("the user loves cats"), "semantic", 0.05);
+    expect(onlyA?.id).toBe("cats");
+    expect(onlyA?.agentId).toBe("A");
+  });
+
+  it("findSimilar excludes superseded (expired) memories", async () => {
+    const repo = memoryMemoryRepo();
+    await repo.createMemory(embedded({ id: "old", agentId: "A", kind: "semantic", content: "old fact", validUntil: "2000-01-01T00:00:00.000Z" }));
+    expect(await repo.findSimilar("A", fakeEmbed("old fact"), "semantic", 0.05)).toBeNull();
+  });
+
+  it("bumpSalience adds to salience, agent-scoped", async () => {
+    const repo = memoryMemoryRepo();
+    await repo.createMemory(embedded({ id: "m", agentId: "A", content: "x", salience: 3 }));
+    await repo.bumpSalience("A", "m", 2);
+    expect((await repo.getMemory("A", "m"))!.salience).toBe(5);
+    await repo.bumpSalience("B", "m", 10); // wrong agent → no-op (FR-7)
+    expect((await repo.getMemory("A", "m"))!.salience).toBe(5);
+  });
+
+  it("supersede sets validUntil so the memory stops being recalled/found", async () => {
+    const repo = memoryMemoryRepo();
+    await repo.createMemory(embedded({ id: "m", agentId: "A", kind: "semantic", content: "stale fact" }));
+    expect((await repo.recall("A", fakeEmbed("stale fact"), 5)).map((r) => r.id)).toContain("m");
+    await repo.supersede("A", "m", "2000-01-01T00:00:00.000Z");
+    expect((await repo.recall("A", fakeEmbed("stale fact"), 5)).map((r) => r.id)).not.toContain("m");
+    expect(await repo.findSimilar("A", fakeEmbed("stale fact"), "semantic", 0.05)).toBeNull();
+  });
+});

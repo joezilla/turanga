@@ -44,6 +44,11 @@ export interface MemoryRepo {
   recall(agentId: string, queryEmbedding: number[], k: number, opts?: { kinds?: MemoryKind[] }): Promise<MemoryRow[]>;
   // Bump usage counters on the just-recalled rows (auditable causality; agent-scoped). No-op on [].
   markRecalled(agentId: string, ids: string[]): Promise<void>;
+  // Reflect/evolve (Story 8.4). The nearest VALID, embedded, same-kind memory within `maxDistance`
+  // cosine distance, or null — the dedupe/supersede lookup (returns the DISTANCE recall omits). Agent-scoped.
+  findSimilar(agentId: string, embedding: number[], kind: MemoryKind, maxDistance: number): Promise<MemoryRow | null>;
+  bumpSalience(agentId: string, id: string, delta: number): Promise<void>; // promote-on-reuse; no-op if not found
+  supersede(agentId: string, id: string, validUntil: string): Promise<void>; // close a stale fact's validity window
   // Operator-wide defaults (one singleton row). Reads return the OFF default when unset (no write on read).
   getGlobalConfig(): Promise<MemoryGlobalConfig>;
   setGlobalConfig(patch: Partial<MemoryGlobalConfig>): Promise<MemoryGlobalConfig>;
@@ -142,6 +147,35 @@ export function drizzleMemoryRepo(db: Db): MemoryRepo {
         .update(agentMemories)
         .set({ useCount: sql`${agentMemories.useCount} + 1`, lastUsedAt: new Date() })
         .where(and(eq(agentMemories.agentId, agentId), inArray(agentMemories.id, ids)));
+    },
+    async findSimilar(agentId, embedding, kind, maxDistance) {
+      const rows = await db
+        .select({ row: agentMemories, distance: cosineDistance(agentMemories.embedding, embedding) })
+        .from(agentMemories)
+        .where(
+          and(
+            eq(agentMemories.agentId, agentId), // FR-7
+            eq(agentMemories.kind, kind),
+            isNotNull(agentMemories.embedding),
+            or(isNull(agentMemories.validUntil), gt(agentMemories.validUntil, new Date())),
+          ),
+        )
+        .orderBy(cosineDistance(agentMemories.embedding, embedding))
+        .limit(1);
+      const top = rows[0];
+      return top && Number(top.distance) <= maxDistance ? toRow(top.row) : null;
+    },
+    async bumpSalience(agentId, id, delta) {
+      await db
+        .update(agentMemories)
+        .set({ salience: sql`${agentMemories.salience} + ${delta}` })
+        .where(and(eq(agentMemories.id, id), eq(agentMemories.agentId, agentId)));
+    },
+    async supersede(agentId, id, validUntil) {
+      await db
+        .update(agentMemories)
+        .set({ validUntil: new Date(validUntil) })
+        .where(and(eq(agentMemories.id, id), eq(agentMemories.agentId, agentId)));
     },
     async getGlobalConfig() {
       const rows = await db.select().from(memorySettings).where(eq(memorySettings.id, GLOBAL_ID)).limit(1);
@@ -243,6 +277,29 @@ export function memoryMemoryRepo(): MemoryRepo {
         const r = rows.get(id);
         if (r && r.agentId === agentId) rows.set(id, { ...r, useCount: r.useCount + 1, lastUsedAt: new Date().toISOString() });
       }
+    },
+    async findSimilar(agentId, embedding, kind, maxDistance) {
+      const now = Date.now();
+      let best: MemoryRow | null = null;
+      let bestD = Infinity;
+      for (const r of rows.values()) {
+        if (r.agentId !== agentId || r.kind !== kind || r.embedding == null) continue;
+        if (!(r.validUntil == null || Date.parse(r.validUntil) > now)) continue;
+        const d = cosineDist(embedding, r.embedding);
+        if (d < bestD) {
+          bestD = d;
+          best = r;
+        }
+      }
+      return best && bestD <= maxDistance ? { ...best } : null;
+    },
+    async bumpSalience(agentId, id, delta) {
+      const r = rows.get(id);
+      if (r && r.agentId === agentId) rows.set(id, { ...r, salience: r.salience + delta });
+    },
+    async supersede(agentId, id, validUntil) {
+      const r = rows.get(id);
+      if (r && r.agentId === agentId) rows.set(id, { ...r, validUntil });
     },
     async getGlobalConfig() {
       return { ...global };

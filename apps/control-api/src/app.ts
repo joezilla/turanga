@@ -20,6 +20,7 @@ import { memoryRunsRepo, type RunsRepo } from "./runs/repo.js";
 import { toolRoutes } from "./tools/routes.js";
 import { memoryToolsRepo, type ToolsRepo } from "./tools/repo.js";
 import { memoryMemoryRepo, type MemoryRepo } from "./memory/repo.js";
+import { fakeReflector, type Reflector } from "./memory/reflector.js";
 import { memoryRoutes } from "./memory/routes.js";
 import { fakeMcpVerifier, type McpVerifier } from "./tools/mcp.js";
 import { runOrchestrator, type RunOrchestrator } from "./runs/orchestrator.js";
@@ -41,6 +42,7 @@ export interface AppDeps {
   runsRepo?: RunsRepo;
   toolsRepo?: ToolsRepo; // Epic 6 (Story 6.1) — first-class tools
   memoryRepo?: MemoryRepo; // Epic 8 (Story 8.1) — agent memory store + config (recall/reflect consume it in 8.3/8.4)
+  reflector?: Reflector; // Epic 8 (Story 8.4) — post-run transcript distillation; defaults to a fake (tests / no-model boot)
   mcpVerifier?: McpVerifier; // Epic 6 (Story 6.2) — connect-time MCP handshake; defaults to a fake (tests / no-network boot)
   runHub?: RunHub; // the live SSE relay; MUST be the same instance the orchestrator publishes to
   orchestrator?: RunOrchestrator; // defaults to a fake-runtime orchestrator (tests / no-Docker boot)
@@ -84,6 +86,7 @@ export function createApp(deps: AppDeps = {}) {
 
   const toolsRepo = deps.toolsRepo ?? memoryToolsRepo();
   const memoryRepo = deps.memoryRepo ?? memoryMemoryRepo(); // Story 8.1 — the store; recall/reflect wire in via the orchestrator (8.3/8.4)
+  const reflector = deps.reflector ?? fakeReflector(); // Story 8.4 — post-run distillation (fake by default)
   app.route("/", agentRoutes(agentsRepo, connectionsRepo, toolsRepo)); // connectionsRepo → the Activate gate (5.1); toolsRepo → per-op grant validation (6.3)
 
   const mcpVerifier = deps.mcpVerifier ?? fakeMcpVerifier();
@@ -97,7 +100,7 @@ export function createApp(deps: AppDeps = {}) {
   // Docker; server.ts injects the real Docker-backed orchestrator (built on the same hub).
   const orchestrator =
     deps.orchestrator ??
-    runOrchestrator({ runsRepo, agentsRepo, runtime: fakeSandboxRuntime(), guard: fakeRunGuard(), hub: runHub, dataConnectionsRepo, toolsRepo, memoryRepo, googleOAuth: google, modelGateway: gateway, image: "turanga/agent-harness:dev", sandboxVolume: "guard-run" });
+    runOrchestrator({ runsRepo, agentsRepo, runtime: fakeSandboxRuntime(), guard: fakeRunGuard(), hub: runHub, dataConnectionsRepo, toolsRepo, memoryRepo, reflector, googleOAuth: google, modelGateway: gateway, image: "turanga/agent-harness:dev", sandboxVolume: "guard-run" });
   app.route("/", runRoutes(runsRepo, orchestrator, runHub, deps.guardCallbackToken ?? "dev-guard-callback"));
 
   return app;

@@ -12,7 +12,8 @@ import type { RunHub } from "./hub.js";
 import { decryptSecret } from "../secrets/crypto.js";
 import type { GoogleOAuth } from "../oauth/google.js";
 import type { ModelGateway } from "../litellm/gateway.js";
-import type { MemoryRepo } from "../memory/repo.js";
+import type { MemoryRepo, MemoryRow } from "../memory/repo.js";
+import type { Reflector } from "../memory/reflector.js";
 
 interface AgentLike {
   id: string;
@@ -72,7 +73,8 @@ export interface OrchestratorDeps {
   sandboxVolume: string;
   dataConnectionsRepo?: DataConnectionsReader; // Story 4.3 — absent ⇒ no connections (empty allowlist)
   toolsRepo?: ToolsReader; // Story 6.3 — resolve granted-tool names for JobSpec.tools; absent ⇒ no tools
-  memoryRepo?: MemoryRepo; // Story 8.1 — threaded now; recall (8.3) reads + reflect (8.4) writes it. Unused in the run path yet.
+  memoryRepo?: MemoryRepo; // Story 8.1 — recall (8.3) reads + reflect (8.4) writes it.
+  reflector?: Reflector; // Story 8.4 — distills a completed run's transcript into memories (post-run, master key)
   googleOAuth?: GoogleOAuth; // Story 4.3 — mints the short-lived access token handed to the Guard
   modelGateway?: ModelGateway; // Story 4.5 — mints the per-run cost key; absent ⇒ Guard uses the master key (unmetered)
   maxConcurrent?: number;
@@ -91,10 +93,15 @@ function safeJson(line: string): unknown {
 }
 
 export function runOrchestrator(deps: OrchestratorDeps) {
-  const { runsRepo, agentsRepo, runtime, guard, hub, image, sandboxVolume, dataConnectionsRepo, toolsRepo, memoryRepo, googleOAuth, modelGateway } = deps;
+  const { runsRepo, agentsRepo, runtime, guard, hub, image, sandboxVolume, dataConnectionsRepo, toolsRepo, memoryRepo, reflector, googleOAuth, modelGateway } = deps;
   const maxConcurrent = deps.maxConcurrent ?? 5;
   const RECALL_TOP_K = 5; // Story 8.3 — how many memories recall injects at most
   const MAX_RECALL_SUMMARY_CHARS = 500; // bound each injected memory so an un-distilled row can't blow the token budget
+  // Story 8.4 (reflect/evolve) tuning constants.
+  const PROCEDURE_TOOL_THRESHOLD = 2; // a run needs ≥ this many tool calls to distill "procedure" memories
+  const DEDUPE_MAX_DISTANCE = 0.05; // ≤ this cosine distance to an existing same-kind memory ⇒ a duplicate (bump, don't insert)
+  const SUPERSEDE_MAX_DISTANCE = 0.25; // a same-topic memory this close (but not a dup) is the stale prior fact ⇒ close it
+  const MAX_MEMORIES_PER_AGENT = 200; // per-agent budget; excess is pruned lowest-salience-first
   const runTimeoutMs = deps.runTimeoutMs ?? 120_000;
   let active = 0;
   const controllers = new Map<string, RunController>(); // live runs, for Guard→orchestrator callbacks (E4-AD-10)
@@ -194,6 +201,80 @@ export function runOrchestrator(deps: OrchestratorDeps) {
       return { memories, recalledIds: rows.map((r) => r.id) };
     } catch {
       return empty; // fail-open — recall is additive, never a guardrail
+    }
+  }
+
+  // Story 8.4 — REFLECT: after a run is terminal, distill its transcript into durable memories and
+  // evolve the store (dedupe→bump / insert / supersede / prune). Runs on the MASTER key AFTER the
+  // per-run cost key is deleted, so it is structurally observed-not-metered (never on the cap/kill
+  // path, AC3). Agent-scoped (FR-7). FAIL-SAFE: any error is swallowed — reflection is best-effort and
+  // must never affect the already-completed run. Dispatched non-awaited from launch()/start().
+  async function reflectRun(agentId: string, run: RunRow): Promise<void> {
+    if (!reflector || !memoryRepo || !modelGateway) return;
+    try {
+      const agent = await agentsRepo.get(agentId);
+      if (!agent?.model) return;
+      const global = await memoryRepo.getGlobalConfig();
+      const eff = effectiveMemoryConfig(global, await memoryRepo.getAgentMemoryConfig(agentId));
+      if (!eff.reflect) return; // the gate — off / inherit-off / killSwitch all resolve here
+
+      // The distillable material + behavioral signals from the persisted transcript.
+      const turns = run.transcript
+        .filter((m): m is Extract<typeof m, { type: "turn" }> => m.type === "turn")
+        .map((m) => ({ role: m.role, text: m.text }));
+      if (turns.length === 0) return; // nothing to learn from
+      const toolCallCount = run.transcript.filter((m) => m.type === "tool").length;
+      const refusals = run.transcript.filter((m) => m.type === "refusal").length;
+
+      const distilled = (await reflector.reflect({ model: agent.model, taskInput: run.taskInput, turns, toolCallCount, refusals }))
+        // enforce the agent's enabled kinds, and drop procedures below the tool threshold (defensive —
+        // the prompt already conditions on it).
+        .filter((m) => eff.kinds.includes(m.kind))
+        .filter((m) => m.kind !== "procedure" || toolCallCount >= PROCEDURE_TOOL_THRESHOLD);
+
+      const now = new Date().toISOString();
+      for (const m of distilled) {
+        const embedding = await modelGateway.embed(m.content, global.embeddingModel);
+        // Dedupe: a near-identical existing memory ⇒ promote-on-reuse (bump salience), do NOT insert.
+        const dup = await memoryRepo.findSimilar(agentId, embedding, m.kind, DEDUPE_MAX_DISTANCE);
+        if (dup) {
+          await memoryRepo.bumpSalience(agentId, dup.id, 1);
+          continue;
+        }
+        // Supersede: a same-topic memory that is close-but-not-a-dup is the stale prior fact ⇒ close it.
+        if (m.topic) {
+          const stale = await memoryRepo.findSimilar(agentId, embedding, m.kind, SUPERSEDE_MAX_DISTANCE);
+          if (stale && stale.topic === m.topic) await memoryRepo.supersede(agentId, stale.id, now);
+        }
+        const mem: MemoryRow = {
+          id: ulid(Date.now()),
+          agentId,
+          kind: m.kind,
+          content: m.content,
+          summary: m.summary,
+          embedding,
+          topic: m.topic,
+          salience: 1,
+          sourceRunId: run.id, // the auditable causal link (8.5 renders "learned from this run")
+          validFrom: now,
+          validUntil: null,
+          useCount: 0,
+          lastUsedAt: null,
+          createdAt: now,
+        };
+        await memoryRepo.createMemory(mem);
+      }
+
+      // Prune: keep the agent's memory set within budget, forgetting lowest-salience (then oldest) first.
+      const all = await memoryRepo.listForAgent(agentId);
+      if (all.length > MAX_MEMORIES_PER_AGENT) {
+        const doomed = [...all]
+          .sort((a, b) => a.salience - b.salience || (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0))
+          .slice(0, all.length - MAX_MEMORIES_PER_AGENT);
+        for (const d of doomed) await memoryRepo.deleteMemory(agentId, d.id);
+      }
+    } catch {
+      /* fail-safe — reflection never affects the completed run */
     }
   }
 
@@ -354,14 +435,19 @@ export function runOrchestrator(deps: OrchestratorDeps) {
     async launch(agentId: string, taskInput: string): Promise<LaunchResult> {
       const v = await validateAndCreate(agentId, taskInput);
       if (!v.ok) return v;
-      return { ok: true, run: await execute(v.runId, agentId, v.jobSpec, v.provision, v.costCap) };
+      const run = await execute(v.runId, agentId, v.jobSpec, v.provision, v.costCap);
+      void reflectRun(agentId, run).catch(() => {}); // Story 8.4 — post-run, non-blocking, fail-safe
+      return { ok: true, run };
     },
     /** Async: returns the created (running) run immediately; the sandbox runs in the background
      *  and streams via the hub → SSE. Used by POST /runs. */
     async start(agentId: string, taskInput: string): Promise<LaunchResult> {
       const v = await validateAndCreate(agentId, taskInput);
       if (!v.ok) return v;
-      void execute(v.runId, agentId, v.jobSpec, v.provision, v.costCap).catch(() => {});
+      // Story 8.4 — reflect chains on the backgrounded run (after it's terminal), non-blocking + fail-safe.
+      void execute(v.runId, agentId, v.jobSpec, v.provision, v.costCap)
+        .then((run) => reflectRun(agentId, run))
+        .catch(() => {});
       // Report `running` immediately from the row we just created (no redundant re-read) — execute()
       // flips the persisted status to running once the sandbox is established; the client watches
       // /events for the live transcript.

@@ -14,6 +14,7 @@ import { drizzleAgentsRepo } from "./agents/repo.js";
 import { drizzleRunsRepo } from "./runs/repo.js";
 import { drizzleToolsRepo } from "./tools/repo.js";
 import { drizzleMemoryRepo } from "./memory/repo.js";
+import { httpReflector } from "./memory/reflector.js";
 import { httpMcpVerifier } from "./tools/mcp.js";
 import { runOrchestrator } from "./runs/orchestrator.js";
 import { dockerRuntime, resolveSandboxRuntimeKind } from "./runs/runtime.js";
@@ -64,6 +65,7 @@ async function main() {
   const agentsRepo = drizzleAgentsRepo(db);
   const toolsRepo = drizzleToolsRepo(db); // Epic 6 — first-class tools
   const memoryRepo = drizzleMemoryRepo(db); // Epic 8 — agent memory store + config (recall/reflect in 8.3/8.4)
+  const reflector = httpReflector(litellmBaseUrl, litellmMasterKey); // Epic 8 (Story 8.4) — post-run distillation (master key, unmetered)
 
   // Run-orchestrator wiring (Epic 4). Runtime kind is explicit (fail-closed; dev-insecure refused
   // in production). The Docker socket is available only here (control plane), never a sandbox.
@@ -87,6 +89,7 @@ async function main() {
     dataConnectionsRepo, // Story 4.3 — resolve the run's Gmail connection + allowlist
     toolsRepo, // Story 6.3 — resolve granted-tool names for the sandbox-visible JobSpec.tools
     memoryRepo, // Story 8.1 — threaded for recall (8.3) / reflect (8.4)
+    reflector, // Story 8.4 — post-run transcript distillation (master key, unmetered)
     googleOAuth: google, // Story 4.3 — mint the short-lived access token handed to the Guard
     modelGateway, // Story 4.5 — mint the per-run cost key under the agent's daily-budget team
     image: process.env.AGENT_HARNESS_IMAGE ?? "turanga/agent-harness:dev",
@@ -105,6 +108,7 @@ async function main() {
     runsRepo,
     toolsRepo,
     memoryRepo,
+    reflector,
     mcpVerifier: httpMcpVerifier(),
     runHub,
     orchestrator,

@@ -9,6 +9,7 @@ import { encryptSecret } from "../secrets/crypto.js";
 import { fakeGoogleOAuth } from "../oauth/google.js";
 import { fakeModelGateway, fakeEmbed } from "../litellm/gateway.js";
 import { memoryMemoryRepo, type MemoryRow } from "../memory/repo.js";
+import { fakeReflector } from "../memory/reflector.js";
 import type { AttachedSkill, AttachedTool, CostCap } from "@turanga/domain";
 
 type Agent = { id: string; model: string | null; instructions: string; state: "draft" | "active"; skills?: AttachedSkill[]; attachedTools?: AttachedTool[]; costCap?: CostCap };
@@ -615,5 +616,109 @@ describe("run orchestrator — recall (Story 8.3)", () => {
     if (!r.ok) return;
     const spec = JSON.parse(runtime.established[0].jobSpecJson) as { memories: { summary: string }[] };
     expect(spec.memories[0].summary.length).toBe(500); // capped, not 5000
+  });
+});
+
+describe("run orchestrator — reflect (Story 8.4)", () => {
+  const memConfig = (over: Partial<{ recall: boolean; reflect: boolean }> = {}) => ({
+    mode: "on" as const,
+    recall: false,
+    reflect: true,
+    kinds: ["episodic", "semantic", "procedure"] as ("episodic" | "semantic" | "procedure")[],
+    ...over,
+  });
+
+  async function reflectOrch(opts: {
+    reflect: boolean;
+    reflector?: ReturnType<typeof fakeReflector>;
+    recall?: boolean;
+  }) {
+    const runsRepo = memoryRunsRepo();
+    const memoryRepo = memoryMemoryRepo();
+    await memoryRepo.setGlobalConfig({ defaultEnabled: true });
+    await memoryRepo.setAgentMemoryConfig("a1", memConfig({ reflect: opts.reflect, recall: opts.recall ?? false }));
+    const reflector = opts.reflector ?? fakeReflector();
+    const gateway = fakeModelGateway();
+    const runtime = fakeSandboxRuntime({ lines: [nd({ type: "turn", v: CONTRACT_VERSION, role: "agent", text: "done" }), nd({ type: "done", v: CONTRACT_VERSION, status: "succeeded" })] });
+    const o = runOrchestrator({ runsRepo, agentsRepo: agentsRepo(agent()), runtime, guard: fakeRunGuard(), hub: createRunHub(), memoryRepo, reflector, modelGateway: gateway, image: "img", sandboxVolume: "vol" });
+    return { o, runsRepo, memoryRepo, reflector, gateway, runtime };
+  }
+
+  it("reflect ON: a completed run writes a memory with sourceRunId + an embedding", async () => {
+    const { o, memoryRepo } = await reflectOrch({ reflect: true });
+    const r = await o.launch("a1", "summarize my inbox");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    // reflect is backgrounded (post-run, non-blocking) — wait for the write.
+    await vi.waitFor(async () => expect(await memoryRepo.listForAgent("a1")).toHaveLength(1));
+    const [mem] = await memoryRepo.listForAgent("a1");
+    expect(mem.sourceRunId).toBe(r.run.id); // the auditable causal link
+    expect(mem.embedding).not.toBeNull(); // embedded on write
+    expect(mem.kind).toBe("semantic");
+  });
+
+  it("reflect OFF (default): nothing is written", async () => {
+    const { o, memoryRepo, reflector } = await reflectOrch({ reflect: false });
+    const r = await o.launch("a1", "x");
+    expect(r.ok).toBe(true);
+    // Give any (erroneous) background reflect a chance, then assert nothing happened.
+    await new Promise((res) => setTimeout(res, 50));
+    expect(await memoryRepo.listForAgent("a1")).toHaveLength(0);
+    expect(reflector.calls).toHaveLength(0); // gated before the distill call
+  });
+
+  it("dedupes a near-identical memory: bumps salience, does NOT insert a second row", async () => {
+    const fixed = fakeReflector({ memories: [{ kind: "semantic", content: "the user loves cats", summary: "loves cats", topic: null }] });
+    const { o, memoryRepo } = await reflectOrch({ reflect: true, reflector: fixed });
+    await o.launch("a1", "first");
+    await vi.waitFor(async () => expect(await memoryRepo.listForAgent("a1")).toHaveLength(1));
+    const before = (await memoryRepo.listForAgent("a1"))[0];
+    await o.launch("a1", "second"); // same distilled memory → dedupe → bump, no new row
+    await vi.waitFor(async () => expect((await memoryRepo.listForAgent("a1"))[0].salience).toBe(before.salience + 1));
+    expect(await memoryRepo.listForAgent("a1")).toHaveLength(1); // still one row
+  });
+
+  it("prunes to the per-agent budget, forgetting lowest-salience first", async () => {
+    const { o, memoryRepo } = await reflectOrch({ reflect: true, reflector: fakeReflector({ memories: [{ kind: "semantic", content: "brand new distinct memory", summary: "new", topic: null }] }) });
+    // Seed exactly the budget (200), including one deliberately-lowest-salience row.
+    for (let i = 0; i < 200; i++) {
+      await memoryRepo.createMemory({ id: `seed-${i}`, agentId: "a1", kind: "semantic", content: `seed ${i}`, summary: "", embedding: [i / 200], topic: null, salience: i === 7 ? 0 : 10, sourceRunId: null, validFrom: "2026-08-05T00:00:00.000Z", validUntil: null, useCount: 0, lastUsedAt: null, createdAt: "2026-08-05T00:00:00.000Z" });
+    }
+    await o.launch("a1", "add one more"); // inserts 1 → 201 → prune 1 (the salience-0 seed-7)
+    // Wait on the actual post-condition (the lowest-salience row is forgotten) — NOT on count===200,
+    // which is already true before the backgrounded reflect inserts.
+    await vi.waitFor(async () => expect(await memoryRepo.getMemory("a1", "seed-7")).toBeNull());
+    expect(await memoryRepo.listForAgent("a1")).toHaveLength(200); // back within budget
+  });
+
+  it("fail-safe: a reflector throw never affects the completed run and writes nothing", async () => {
+    const { o, memoryRepo } = await reflectOrch({ reflect: true, reflector: fakeReflector({ throws: true }) });
+    const r = await o.launch("a1", "x");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.run.status).toBe("succeeded"); // the run is unaffected
+    await new Promise((res) => setTimeout(res, 50));
+    expect(await memoryRepo.listForAgent("a1")).toHaveLength(0);
+  });
+
+  it("THE CLOSED LOOP — run #1 reflect writes a memory, run #2 recall injects it (fail → learn → succeed)", async () => {
+    const runsRepo = memoryRunsRepo();
+    const memoryRepo = memoryMemoryRepo();
+    await memoryRepo.setGlobalConfig({ defaultEnabled: true });
+    await memoryRepo.setAgentMemoryConfig("a1", memConfig({ recall: true, reflect: true }));
+    const reflector = fakeReflector({ memories: [{ kind: "semantic", content: "the user loves cats", summary: "the user loves cats", topic: null }] });
+    const runtime = fakeSandboxRuntime({ lines: [nd({ type: "turn", v: CONTRACT_VERSION, role: "agent", text: "ok" }), nd({ type: "done", v: CONTRACT_VERSION, status: "succeeded" })] });
+    const o = runOrchestrator({ runsRepo, agentsRepo: agentsRepo(agent()), runtime, guard: fakeRunGuard(), hub: createRunHub(), memoryRepo, reflector, modelGateway: fakeModelGateway(), image: "img", sandboxVolume: "vol" });
+
+    // Run #1: recall finds nothing (empty store); reflect writes the "cats" memory.
+    await o.launch("a1", "first run");
+    await vi.waitFor(async () => expect(await memoryRepo.listForAgent("a1")).toHaveLength(1));
+
+    // Run #2: a matching task → recall injects the memory reflect wrote in run #1.
+    const r2 = await o.launch("a1", "the user loves cats");
+    expect(r2.ok).toBe(true);
+    // the SECOND established sandbox carries the recalled memory in its JobSpec.
+    expect(runtime.established[1].jobSpecJson).toContain("the user loves cats");
+    if (r2.ok) expect(r2.run.transcript.some((m) => m.type === "recall")).toBe(true);
   });
 });
