@@ -161,4 +161,27 @@ describe("chat turn — build from the published snapshot (Story 9.2)", () => {
     expect(history[0]).toEqual({ role: "user", content: "USER-5" }); // the window starts at exchange 5
     expect(history.at(-1)).toEqual({ role: "agent", content: "AGENT-24" }); // …ends at the newest
   });
+
+  it("excludes a FAILED/killed prior turn from history — no orphaned user turn (code-review fix)", async () => {
+    const { o, runsRepo, conversationsRepo, runtime } = chatOrch({ versions: [version(1, snapshot())] });
+    await conversationsRepo.create({ id: "conv-1", agentId: "a1", publishedVersion: 1, title: "", createdAt: now });
+    // Turn 0 succeeded (a clean user+agent exchange).
+    await runsRepo.create({ id: "t0", agentId: "a1", conversationId: "conv-1", turnIndex: 0, status: "succeeded", taskInput: "USER-0", transcript: [{ type: "turn", v: CONTRACT_VERSION, role: "user", text: "USER-0" }, { type: "turn", v: CONTRACT_VERSION, role: "agent", text: "AGENT-0" }], reason: null, createdAt: now, endedAt: null });
+    // Turn 1 was KILLED after emitting its user turn but BEFORE any agent reply (an orphaned user turn).
+    await runsRepo.create({ id: "t1", agentId: "a1", conversationId: "conv-1", turnIndex: 1, status: "killed", taskInput: "USER-1", transcript: [{ type: "turn", v: CONTRACT_VERSION, role: "user", text: "USER-1" }], reason: "Killed — per-run cost cap reached ($0.50).", createdAt: now, endedAt: null });
+
+    const r = await o.startChatTurn("conv-1", "next");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.run.turnIndex).toBe(2); // BOTH prior turns count toward the position
+
+    await vi.waitFor(() => expect(runtime.established).toHaveLength(1));
+    const history = JSON.parse(runtime.established[0].jobSpecJson).history as { role: string; content: string }[];
+    // Only turn 0's clean exchange is injected — the killed turn's orphaned user turn is dropped, so the
+    // model never sees consecutive user messages (which some providers reject).
+    expect(history).toEqual([
+      { role: "user", content: "USER-0" },
+      { role: "agent", content: "AGENT-0" },
+    ]);
+  });
 });

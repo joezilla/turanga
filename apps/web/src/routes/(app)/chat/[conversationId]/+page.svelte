@@ -36,7 +36,9 @@
   let runGen = 0;
 
   // Show the streaming turn until its persisted run joins `runs` (dedupe by id after reload).
-  const showStreaming = $derived(streamState !== "idle" && (streamRunId === null || !runs.some((r) => r.id === streamRunId)));
+  // Show the streaming turn while it's live/terminal, until its persisted run joins `runs` (dedupe by
+  // id after reload). Exclude "error" (a send-POST failure) — that renders no turn, only the error line.
+  const showStreaming = $derived(streamState !== "idle" && streamState !== "error" && (streamRunId === null || !runs.some((r) => r.id === streamRunId)));
 
   async function load() {
     const s = ++seq;
@@ -138,8 +140,10 @@
         }
         closeStream(); // we own the close so the browser doesn't auto-reconnect
         // The turn is now persisted — reload the canonical thread (the streaming turn auto-hides once
-        // its run joins `runs`). Pull the persisted reason for a killed/failed cause.
+        // its run joins `runs`) and refresh the sibling list's last-activity. Pull the persisted reason
+        // for a killed/failed cause.
         void loadRuns();
+        conversationsChanged(); // the list's last-activity now includes this turn (code-review 9.x)
         if (streamState === "killed" || streamState === "failed") {
           void getRun(started.value.id).then((r) => {
             if (myGen === runGen && r.ok && r.value) streamReason = r.value.reason ?? "";
@@ -231,7 +235,7 @@
           <button type="button" class="ghost" onclick={() => (renaming = false)} disabled={managing}>Cancel</button>
         {:else}
           <span class="title">{conversation.title || "Untitled conversation"}</span>
-          <button type="button" class="ghost" onclick={startRename}>Rename</button>
+          <button type="button" class="ghost" onclick={startRename} disabled={streamState === "running"}>Rename</button>
         {/if}
       </div>
       <div class="head-meta">
@@ -242,7 +246,7 @@
           <button type="button" class="danger" onclick={doDelete} disabled={managing}>Delete</button>
           <button type="button" class="ghost" onclick={() => (confirmDelete = false)} disabled={managing}>Cancel</button>
         {:else}
-          <button type="button" class="ghost" onclick={() => (confirmDelete = true)}>Delete</button>
+          <button type="button" class="ghost" onclick={() => (confirmDelete = true)} disabled={streamState === "running"}>Delete</button>
         {/if}
       </div>
     </header>

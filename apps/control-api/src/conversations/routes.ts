@@ -13,13 +13,14 @@ import type { RunsRepo } from "../runs/repo.js";
 // the existing run SSE. The web surface is 9.3. Session-guarded via /conversations* in app.ts.
 
 const MAX_TASK_INPUT = 10_000; // a chat message flows into an env-injected job spec — keep it bounded (mirror runs/routes.ts)
+const MAX_TITLE = 200; // a conversation title is user-controlled + stored + shipped in every list payload — bound it
 
 function parseCreate(input: unknown): { ok: true; value: { agentId: string; title: string } } | { ok: false; error: string } {
   if (typeof input !== "object" || input === null) return { ok: false, error: "Expected a conversation object." };
   const b = input as Record<string, unknown>;
   if (typeof b.agentId !== "string" || !b.agentId.trim()) return { ok: false, error: "agentId is required." };
   if (b.title !== undefined && typeof b.title !== "string") return { ok: false, error: "title must be text." };
-  return { ok: true, value: { agentId: b.agentId, title: (b.title as string | undefined) ?? "" } };
+  return { ok: true, value: { agentId: b.agentId, title: ((b.title as string | undefined) ?? "").trim().slice(0, MAX_TITLE) } };
 }
 
 export function conversationRoutes(repo: ConversationsRepo, agentsRepo: AgentsRepo, orchestrator: RunOrchestrator, runsRepo: RunsRepo) {
@@ -84,6 +85,9 @@ export function conversationRoutes(repo: ConversationsRepo, agentsRepo: AgentsRe
   app.post("/conversations/:id/messages", async (c) => {
     const body = ((await c.req.json().catch(() => ({}))) ?? {}) as { taskInput?: unknown };
     const taskInput = (typeof body.taskInput === "string" ? body.taskInput : "").slice(0, MAX_TASK_INPUT);
+    // Reject an empty/whitespace message (code-review 9.x) — the API is the trust boundary; an empty
+    // turn would still mint a cost key + establish a sandbox for nothing.
+    if (!taskInput.trim()) return c.json({ error: "A message is required." }, 400);
     try {
       const r = await orchestrator.startChatTurn(c.req.param("id"), taskInput);
       if (!r.ok) return c.json({ error: r.error }, r.status);
@@ -98,10 +102,11 @@ export function conversationRoutes(repo: ConversationsRepo, agentsRepo: AgentsRe
     const id = c.req.param("id");
     const body = ((await c.req.json().catch(() => ({}))) ?? {}) as { title?: unknown };
     if (typeof body.title !== "string") return c.json({ error: "title must be text." }, 400);
+    const title = body.title.trim().slice(0, MAX_TITLE); // trim + bound (code-review 9.x)
     const existing = await repo.get(id);
     if (!existing) return c.json({ error: "That conversation doesn't exist." }, 404);
-    await repo.rename(id, body.title);
-    return c.json({ conversation: { ...existing, title: body.title } });
+    await repo.rename(id, title);
+    return c.json({ conversation: { ...existing, title } });
   });
 
   // Story 9.4 — delete a conversation and CASCADE its turns (a conversation's runs ARE its turns;

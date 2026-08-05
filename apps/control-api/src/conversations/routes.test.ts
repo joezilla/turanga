@@ -141,6 +141,16 @@ describe("conversation routes — send a message / run a turn (Story 9.2)", () =
     expect(((await res.json()) as { error: string }).error).toBe("That conversation doesn't exist.");
   });
 
+  it("rejects an empty/whitespace message with a 400 (no run launched)", async () => {
+    const { orchestrator, calls } = fakeOrchestrator();
+    const { app, cookie } = await appWithSession({ "agent-a": 1 }, memoryConversationsRepo(), orchestrator);
+    for (const bad of [{}, { taskInput: "" }, { taskInput: "   " }]) {
+      const res = await app.request("/conversations/conv-1/messages", { method: "POST", headers: { "content-type": "application/json", cookie }, body: JSON.stringify(bad) });
+      expect(res.status, JSON.stringify(bad)).toBe(400);
+    }
+    expect(calls).toHaveLength(0); // the orchestrator was never asked to launch a turn
+  });
+
   it("is session-guarded (401 without a cookie)", async () => {
     const { app } = await appWithSession({ "agent-a": 1 });
     expect((await app.request("/conversations/conv-1/messages", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
@@ -210,6 +220,12 @@ describe("conversation routes — management: rename / delete / last-activity (S
 
     expect((await app.request("/conversations/nope", { method: "PATCH", headers: { "content-type": "application/json", cookie }, body: JSON.stringify({ title: "x" }) })).status).toBe(404);
     expect((await app.request("/conversations/c1", { method: "PATCH", headers: { "content-type": "application/json", cookie }, body: JSON.stringify({ title: 5 }) })).status).toBe(400);
+
+    // The title is trimmed + bounded server-side (code-review fix).
+    const trimmed = await app.request("/conversations/c1", { method: "PATCH", headers: { "content-type": "application/json", cookie }, body: JSON.stringify({ title: "  padded  " }) });
+    expect(((await trimmed.json()) as { conversation: { title: string } }).conversation.title).toBe("padded");
+    const long = await app.request("/conversations/c1", { method: "PATCH", headers: { "content-type": "application/json", cookie }, body: JSON.stringify({ title: "x".repeat(500) }) });
+    expect(((await long.json()) as { conversation: { title: string } }).conversation.title).toHaveLength(200);
   });
 
   it("DELETE removes the conversation AND cascades its turns; unknown id → 404", async () => {

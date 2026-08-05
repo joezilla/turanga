@@ -410,8 +410,12 @@ export function runOrchestrator(deps: OrchestratorDeps) {
     // cost) can't grow unbounded; the per-turn cost cap stays authoritative. Dropping older exchanges is
     // the summarize-older seam (Epic 8 memory) — additive later.
     const prior = await runsRepo.listByConversation(conv.id);
-    const turnIndex = prior.length;
-    const windowed = prior.slice(-MAX_HISTORY_RUNS);
+    const turnIndex = prior.length; // the TRUE thread position — counts EVERY prior turn, not windowed/filtered
+    // Reconstruct history from SUCCEEDED turns only (code-review 9.x): a killed/failed turn may carry a
+    // user turn with no agent reply, and an in-flight turn carries a partial (or empty) transcript —
+    // either injects an orphaned `user` turn, producing consecutive user messages the model rejects. A
+    // succeeded run always carries a clean user+agent pair. Then window to the last N whole exchanges.
+    const windowed = prior.filter((r) => r.status === "succeeded").slice(-MAX_HISTORY_RUNS);
     const history: JobHistoryTurn[] = windowed.flatMap((r) =>
       r.transcript.filter((m): m is Extract<typeof m, { type: "turn" }> => m.type === "turn").map((m) => ({ role: m.role, content: m.text })),
     );

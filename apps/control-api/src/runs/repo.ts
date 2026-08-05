@@ -69,8 +69,10 @@ export function reduceToolStats(runs: { transcript: ControlChannelMessage[]; cre
   }));
 }
 
-// Written only by the run-orchestrator (AD-7). No `update(patch)` surface beyond these. LiteLLM owns
-// spend; this `costMicros` summary is the summed run metrics the Guard reported (AD-7 — read, not recomputed).
+// Run LIFECYCLE (create/status/cost/append) is written only by the run-orchestrator (AD-7). LiteLLM
+// owns spend; this `costMicros` summary is the summed run metrics the Guard reported (AD-7 — read, not
+// recomputed). The one sanctioned exception is `deleteByConversation` (Story 9.4): a control-plane
+// CLEANUP of a deleted conversation's turns, initiated by control-api — not a lifecycle write.
 export interface RunsRepo {
   // conversationId/turnIndex default null (a standalone/test-console run has no conversation); a chat
   // turn (Story 9.2) passes both. costMicros defaults 0 (filled from the summed metrics later).
