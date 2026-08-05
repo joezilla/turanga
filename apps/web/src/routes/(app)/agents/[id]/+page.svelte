@@ -444,6 +444,7 @@
           Test
         </button>
         <a class="ghost" href="/agents/{agent.id}/runs">Runs</a>
+        <a class="ghost" href="/agents/{agent.id}/memory">Memory</a>
         <button type="button" class="ghost" onclick={toggleHistory} aria-expanded={historyOpen}>History</button>
         <button type="button" class="secondary" onclick={duplicate} disabled={duplicating}>Duplicate</button>
         {#if agent.state === "draft"}

@@ -5,6 +5,7 @@
   import { page } from "$app/state";
   import { ArrowLeft } from "@lucide/svelte";
   import { getRun, runCause, type Run, type RunMessage } from "$lib/runs";
+  import { listAgentMemories, type MemoryView } from "$lib/memory";
   import { formatMicros } from "$lib/money";
   import { formatTimestamp } from "$lib/datetime";
   import RunStatusDot from "$lib/components/RunStatusDot.svelte";
@@ -32,6 +33,10 @@
     } else {
       run = r.value;
       viewState = "ok";
+      // Story 8.5 — the memory causal chain (best-effort; a failure just omits the card).
+      void listAgentMemories(id).then((mr) => {
+        if (s === seq && mr.ok) memories = mr.value;
+      });
     }
   }
   $effect(() => {
@@ -41,6 +46,15 @@
   const isRenderable = (m: RunMessage) => m.type === "turn" || m.type === "refusal" || m.type === "metrics" || m.type === "tool";
   const cause = $derived(run ? runCause(run.status, run.reason) : null);
   const inProgress = $derived(run ? run.status === "running" || run.status === "created" : false);
+
+  // Story 8.5 — "learned → recalled" causal chain. Recalled = ids from this run's recall event;
+  // learned = memories this run produced (sourceRunId). Both resolved against the agent's memory list.
+  let memories = $state<MemoryView[]>([]);
+  const recalledIds = $derived(
+    run ? run.transcript.filter((m) => m.type === "recall").flatMap((m) => (m.type === "recall" ? m.memoryIds : [])) : [],
+  );
+  const recalled = $derived(memories.filter((m) => recalledIds.includes(m.id)));
+  const learned = $derived(memories.filter((m) => m.sourceRunId === runId));
 </script>
 
 <div class="head">
@@ -80,6 +94,30 @@
       <span class="label">Task</span>
       <p class="task-text">{run.taskInput || "—"}</p>
     </div>
+
+    <!-- Memory causal chain (Story 8.5): what this run recalled + what it learned. -->
+    {#if recalled.length > 0 || learned.length > 0}
+      <div class="memory-chain">
+        <span class="label">Memory</span>
+        {#if recalled.length > 0}
+          <div class="chain-group">
+            <span class="chain-head">Recalled {recalled.length} — injected into this run</span>
+            <ul>
+              {#each recalled as m (m.id)}<li><span class="kind">{m.kind}</span> {m.summary || m.content}</li>{/each}
+            </ul>
+          </div>
+        {/if}
+        {#if learned.length > 0}
+          <div class="chain-group">
+            <span class="chain-head">Learned {learned.length} — distilled from this run</span>
+            <ul>
+              {#each learned as m (m.id)}<li><span class="kind">{m.kind}</span> {m.summary || m.content}</li>{/each}
+            </ul>
+          </div>
+        {/if}
+        <a class="chain-link" href="/agents/{id}/memory">View all memory →</a>
+      </div>
+    {/if}
 
     <!-- Transcript (AC1): turns, per-call metrics, and any Guard/permission refusals. -->
     <div class="transcript" role="log">
@@ -193,6 +231,48 @@
     color: var(--text-primary);
     white-space: pre-wrap;
     word-break: break-word;
+  }
+  .memory-chain {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    background: var(--surface-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+  }
+  .chain-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+  .chain-head {
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+  }
+  .memory-chain ul {
+    margin: 0;
+    padding: 0 0 0 var(--space-4);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .memory-chain li {
+    font-size: var(--text-sm);
+    color: var(--text-primary);
+    overflow-wrap: anywhere;
+  }
+  .memory-chain .kind {
+    font-size: var(--text-2xs);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-tertiary);
+  }
+  .chain-link {
+    align-self: flex-start;
+    font-size: var(--text-xs);
+    color: var(--text-link);
+    text-decoration: none;
   }
   .transcript {
     display: flex;

@@ -155,6 +155,7 @@ export const agentMemories = pgTable(
     embedding: vector("embedding", { dimensions: 1536 }), // nullable until 8.3 computes it
     topic: text("topic"),
     salience: integer("salience").notNull().default(0),
+    pinned: boolean("pinned").notNull().default(false), // Story 8.5 — protect from the reflect prune / decay
     sourceRunId: text("source_run_id"),
     validFrom: timestamp("valid_from", { withTimezone: true }).notNull().defaultNow(),
     validUntil: timestamp("valid_until", { withTimezone: true }), // null = still valid

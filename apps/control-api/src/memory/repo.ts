@@ -24,6 +24,7 @@ export interface MemoryRow {
   embedding: number[] | null;
   topic: string | null;
   salience: number;
+  pinned: boolean; // Story 8.5 — protected from the reflect prune
   sourceRunId: string | null;
   validFrom: string; // UTC ISO-8601
   validUntil: string | null; // null = still valid
@@ -49,6 +50,9 @@ export interface MemoryRepo {
   findSimilar(agentId: string, embedding: number[], kind: MemoryKind, maxDistance: number): Promise<MemoryRow | null>;
   bumpSalience(agentId: string, id: string, delta: number): Promise<void>; // promote-on-reuse; no-op if not found
   supersede(agentId: string, id: string, validUntil: string): Promise<void>; // close a stale fact's validity window
+  // Curation (Story 8.5) — a scoped partial update: content/summary/embedding (re-embed on edit) + pinned.
+  // Applies only the defined keys; no-op for the wrong agent or an empty patch (FR-7, AD-7 sole writer).
+  updateMemory(agentId: string, id: string, patch: { content?: string; summary?: string; embedding?: number[]; pinned?: boolean }): Promise<void>;
   // Operator-wide defaults (one singleton row). Reads return the OFF default when unset (no write on read).
   getGlobalConfig(): Promise<MemoryGlobalConfig>;
   setGlobalConfig(patch: Partial<MemoryGlobalConfig>): Promise<MemoryGlobalConfig>;
@@ -68,6 +72,7 @@ function toRow(r: typeof agentMemories.$inferSelect): MemoryRow {
     embedding: r.embedding ?? null,
     topic: r.topic,
     salience: r.salience,
+    pinned: r.pinned,
     sourceRunId: r.sourceRunId,
     validFrom: r.validFrom.toISOString(),
     validUntil: r.validUntil ? r.validUntil.toISOString() : null,
@@ -109,6 +114,7 @@ export function drizzleMemoryRepo(db: Db): MemoryRepo {
         embedding: row.embedding,
         topic: row.topic,
         salience: row.salience,
+        pinned: row.pinned,
         sourceRunId: row.sourceRunId,
         validFrom: new Date(row.validFrom),
         validUntil: row.validUntil ? new Date(row.validUntil) : null,
@@ -176,6 +182,15 @@ export function drizzleMemoryRepo(db: Db): MemoryRepo {
         .update(agentMemories)
         .set({ validUntil: new Date(validUntil) })
         .where(and(eq(agentMemories.id, id), eq(agentMemories.agentId, agentId)));
+    },
+    async updateMemory(agentId, id, patch) {
+      const set: Partial<typeof agentMemories.$inferInsert> = {};
+      if (patch.content !== undefined) set.content = patch.content;
+      if (patch.summary !== undefined) set.summary = patch.summary;
+      if (patch.embedding !== undefined) set.embedding = patch.embedding;
+      if (patch.pinned !== undefined) set.pinned = patch.pinned;
+      if (Object.keys(set).length === 0) return; // nothing to change
+      await db.update(agentMemories).set(set).where(and(eq(agentMemories.id, id), eq(agentMemories.agentId, agentId)));
     },
     async getGlobalConfig() {
       const rows = await db.select().from(memorySettings).where(eq(memorySettings.id, GLOBAL_ID)).limit(1);
@@ -300,6 +315,17 @@ export function memoryMemoryRepo(): MemoryRepo {
     async supersede(agentId, id, validUntil) {
       const r = rows.get(id);
       if (r && r.agentId === agentId) rows.set(id, { ...r, validUntil });
+    },
+    async updateMemory(agentId, id, patch) {
+      const r = rows.get(id);
+      if (!r || r.agentId !== agentId) return;
+      rows.set(id, {
+        ...r,
+        ...(patch.content !== undefined ? { content: patch.content } : {}),
+        ...(patch.summary !== undefined ? { summary: patch.summary } : {}),
+        ...(patch.embedding !== undefined ? { embedding: [...patch.embedding] } : {}),
+        ...(patch.pinned !== undefined ? { pinned: patch.pinned } : {}),
+      });
     },
     async getGlobalConfig() {
       return { ...global };

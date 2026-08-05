@@ -528,6 +528,7 @@ describe("run orchestrator — recall (Story 8.3)", () => {
     embedding: fakeEmbed(over.content),
     topic: null,
     salience: 0,
+    pinned: false,
     sourceRunId: null,
     validFrom: "2026-08-05T00:00:00.000Z",
     validUntil: null,
@@ -682,13 +683,24 @@ describe("run orchestrator — reflect (Story 8.4)", () => {
     const { o, memoryRepo } = await reflectOrch({ reflect: true, reflector: fakeReflector({ memories: [{ kind: "semantic", content: "brand new distinct memory", summary: "new", topic: null }] }) });
     // Seed exactly the budget (200), including one deliberately-lowest-salience row.
     for (let i = 0; i < 200; i++) {
-      await memoryRepo.createMemory({ id: `seed-${i}`, agentId: "a1", kind: "semantic", content: `seed ${i}`, summary: "", embedding: [i / 200], topic: null, salience: i === 7 ? 0 : 10, sourceRunId: null, validFrom: "2026-08-05T00:00:00.000Z", validUntil: null, useCount: 0, lastUsedAt: null, createdAt: "2026-08-05T00:00:00.000Z" });
+      await memoryRepo.createMemory({ id: `seed-${i}`, agentId: "a1", kind: "semantic", content: `seed ${i}`, summary: "", embedding: [i / 200], topic: null, salience: i === 7 ? 0 : 10, pinned: false, sourceRunId: null, validFrom: "2026-08-05T00:00:00.000Z", validUntil: null, useCount: 0, lastUsedAt: null, createdAt: "2026-08-05T00:00:00.000Z" });
     }
     await o.launch("a1", "add one more"); // inserts 1 → 201 → prune 1 (the salience-0 seed-7)
     // Wait on the actual post-condition (the lowest-salience row is forgotten) — NOT on count===200,
     // which is already true before the backgrounded reflect inserts.
     await vi.waitFor(async () => expect(await memoryRepo.getMemory("a1", "seed-7")).toBeNull());
     expect(await memoryRepo.listForAgent("a1")).toHaveLength(200); // back within budget
+  });
+
+  it("prune NEVER forgets a pinned memory (Story 8.5)", async () => {
+    const { o, memoryRepo } = await reflectOrch({ reflect: true, reflector: fakeReflector({ memories: [{ kind: "semantic", content: "another brand new distinct memory", summary: "new2", topic: null }] }) });
+    // 200 seeds: p-7 is pinned + lowest salience (must survive); p-3 is unpinned + lowest salience (gets pruned).
+    for (let i = 0; i < 200; i++) {
+      await memoryRepo.createMemory({ id: `p-${i}`, agentId: "a1", kind: "semantic", content: `seed ${i}`, summary: "", embedding: [i / 200], topic: null, salience: i === 7 || i === 3 ? 0 : 10, pinned: i === 7, sourceRunId: null, validFrom: "2026-08-05T00:00:00.000Z", validUntil: null, useCount: 0, lastUsedAt: null, createdAt: "2026-08-05T00:00:00.000Z" });
+    }
+    await o.launch("a1", "add one more"); // 201 → prune 1 (the unpinned lowest, p-3)
+    await vi.waitFor(async () => expect(await memoryRepo.getMemory("a1", "p-3")).toBeNull());
+    expect(await memoryRepo.getMemory("a1", "p-7")).not.toBeNull(); // pinned → protected from prune
   });
 
   it("fail-safe: a reflector throw never affects the completed run and writes nothing", async () => {

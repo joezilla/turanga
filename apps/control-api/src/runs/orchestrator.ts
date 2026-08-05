@@ -255,6 +255,7 @@ export function runOrchestrator(deps: OrchestratorDeps) {
           embedding,
           topic: m.topic,
           salience: 1,
+          pinned: false, // Story 8.5 — a new memory starts unpinned (prunable)
           sourceRunId: run.id, // the auditable causal link (8.5 renders "learned from this run")
           validFrom: now,
           validUntil: null,
@@ -265,10 +266,12 @@ export function runOrchestrator(deps: OrchestratorDeps) {
         await memoryRepo.createMemory(mem);
       }
 
-      // Prune: keep the agent's memory set within budget, forgetting lowest-salience (then oldest) first.
+      // Prune: keep the agent's memory set within budget, forgetting lowest-salience (then oldest)
+      // first. PINNED memories (Story 8.5) are never pruned — they're excluded from the candidate set.
       const all = await memoryRepo.listForAgent(agentId);
       if (all.length > MAX_MEMORIES_PER_AGENT) {
-        const doomed = [...all]
+        const doomed = all
+          .filter((m) => !m.pinned)
           .sort((a, b) => a.salience - b.salience || (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0))
           .slice(0, all.length - MAX_MEMORIES_PER_AGENT);
         for (const d of doomed) await memoryRepo.deleteMemory(agentId, d.id);

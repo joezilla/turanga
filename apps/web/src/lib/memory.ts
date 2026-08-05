@@ -2,11 +2,28 @@
 // the web reads + PATCHes the operator's global defaults and can purge an agent's memories. Same base
 // + credentials + Result pattern as $lib/tools. Per-agent memory config rides on the Agent (PATCH
 // /agents), not here — this client owns the GLOBAL config + the purge only.
-import type { MemoryGlobalConfig } from "$lib/agents";
+import type { MemoryGlobalConfig, MemoryKind } from "$lib/agents";
 
 const base = import.meta.env.VITE_CONTROL_API_URL ?? "http://localhost:8080";
 
 export type { MemoryGlobalConfig };
+
+/** A memory as the observability surface shows it (Story 8.5) — the server view(), no embedding. */
+export interface MemoryView {
+  id: string;
+  kind: MemoryKind;
+  content: string;
+  summary: string;
+  topic: string | null;
+  salience: number;
+  pinned: boolean;
+  useCount: number;
+  lastUsedAt: string | null;
+  sourceRunId: string | null;
+  validFrom: string;
+  validUntil: string | null; // in the past ⇒ superseded
+  createdAt: string;
+}
 
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -37,4 +54,28 @@ export function setMemoryConfig(patch: Partial<MemoryGlobalConfig>): Promise<Res
 // Opt-in, agent-scoped purge (destructive — confirm in the UI first). Removes ONLY this agent's memories.
 export function purgeAgentMemory(agentId: string): Promise<Result<{ purged: number }>> {
   return req(`/memory/agents/${encodeURIComponent(agentId)}`, { method: "DELETE" });
+}
+
+// ── Observability + curation (Story 8.5) — agent-scoped; control-api is the sole writer (AD-7). ──
+const mid = (agentId: string, id: string) => `/memory/agents/${encodeURIComponent(agentId)}/${encodeURIComponent(id)}`;
+
+export async function listAgentMemories(agentId: string): Promise<Result<MemoryView[]>> {
+  const r = await req<{ memories?: MemoryView[] }>(`/memory/agents/${encodeURIComponent(agentId)}`);
+  if (!r.ok) return r;
+  if (!Array.isArray(r.value.memories)) return { ok: false, error: "The control plane returned an unexpected response." };
+  return { ok: true, value: r.value.memories };
+}
+
+/** Edit content/summary/pinned. Editing content re-embeds server-side so recall stays accurate. */
+export function editMemory(agentId: string, id: string, patch: { content?: string; summary?: string; pinned?: boolean }): Promise<Result<{ memory: MemoryView }>> {
+  return req(mid(agentId, id), { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(patch) });
+}
+
+export function setMemoryPinned(agentId: string, id: string, pinned: boolean): Promise<Result<{ memory: MemoryView }>> {
+  return editMemory(agentId, id, { pinned });
+}
+
+/** Forget ONE memory (distinct from the bulk purge). */
+export function forgetMemory(agentId: string, id: string): Promise<Result<{ ok: true }>> {
+  return req(mid(agentId, id), { method: "DELETE" });
 }

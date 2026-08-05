@@ -1,0 +1,1 @@
+ALTER TABLE "agent_memories" ADD COLUMN "pinned" boolean DEFAULT false NOT NULL;

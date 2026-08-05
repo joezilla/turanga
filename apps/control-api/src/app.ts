@@ -91,7 +91,7 @@ export function createApp(deps: AppDeps = {}) {
 
   const mcpVerifier = deps.mcpVerifier ?? fakeMcpVerifier();
   app.route("/", toolRoutes(toolsRepo, mcpVerifier)); // Epic 6 — manage + connect first-class tools
-  app.route("/", memoryRoutes(memoryRepo)); // Epic 8 (Story 8.2) — global memory settings + agent-scoped purge
+  app.route("/", memoryRoutes(memoryRepo, gateway)); // Epic 8 — memory settings/purge (8.2) + list/edit/forget (8.5); gateway re-embeds on edit
 
   const runsRepo = deps.runsRepo ?? memoryRunsRepo();
   // The hub is the live SSE relay; the orchestrator and the routes MUST share one instance.

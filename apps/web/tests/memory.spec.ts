@@ -92,3 +92,20 @@ test("agent editor Memory tab: set on + toggle reflect + a kind, Save draft pers
   await expect(page.getByRole("checkbox", { name: /Procedure/ })).not.toBeChecked();
   await expect(page.getByRole("checkbox", { name: /Recall/ })).toBeChecked();
 });
+
+test("agent header links to a Memory page that shows the empty state for a fresh agent (Story 8.5)", async ({ page }) => {
+  await signIn(page);
+  await newAgent(page);
+  const url = page.url(); // /agents/<id>
+
+  // The header has a Memory link (next to Runs) → the per-agent memory page.
+  await page.getByRole("link", { name: "Memory", exact: true }).click();
+  await expect(page).toHaveURL(/\/agents\/[0-9A-Z]{26}\/memory$/);
+  await expect(page.getByRole("heading", { name: "Memory", level: 1 })).toBeVisible();
+  // A brand-new agent has learned nothing yet (nothing writes memory until reflection runs).
+  await expect(page.getByText("This agent hasn't learned anything yet.")).toBeVisible();
+
+  // Back arrow returns to the agent editor.
+  await page.getByLabel("Back to agent").click();
+  await expect(page).toHaveURL(url);
+});

@@ -32,6 +32,7 @@ const memRow = (over: Partial<MemoryRow> = {}): MemoryRow => ({
   embedding: null, // populated by recall (8.3), not this story
   topic: null,
   salience: 0,
+  pinned: false,
   sourceRunId: null,
   validFrom: "2026-08-05T00:00:00.000Z",
   validUntil: null,
@@ -249,5 +250,27 @@ describe("memory repo — evolve primitives (Story 8.4)", () => {
     await repo.supersede("A", "m", "2000-01-01T00:00:00.000Z");
     expect((await repo.recall("A", fakeEmbed("stale fact"), 5)).map((r) => r.id)).not.toContain("m");
     expect(await repo.findSimilar("A", fakeEmbed("stale fact"), "semantic", 0.05)).toBeNull();
+  });
+});
+
+describe("memory repo — updateMemory + pinned (Story 8.5)", () => {
+  it("updateMemory applies only defined keys, agent-scoped", async () => {
+    const repo = memoryMemoryRepo();
+    await repo.createMemory(memRow({ id: "m", agentId: "A", content: "old", summary: "s", pinned: false }));
+    await repo.updateMemory("A", "m", { summary: "new summary", pinned: true }); // content untouched
+    const m = (await repo.getMemory("A", "m"))!;
+    expect(m).toMatchObject({ content: "old", summary: "new summary", pinned: true });
+
+    await repo.updateMemory("B", "m", { summary: "hacked" }); // wrong agent → no-op (FR-7)
+    expect((await repo.getMemory("A", "m"))!.summary).toBe("new summary");
+
+    await repo.updateMemory("A", "m", {}); // empty patch → no-op
+    expect((await repo.getMemory("A", "m"))!.summary).toBe("new summary");
+  });
+
+  it("a fresh memory is unpinned (pinned defaults false)", async () => {
+    const repo = memoryMemoryRepo();
+    await repo.createMemory(memRow({ id: "m", agentId: "A" }));
+    expect((await repo.getMemory("A", "m"))!.pinned).toBe(false);
   });
 });

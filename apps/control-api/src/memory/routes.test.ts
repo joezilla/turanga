@@ -4,6 +4,7 @@ import { createApp } from "../app.js";
 import { memoryAuthRepo, type AuthRepo } from "../auth/repo.js";
 import { hashPassword } from "../auth/password.js";
 import { memoryMemoryRepo, type MemoryRepo, type MemoryRow } from "./repo.js";
+import { fakeEmbed } from "../litellm/gateway.js";
 
 const EMAIL = "admin@turanga.local";
 const PW = "pw-for-tests-123456";
@@ -31,6 +32,7 @@ const memRow = (over: Partial<MemoryRow> = {}): MemoryRow => ({
   embedding: null,
   topic: null,
   salience: 0,
+  pinned: false,
   sourceRunId: null,
   validFrom: "2026-08-05T00:00:00.000Z",
   validUntil: null,
@@ -136,5 +138,67 @@ describe("memory routes — agent-scoped purge (Story 8.2, FR-7)", () => {
   it("purge is session-guarded — 401 without a cookie", async () => {
     const { app } = await appWithSession();
     expect((await app.request("/memory/agents/agent-A", { method: "DELETE" })).status).toBe(401);
+  });
+});
+
+describe("memory routes — observability + curation (Story 8.5)", () => {
+  const embedded = (over: Partial<MemoryRow> & { id: string; agentId: string; content: string }) => memRow({ ...over, embedding: fakeEmbed(over.content) });
+
+  it("GET /memory/agents/:id lists the agent's memories as a view (no embedding), pinned-first", async () => {
+    const repo = memoryMemoryRepo();
+    await repo.createMemory(embedded({ id: "m1", agentId: "A", content: "low", salience: 1 }));
+    await repo.createMemory(embedded({ id: "m2", agentId: "A", content: "high", salience: 9 }));
+    await repo.createMemory(embedded({ id: "m3", agentId: "A", content: "pinned", salience: 0, pinned: true }));
+    await repo.createMemory(embedded({ id: "b1", agentId: "B", content: "other agent" }));
+    const { app, cookie } = await appWithSession(repo);
+
+    const res = await app.request("/memory/agents/A", { headers: { cookie } });
+    expect(res.status).toBe(200);
+    const { memories } = (await res.json()) as { memories: { id: string; pinned: boolean }[] };
+    expect(memories.map((m) => m.id)).toEqual(["m3", "m2", "m1"]); // pinned first, then salience desc; B never appears (FR-7)
+    expect(memories[0]).not.toHaveProperty("embedding"); // the vector is dropped from the view
+  });
+
+  it("PATCH edits content (re-embeds) + summary + pinned; unknown id 404; bad body 400", async () => {
+    const repo = memoryMemoryRepo();
+    await repo.createMemory(embedded({ id: "m1", agentId: "A", content: "old content", summary: "old" }));
+    const { app, cookie } = await appWithSession(repo);
+
+    const res = await app.request("/memory/agents/A/m1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify({ content: "new content", summary: "new", pinned: true }),
+    });
+    expect(res.status).toBe(200);
+    const { memory } = (await res.json()) as { memory: { summary: string; pinned: boolean } };
+    expect(memory).toMatchObject({ summary: "new", pinned: true });
+    // content changed → re-embedded to the new vector.
+    expect((await repo.getMemory("A", "m1"))!.embedding).toEqual(fakeEmbed("new content"));
+
+    expect((await app.request("/memory/agents/A/nope", { method: "PATCH", headers: { "content-type": "application/json", cookie }, body: "{}" })).status).toBe(404);
+    expect((await app.request("/memory/agents/A/m1", { method: "PATCH", headers: { "content-type": "application/json", cookie }, body: JSON.stringify({ pinned: "yes" }) })).status).toBe(400);
+  });
+
+  it("DELETE /memory/agents/:id/:memId forgets ONE (404 unknown); agent-scoped (FR-7)", async () => {
+    const repo = memoryMemoryRepo();
+    await repo.createMemory(embedded({ id: "m1", agentId: "A", content: "x" }));
+    await repo.createMemory(embedded({ id: "b1", agentId: "B", content: "y" }));
+    const { app, cookie } = await appWithSession(repo);
+
+    // Agent A cannot forget B's memory (scoped by the URL agentId → 404, and B's row survives).
+    expect((await app.request("/memory/agents/A/b1", { method: "DELETE", headers: { cookie } })).status).toBe(404);
+    expect(await repo.getMemory("B", "b1")).not.toBeNull();
+
+    const ok = await app.request("/memory/agents/A/m1", { method: "DELETE", headers: { cookie } });
+    expect(ok.status).toBe(200);
+    expect(await repo.getMemory("A", "m1")).toBeNull();
+    expect((await app.request("/memory/agents/A/m1", { method: "DELETE", headers: { cookie } })).status).toBe(404); // already gone
+  });
+
+  it("the curation routes are session-guarded (401 without a cookie)", async () => {
+    const { app } = await appWithSession();
+    expect((await app.request("/memory/agents/A")).status).toBe(401);
+    expect((await app.request("/memory/agents/A/m1", { method: "PATCH", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
+    expect((await app.request("/memory/agents/A/m1", { method: "DELETE" })).status).toBe(401);
   });
 });
