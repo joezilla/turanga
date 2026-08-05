@@ -33,6 +33,7 @@ const memRow = (over: Partial<MemoryRow> = {}): MemoryRow => ({
   topic: null,
   salience: 0,
   pinned: false,
+  status: "active",
   sourceRunId: null,
   validFrom: "2026-08-05T00:00:00.000Z",
   validUntil: null,
@@ -200,5 +201,99 @@ describe("memory routes — observability + curation (Story 8.5)", () => {
     expect((await app.request("/memory/agents/A")).status).toBe(401);
     expect((await app.request("/memory/agents/A/m1", { method: "PATCH", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
     expect((await app.request("/memory/agents/A/m1", { method: "DELETE" })).status).toBe(401);
+  });
+});
+
+describe("memory routes — oversight: staged approval + quarantine + changelog (Story 8.6)", () => {
+  it("PATCH /memory/config validates requireApprovalDefault (bool round-trips; non-bool 400)", async () => {
+    const { app, cookie } = await appWithSession();
+    const ok = await app.request("/memory/config", {
+      method: "PATCH",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify({ requireApprovalDefault: true }),
+    });
+    expect(ok.status).toBe(200);
+    expect(((await ok.json()) as { requireApprovalDefault: boolean }).requireApprovalDefault).toBe(true);
+
+    const bad = await app.request("/memory/config", {
+      method: "PATCH",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify({ requireApprovalDefault: "yes" }),
+    });
+    expect(bad.status).toBe(400);
+  });
+
+  it("POST accept moves a PENDING memory → active and logs 'accepted'; a non-pending accept is 400", async () => {
+    const repo = memoryMemoryRepo();
+    await repo.createMemory(memRow({ id: "p", agentId: "A", status: "pending" }));
+    await repo.createMemory(memRow({ id: "a", agentId: "A", status: "active" }));
+    const { app, cookie } = await appWithSession(repo);
+
+    const res = await app.request("/memory/agents/A/p/accept", { method: "POST", headers: { cookie } });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { memory: { status: string } }).memory.status).toBe("active");
+    expect((await repo.getMemory("A", "p"))!.status).toBe("active");
+    // Accepting an already-active memory is a no-op error (guarded transition).
+    expect((await app.request("/memory/agents/A/a/accept", { method: "POST", headers: { cookie } })).status).toBe(400);
+    // 404 for an unknown memory.
+    expect((await app.request("/memory/agents/A/nope/accept", { method: "POST", headers: { cookie } })).status).toBe(404);
+
+    const events = await repo.listMemoryEvents("A", 10);
+    expect(events[0]).toMatchObject({ kind: "accepted", memoryId: "p" });
+  });
+
+  it("POST quarantine (active→quarantined) then unquarantine (→active); each logs; bad transitions 400", async () => {
+    const repo = memoryMemoryRepo();
+    await repo.createMemory(memRow({ id: "m", agentId: "A", status: "active" }));
+    const { app, cookie } = await appWithSession(repo);
+
+    const q = await app.request("/memory/agents/A/m/quarantine", { method: "POST", headers: { cookie } });
+    expect(q.status).toBe(200);
+    expect((await repo.getMemory("A", "m"))!.status).toBe("quarantined");
+    // Quarantining an already-quarantined memory isn't a valid transition.
+    expect((await app.request("/memory/agents/A/m/quarantine", { method: "POST", headers: { cookie } })).status).toBe(400);
+
+    const u = await app.request("/memory/agents/A/m/unquarantine", { method: "POST", headers: { cookie } });
+    expect(u.status).toBe(200);
+    expect((await repo.getMemory("A", "m"))!.status).toBe("active");
+    // Un-quarantining an active memory isn't valid either.
+    expect((await app.request("/memory/agents/A/m/unquarantine", { method: "POST", headers: { cookie } })).status).toBe(400);
+
+    // Both transitions are recorded (their relative order is timestamp-based; assert membership, not order).
+    expect((await repo.listMemoryEvents("A", 10)).map((e) => e.kind).sort()).toEqual(["quarantined", "unquarantined"]);
+  });
+
+  it("DELETE of a PENDING memory logs 'rejected'; of an active one logs 'forgotten'", async () => {
+    const repo = memoryMemoryRepo();
+    await repo.createMemory(memRow({ id: "p", agentId: "A", status: "pending" }));
+    await repo.createMemory(memRow({ id: "a", agentId: "A", status: "active" }));
+    const { app, cookie } = await appWithSession(repo);
+
+    await app.request("/memory/agents/A/p", { method: "DELETE", headers: { cookie } });
+    await app.request("/memory/agents/A/a", { method: "DELETE", headers: { cookie } });
+    // The pending delete is a reject; the active delete is a forget (order is timestamp-based).
+    expect((await repo.listMemoryEvents("A", 10)).map((e) => e.kind).sort()).toEqual(["forgotten", "rejected"]);
+  });
+
+  it("GET /memory/agents/:id/events returns the changelog newest-first, agent-scoped (FR-7)", async () => {
+    const repo = memoryMemoryRepo();
+    await repo.logMemoryEvent({ id: ulid(1), agentId: "A", memoryId: "m1", kind: "learned", summary: "s1", sourceRunId: "run-1", at: "2026-08-05T00:00:01.000Z" });
+    await repo.logMemoryEvent({ id: ulid(2), agentId: "A", memoryId: "m1", kind: "accepted", summary: "s1", sourceRunId: null, at: "2026-08-05T00:00:02.000Z" });
+    await repo.logMemoryEvent({ id: ulid(3), agentId: "B", memoryId: "b1", kind: "learned", summary: "other", sourceRunId: null, at: "2026-08-05T00:00:03.000Z" });
+    const { app, cookie } = await appWithSession(repo);
+
+    const res = await app.request("/memory/agents/A/events", { headers: { cookie } });
+    expect(res.status).toBe(200);
+    const { events } = (await res.json()) as { events: { kind: string; agentId: string }[] };
+    expect(events.map((e) => e.kind)).toEqual(["accepted", "learned"]); // newest first
+    expect(events.every((e) => e.agentId === "A")).toBe(true); // never another agent's history
+  });
+
+  it("the oversight routes are session-guarded (401 without a cookie)", async () => {
+    const { app } = await appWithSession();
+    expect((await app.request("/memory/agents/A/m/accept", { method: "POST" })).status).toBe(401);
+    expect((await app.request("/memory/agents/A/m/quarantine", { method: "POST" })).status).toBe(401);
+    expect((await app.request("/memory/agents/A/m/unquarantine", { method: "POST" })).status).toBe(401);
+    expect((await app.request("/memory/agents/A/events")).status).toBe(401);
   });
 });

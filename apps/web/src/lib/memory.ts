@@ -2,13 +2,13 @@
 // the web reads + PATCHes the operator's global defaults and can purge an agent's memories. Same base
 // + credentials + Result pattern as $lib/tools. Per-agent memory config rides on the Agent (PATCH
 // /agents), not here — this client owns the GLOBAL config + the purge only.
-import type { MemoryGlobalConfig, MemoryKind } from "$lib/agents";
+import type { MemoryGlobalConfig, MemoryKind, MemoryStatus, MemoryEventKind } from "$lib/agents";
 
 const base = import.meta.env.VITE_CONTROL_API_URL ?? "http://localhost:8080";
 
-export type { MemoryGlobalConfig };
+export type { MemoryGlobalConfig, MemoryStatus, MemoryEventKind };
 
-/** A memory as the observability surface shows it (Story 8.5) — the server view(), no embedding. */
+/** A memory as the observability surface shows it (Story 8.5/8.6) — the server view(), no embedding. */
 export interface MemoryView {
   id: string;
   kind: MemoryKind;
@@ -17,12 +17,23 @@ export interface MemoryView {
   topic: string | null;
   salience: number;
   pinned: boolean;
+  status: MemoryStatus; // Story 8.6 — active | pending | quarantined
   useCount: number;
   lastUsedAt: string | null;
   sourceRunId: string | null;
   validFrom: string;
   validUntil: string | null; // in the past ⇒ superseded
   createdAt: string;
+}
+
+/** A learning-changelog event (Story 8.6). */
+export interface MemoryEvent {
+  id: string;
+  memoryId: string | null;
+  kind: MemoryEventKind;
+  summary: string;
+  sourceRunId: string | null;
+  at: string;
 }
 
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -75,7 +86,28 @@ export function setMemoryPinned(agentId: string, id: string, pinned: boolean): P
   return editMemory(agentId, id, { pinned });
 }
 
-/** Forget ONE memory (distinct from the bulk purge). */
+/** Forget ONE memory (distinct from the bulk purge). Forgetting a PENDING memory is a reject. */
 export function forgetMemory(agentId: string, id: string): Promise<Result<{ ok: true }>> {
   return req(mid(agentId, id), { method: "DELETE" });
+}
+
+// ── Oversight (Story 8.6) — staged approval + quarantine + the changelog. ──
+export function acceptMemory(agentId: string, id: string): Promise<Result<{ memory: MemoryView }>> {
+  return req(`${mid(agentId, id)}/accept`, { method: "POST" });
+}
+/** Reject a pending memory = delete it (logged as 'rejected' server-side). */
+export function rejectMemory(agentId: string, id: string): Promise<Result<{ ok: true }>> {
+  return forgetMemory(agentId, id);
+}
+export function quarantineMemory(agentId: string, id: string): Promise<Result<{ memory: MemoryView }>> {
+  return req(`${mid(agentId, id)}/quarantine`, { method: "POST" });
+}
+export function unquarantineMemory(agentId: string, id: string): Promise<Result<{ memory: MemoryView }>> {
+  return req(`${mid(agentId, id)}/unquarantine`, { method: "POST" });
+}
+export async function listMemoryChangelog(agentId: string): Promise<Result<MemoryEvent[]>> {
+  const r = await req<{ events?: MemoryEvent[] }>(`/memory/agents/${encodeURIComponent(agentId)}/events`);
+  if (!r.ok) return r;
+  if (!Array.isArray(r.value.events)) return { ok: false, error: "The control plane returned an unexpected response." };
+  return { ok: true, value: r.value.events };
 }

@@ -72,7 +72,7 @@
 
   // The operator's global memory defaults — read once so the Memory tab can show the EFFECTIVE state
   // (global → inherit/on/off). Best-effort: a fetch failure falls back to the OFF-by-default shape.
-  let globalMemory = $state<MemoryGlobalConfig>({ defaultEnabled: false, killSwitch: false, embeddingModel: "text-embedding-3-small", retentionDays: null, privacy: "agent-scoped" });
+  let globalMemory = $state<MemoryGlobalConfig>({ defaultEnabled: false, killSwitch: false, embeddingModel: "text-embedding-3-small", retentionDays: null, privacy: "agent-scoped", requireApprovalDefault: false });
 
   type Tab = "definition" | "tools" | "skills" | "limits" | "memory";
   let tab = $state<Tab>("definition");

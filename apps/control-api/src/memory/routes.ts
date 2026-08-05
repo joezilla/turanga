@@ -1,6 +1,6 @@
 import { Hono } from "hono";
-import type { MemoryGlobalConfig } from "@turanga/domain";
-import type { MemoryRepo, MemoryRow } from "./repo.js";
+import { ulid, type MemoryGlobalConfig, type MemoryEventKind } from "@turanga/domain";
+import type { MemoryRepo, MemoryRow, MemoryEventRow } from "./repo.js";
 import type { ModelGateway } from "../litellm/gateway.js";
 
 // Memory config surface (Epic 8, Story 8.2). control-api is the sole writer (AD-7). This exposes ONLY
@@ -29,6 +29,10 @@ function parseGlobalConfig(input: unknown): { ok: true; value: Partial<MemoryGlo
     }
     value.retentionDays = b.retentionDays as number | null;
   }
+  if (b.requireApprovalDefault !== undefined) {
+    if (typeof b.requireApprovalDefault !== "boolean") return { ok: false, error: "requireApprovalDefault must be true or false." };
+    value.requireApprovalDefault = b.requireApprovalDefault;
+  }
   // embeddingModel / privacy are read-only this story — silently ignored (never a 400, so a full-object
   // round-trip PATCH still succeeds).
   return { ok: true, value };
@@ -45,6 +49,7 @@ function view(m: MemoryRow) {
     topic: m.topic,
     salience: m.salience,
     pinned: m.pinned,
+    status: m.status, // Story 8.6
     useCount: m.useCount,
     lastUsedAt: m.lastUsedAt,
     sourceRunId: m.sourceRunId,
@@ -52,6 +57,13 @@ function view(m: MemoryRow) {
     validUntil: m.validUntil,
     createdAt: m.createdAt,
   };
+}
+
+// A helper to append a learning-changelog event (Story 8.6). Best-effort — a log failure never blocks
+// the curation action (control-api sole writer, AD-7; agent-scoped, FR-7).
+async function logEvent(repo: MemoryRepo, agentId: string, kind: MemoryEventKind, m: MemoryRow) {
+  const event: MemoryEventRow = { id: ulid(Date.now()), agentId, memoryId: m.id, kind, summary: m.summary, sourceRunId: m.sourceRunId, at: new Date().toISOString() };
+  await repo.logMemoryEvent(event).catch(() => {});
 }
 
 // Validate a memory-edit PATCH (Story 8.5). Only content/summary/pinned are editable; all optional.
@@ -126,16 +138,48 @@ export function memoryRoutes(repo: MemoryRepo, gateway: ModelGateway) {
       }
     }
     await repo.updateMemory(agentId, id, patch);
-    return c.json({ memory: view((await repo.getMemory(agentId, id))!) });
+    const updated = (await repo.getMemory(agentId, id))!;
+    // Story 8.6 — changelog: a pin toggle logs pinned/unpinned; any other edit logs edited.
+    if (patch.pinned !== undefined && patch.pinned !== existing.pinned) await logEvent(repo, agentId, patch.pinned ? "pinned" : "unpinned", updated);
+    else if (patch.content !== undefined || patch.summary !== undefined) await logEvent(repo, agentId, "edited", updated);
+    return c.json({ memory: view(updated) });
   });
 
-  // Forget ONE memory (distinct from the bulk purge above). Agent-scoped.
+  // Forget ONE memory (distinct from the bulk purge above). Agent-scoped. Story 8.6 — a forget of a
+  // PENDING memory is a REJECT (logs 'rejected'); forgetting an active/quarantined one is 'forgotten'.
   app.delete("/memory/agents/:agentId/:id", async (c) => {
     const agentId = c.req.param("agentId");
     const id = c.req.param("id");
-    if (!(await repo.getMemory(agentId, id))) return c.json({ error: "That memory doesn't exist." }, 404);
+    const existing = await repo.getMemory(agentId, id);
+    if (!existing) return c.json({ error: "That memory doesn't exist." }, 404);
     await repo.deleteMemory(agentId, id);
+    await logEvent(repo, agentId, existing.status === "pending" ? "rejected" : "forgotten", existing);
     return c.json({ ok: true });
+  });
+
+  // Story 8.6 — staged approval: accept a PENDING memory (→ active, now recallable) or quarantine/
+  // un-quarantine any memory (a non-destructive recall toggle for rolling back a learning regression).
+  // Each logs a changelog event. Agent-scoped (FR-7); the memory resolves only for its owning agent.
+  const setStatusRoute = (path: string, from: MemoryRow["status"][] | null, to: MemoryRow["status"], event: MemoryEventKind) =>
+    app.post(path, async (c) => {
+      const agentId = c.req.param("agentId") ?? "";
+      const id = c.req.param("id") ?? "";
+      const existing = await repo.getMemory(agentId, id);
+      if (!existing) return c.json({ error: "That memory doesn't exist." }, 404);
+      if (from && !from.includes(existing.status)) return c.json({ error: `Can't ${event} a ${existing.status} memory.` }, 400);
+      await repo.updateMemory(agentId, id, { status: to });
+      const updated = (await repo.getMemory(agentId, id))!;
+      await logEvent(repo, agentId, event, updated);
+      return c.json({ memory: view(updated) });
+    });
+  setStatusRoute("/memory/agents/:agentId/:id/accept", ["pending"], "active", "accepted");
+  setStatusRoute("/memory/agents/:agentId/:id/quarantine", ["active", "pending"], "quarantined", "quarantined");
+  setStatusRoute("/memory/agents/:agentId/:id/unquarantine", ["quarantined"], "active", "unquarantined");
+
+  // The learning changelog (Story 8.6) — newest-first, agent-scoped (FR-7).
+  app.get("/memory/agents/:agentId/events", async (c) => {
+    const events = await repo.listMemoryEvents(c.req.param("agentId"), 200);
+    return c.json({ events });
   });
 
   return app;

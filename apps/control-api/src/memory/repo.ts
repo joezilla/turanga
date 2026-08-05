@@ -4,10 +4,12 @@ import {
   DEFAULT_MEMORY_GLOBAL_CONFIG,
   type MemoryConfig,
   type MemoryKind,
+  type MemoryStatus,
+  type MemoryEventKind,
   type MemoryGlobalConfig,
 } from "@turanga/domain";
 import type { Db } from "../db/client.js";
-import { agentMemories, agents, memorySettings } from "../db/schema.js";
+import { agentMemories, agents, memoryEvents, memorySettings } from "../db/schema.js";
 
 // The single settings row is keyed by this constant (one operator-wide config, Story 8.1).
 const GLOBAL_ID = "global";
@@ -25,12 +27,25 @@ export interface MemoryRow {
   topic: string | null;
   salience: number;
   pinned: boolean; // Story 8.5 — protected from the reflect prune
+  status: MemoryStatus; // Story 8.6 — only 'active' is recalled
   sourceRunId: string | null;
   validFrom: string; // UTC ISO-8601
   validUntil: string | null; // null = still valid
   useCount: number;
   lastUsedAt: string | null; // UTC ISO-8601
   createdAt: string; // UTC ISO-8601
+}
+
+// A learning-changelog event (Epic 8, Story 8.6). Append-only; control-api sole writer (AD-7); reads
+// agent-scoped (FR-7). Snapshots the memory summary so it reads after the memory is gone.
+export interface MemoryEventRow {
+  id: string;
+  agentId: string;
+  memoryId: string | null;
+  kind: MemoryEventKind;
+  summary: string;
+  sourceRunId: string | null;
+  at: string; // UTC ISO-8601
 }
 
 export interface MemoryRepo {
@@ -52,7 +67,10 @@ export interface MemoryRepo {
   supersede(agentId: string, id: string, validUntil: string): Promise<void>; // close a stale fact's validity window
   // Curation (Story 8.5) — a scoped partial update: content/summary/embedding (re-embed on edit) + pinned.
   // Applies only the defined keys; no-op for the wrong agent or an empty patch (FR-7, AD-7 sole writer).
-  updateMemory(agentId: string, id: string, patch: { content?: string; summary?: string; embedding?: number[]; pinned?: boolean }): Promise<void>;
+  updateMemory(agentId: string, id: string, patch: { content?: string; summary?: string; embedding?: number[]; pinned?: boolean; status?: MemoryStatus }): Promise<void>;
+  // The learning changelog (Story 8.6) — append-only, agent-scoped (FR-7).
+  logMemoryEvent(event: MemoryEventRow): Promise<void>;
+  listMemoryEvents(agentId: string, limit?: number): Promise<MemoryEventRow[]>; // newest-first
   // Operator-wide defaults (one singleton row). Reads return the OFF default when unset (no write on read).
   getGlobalConfig(): Promise<MemoryGlobalConfig>;
   setGlobalConfig(patch: Partial<MemoryGlobalConfig>): Promise<MemoryGlobalConfig>;
@@ -73,12 +91,25 @@ function toRow(r: typeof agentMemories.$inferSelect): MemoryRow {
     topic: r.topic,
     salience: r.salience,
     pinned: r.pinned,
+    status: r.status as MemoryStatus,
     sourceRunId: r.sourceRunId,
     validFrom: r.validFrom.toISOString(),
     validUntil: r.validUntil ? r.validUntil.toISOString() : null,
     useCount: r.useCount,
     lastUsedAt: r.lastUsedAt ? r.lastUsedAt.toISOString() : null,
     createdAt: r.createdAt.toISOString(),
+  };
+}
+
+function toEvent(r: typeof memoryEvents.$inferSelect): MemoryEventRow {
+  return {
+    id: r.id,
+    agentId: r.agentId,
+    memoryId: r.memoryId,
+    kind: r.kind as MemoryEventKind,
+    summary: r.summary,
+    sourceRunId: r.sourceRunId,
+    at: r.at.toISOString(),
   };
 }
 
@@ -89,6 +120,7 @@ function toGlobal(r: typeof memorySettings.$inferSelect): MemoryGlobalConfig {
     embeddingModel: r.embeddingModel,
     retentionDays: r.retentionDays ?? null,
     privacy: "agent-scoped",
+    requireApprovalDefault: r.requireApprovalDefault,
   };
 }
 
@@ -115,6 +147,7 @@ export function drizzleMemoryRepo(db: Db): MemoryRepo {
         topic: row.topic,
         salience: row.salience,
         pinned: row.pinned,
+        status: row.status,
         sourceRunId: row.sourceRunId,
         validFrom: new Date(row.validFrom),
         validUntil: row.validUntil ? new Date(row.validUntil) : null,
@@ -133,6 +166,7 @@ export function drizzleMemoryRepo(db: Db): MemoryRepo {
       if (opts?.kinds && opts.kinds.length === 0) return [];
       const filters = [
         eq(agentMemories.agentId, agentId), // FR-7 — never crosses the agent boundary
+        eq(agentMemories.status, "active"), // Story 8.6 — pending/quarantined memories are NEVER recalled
         isNotNull(agentMemories.embedding), // un-embedded rows can't be compared
         or(isNull(agentMemories.validUntil), gt(agentMemories.validUntil, new Date())), // temporal validity
       ];
@@ -161,6 +195,7 @@ export function drizzleMemoryRepo(db: Db): MemoryRepo {
         .where(
           and(
             eq(agentMemories.agentId, agentId), // FR-7
+            eq(agentMemories.status, "active"), // Story 8.6 — dedupe/supersede consider only active memories
             eq(agentMemories.kind, kind),
             isNotNull(agentMemories.embedding),
             or(isNull(agentMemories.validUntil), gt(agentMemories.validUntil, new Date())),
@@ -189,8 +224,29 @@ export function drizzleMemoryRepo(db: Db): MemoryRepo {
       if (patch.summary !== undefined) set.summary = patch.summary;
       if (patch.embedding !== undefined) set.embedding = patch.embedding;
       if (patch.pinned !== undefined) set.pinned = patch.pinned;
+      if (patch.status !== undefined) set.status = patch.status;
       if (Object.keys(set).length === 0) return; // nothing to change
       await db.update(agentMemories).set(set).where(and(eq(agentMemories.id, id), eq(agentMemories.agentId, agentId)));
+    },
+    async logMemoryEvent(event) {
+      await db.insert(memoryEvents).values({
+        id: event.id,
+        agentId: event.agentId,
+        memoryId: event.memoryId,
+        kind: event.kind,
+        summary: event.summary,
+        sourceRunId: event.sourceRunId,
+        at: new Date(event.at),
+      });
+    },
+    async listMemoryEvents(agentId, limit = 200) {
+      const rows = await db
+        .select()
+        .from(memoryEvents)
+        .where(eq(memoryEvents.agentId, agentId)) // FR-7
+        .orderBy(desc(memoryEvents.at), desc(memoryEvents.id))
+        .limit(limit);
+      return rows.map(toEvent);
     },
     async getGlobalConfig() {
       const rows = await db.select().from(memorySettings).where(eq(memorySettings.id, GLOBAL_ID)).limit(1);
@@ -208,6 +264,7 @@ export function drizzleMemoryRepo(db: Db): MemoryRepo {
           embeddingModel: next.embeddingModel,
           retentionDays: next.retentionDays,
           privacy: next.privacy,
+          requireApprovalDefault: next.requireApprovalDefault,
           updatedAt: new Date(),
         })
         .onConflictDoUpdate({
@@ -218,6 +275,7 @@ export function drizzleMemoryRepo(db: Db): MemoryRepo {
             embeddingModel: next.embeddingModel,
             retentionDays: next.retentionDays,
             privacy: next.privacy,
+            requireApprovalDefault: next.requireApprovalDefault,
             updatedAt: new Date(),
           },
         });
@@ -250,6 +308,7 @@ function cosineDist(a: number[], b: number[]): number {
 
 export function memoryMemoryRepo(): MemoryRepo {
   const rows = new Map<string, MemoryRow>();
+  const events: MemoryEventRow[] = [];
   const agentConfigs = new Map<string, MemoryConfig>();
   let global: MemoryGlobalConfig = { ...DEFAULT_MEMORY_GLOBAL_CONFIG };
   return {
@@ -274,6 +333,7 @@ export function memoryMemoryRepo(): MemoryRepo {
       const candidates = [...rows.values()].filter(
         (r) =>
           r.agentId === agentId &&
+          r.status === "active" && // Story 8.6 — pending/quarantined are never recalled
           r.embedding != null &&
           (r.validUntil == null || Date.parse(r.validUntil) > now) &&
           (!kinds || kinds.includes(r.kind)),
@@ -298,7 +358,7 @@ export function memoryMemoryRepo(): MemoryRepo {
       let best: MemoryRow | null = null;
       let bestD = Infinity;
       for (const r of rows.values()) {
-        if (r.agentId !== agentId || r.kind !== kind || r.embedding == null) continue;
+        if (r.agentId !== agentId || r.status !== "active" || r.kind !== kind || r.embedding == null) continue;
         if (!(r.validUntil == null || Date.parse(r.validUntil) > now)) continue;
         const d = cosineDist(embedding, r.embedding);
         if (d < bestD) {
@@ -325,7 +385,18 @@ export function memoryMemoryRepo(): MemoryRepo {
         ...(patch.summary !== undefined ? { summary: patch.summary } : {}),
         ...(patch.embedding !== undefined ? { embedding: [...patch.embedding] } : {}),
         ...(patch.pinned !== undefined ? { pinned: patch.pinned } : {}),
+        ...(patch.status !== undefined ? { status: patch.status } : {}),
       });
+    },
+    async logMemoryEvent(event) {
+      events.push({ ...event });
+    },
+    async listMemoryEvents(agentId, limit = 200) {
+      return events
+        .filter((e) => e.agentId === agentId) // FR-7
+        .sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : a.id < b.id ? 1 : -1)) // newest-first
+        .slice(0, limit)
+        .map((e) => ({ ...e }));
     },
     async getGlobalConfig() {
       return { ...global };

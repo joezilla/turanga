@@ -650,7 +650,7 @@ describe("PATCH /agents/:id memoryConfig (Story 8.2)", () => {
     // A fresh agent ships inherit + all kinds. (A never-published agent is dirty for its published
     // fields — but memoryConfig is operational, so it is never among changedFields.)
     const before = ((await (await app.request(`/agents/${agent.id}`, { headers: { cookie } })).json()) as { agent: any }).agent;
-    expect(before.memoryConfig).toEqual({ mode: "inherit", recall: true, reflect: true, kinds: ["episodic", "semantic", "procedure"] });
+    expect(before.memoryConfig).toEqual({ mode: "inherit", recall: true, reflect: true, kinds: ["episodic", "semantic", "procedure"], requireApproval: false });
     expect(before.changedFields).not.toContain("memoryConfig");
     const changedBefore = before.changedFields;
 
@@ -660,7 +660,7 @@ describe("PATCH /agents/:id memoryConfig (Story 8.2)", () => {
     });
     expect(res.status).toBe(200);
     const updated = ((await res.json()) as { agent: any }).agent;
-    expect(updated.memoryConfig).toEqual({ mode: "on", recall: true, reflect: false, kinds: ["semantic"] });
+    expect(updated.memoryConfig).toEqual({ mode: "on", recall: true, reflect: false, kinds: ["semantic"], requireApproval: false });
     // Operational config — editing it never appears in changedFields and doesn't change the dirty set.
     expect(updated.changedFields).not.toContain("memoryConfig");
     expect(updated.changedFields).toEqual(changedBefore);

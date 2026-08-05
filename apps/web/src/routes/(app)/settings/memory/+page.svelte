@@ -109,6 +109,17 @@
 
     <div class="card row-card">
       <div class="row-text">
+        <span class="row-title">Require approval before new memories take effect</span>
+        <span class="row-sub">Hold every agent's newly-learned memories <strong>pending</strong> until you accept them — nothing is recalled until you approve it. A platform-wide floor; an individual agent can also require it on its own.</span>
+      </div>
+      <label class="switch">
+        <input type="checkbox" role="switch" aria-label="Toggle require-approval by default" checked={cfg.requireApprovalDefault} disabled={saving || cfg.killSwitch} onchange={(e) => patch({ requireApprovalDefault: (e.currentTarget as HTMLInputElement).checked })} />
+        <span class="track" aria-hidden="true"></span>
+      </label>
+    </div>
+
+    <div class="card row-card">
+      <div class="row-text">
         <span class="row-title">Retention</span>
         <span class="row-sub">Forget memories older than this many days. Leave blank to keep them indefinitely.</span>
       </div>

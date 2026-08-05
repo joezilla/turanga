@@ -5,7 +5,7 @@
   import { page } from "$app/state";
   import { ArrowLeft } from "@lucide/svelte";
   import { getRun, runCause, type Run, type RunMessage } from "$lib/runs";
-  import { listAgentMemories, type MemoryView } from "$lib/memory";
+  import { listAgentMemories, acceptMemory, rejectMemory, type MemoryView } from "$lib/memory";
   import { formatMicros } from "$lib/money";
   import { formatTimestamp } from "$lib/datetime";
   import RunStatusDot from "$lib/components/RunStatusDot.svelte";
@@ -43,7 +43,7 @@
     load();
   });
 
-  const isRenderable = (m: RunMessage) => m.type === "turn" || m.type === "refusal" || m.type === "metrics" || m.type === "tool";
+  const isRenderable = (m: RunMessage) => m.type === "turn" || m.type === "refusal" || m.type === "metrics" || m.type === "tool" || m.type === "recall";
   const cause = $derived(run ? runCause(run.status, run.reason) : null);
   const inProgress = $derived(run ? run.status === "running" || run.status === "created" : false);
 
@@ -55,6 +55,28 @@
   );
   const recalled = $derived(memories.filter((m) => recalledIds.includes(m.id)));
   const learned = $derived(memories.filter((m) => m.sourceRunId === runId));
+  // Story 8.6 — an id→{kind,summary} map so the transcript's recall row can name the memories inline.
+  const memoryById = $derived(Object.fromEntries(memories.map((m) => [m.id, { kind: m.kind, summary: m.summary || m.content }])));
+
+  // Story 8.6 — a pending memory learned in THIS run can be accepted/rejected right here (the
+  // reviewer's fastest path: judge it against the run that produced it). control-api is sole writer.
+  let busyId = $state<string | null>(null);
+  async function reloadMemories() {
+    const mr = await listAgentMemories(id);
+    if (mr.ok) memories = mr.value;
+  }
+  async function acceptLearned(m: MemoryView) {
+    busyId = m.id;
+    await acceptMemory(id, m.id);
+    busyId = null;
+    await reloadMemories();
+  }
+  async function rejectLearned(m: MemoryView) {
+    busyId = m.id;
+    await rejectMemory(id, m.id);
+    busyId = null;
+    await reloadMemories();
+  }
 </script>
 
 <div class="head">
@@ -111,7 +133,18 @@
           <div class="chain-group">
             <span class="chain-head">Learned {learned.length} — distilled from this run</span>
             <ul>
-              {#each learned as m (m.id)}<li><span class="kind">{m.kind}</span> {m.summary || m.content}</li>{/each}
+              {#each learned as m (m.id)}
+                <li>
+                  <span class="kind">{m.kind}</span> {m.summary || m.content}
+                  {#if m.status === "pending"}
+                    <span class="learned-actions">
+                      <span class="pending-tag">pending your review</span>
+                      <button type="button" class="mini primary" disabled={busyId === m.id} onclick={() => acceptLearned(m)}>Accept</button>
+                      <button type="button" class="mini" disabled={busyId === m.id} onclick={() => rejectLearned(m)}>Reject</button>
+                    </span>
+                  {/if}
+                </li>
+              {/each}
             </ul>
           </div>
         {/if}
@@ -122,7 +155,7 @@
     <!-- Transcript (AC1): turns, per-call metrics, and any Guard/permission refusals. -->
     <div class="transcript" role="log">
       {#if run.transcript.some(isRenderable)}
-        <RunTranscript transcript={run.transcript} showMetrics />
+        <RunTranscript transcript={run.transcript} showMetrics {memoryById} />
       {:else}
         <p class="muted">No transcript recorded.</p>
       {/if}
@@ -273,6 +306,38 @@
     font-size: var(--text-xs);
     color: var(--text-link);
     text-decoration: none;
+  }
+  /* Story 8.6 — accept/reject a pending memory learned in this run. */
+  .learned-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin-left: var(--space-2);
+  }
+  .pending-tag {
+    font-size: var(--text-2xs);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--action-primary-bg);
+  }
+  button.mini {
+    height: 22px;
+    padding: 0 var(--space-2);
+    font-size: var(--text-2xs);
+    border-radius: var(--radius-sm);
+    background: var(--surface-card);
+    border: 1px solid var(--border-strong);
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+  button.mini.primary {
+    background: var(--action-primary-bg);
+    color: var(--action-primary-fg);
+    border-color: transparent;
+  }
+  button.mini:disabled {
+    color: var(--text-disabled);
+    cursor: default;
   }
   .transcript {
     display: flex;

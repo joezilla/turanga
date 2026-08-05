@@ -38,6 +38,9 @@ export interface CostCap {
 // (not in PUBLISHED_FIELDS): editing it saves but never makes an agent "dirty" or requires a republish.
 export type MemoryKind = "episodic" | "semantic" | "procedure";
 export const MEMORY_KINDS: readonly MemoryKind[] = ["episodic", "semantic", "procedure"] as const;
+export type MemoryStatus = "active" | "pending" | "quarantined"; // Story 8.6
+export type MemoryEventKind =
+  | "learned" | "reinforced" | "superseded" | "forgotten" | "accepted" | "rejected" | "quarantined" | "unquarantined" | "edited" | "pinned" | "unpinned";
 
 /** Per-agent memory config. `inherit` follows the global default (which ships OFF), so a new agent is
  *  effectively memory-off until enabled. recall/reflect toggle independently. */
@@ -46,8 +49,9 @@ export interface MemoryConfig {
   recall: boolean;
   reflect: boolean;
   kinds: MemoryKind[];
+  requireApproval: boolean; // Story 8.6 — hold new memories pending until accepted
 }
-export const DEFAULT_MEMORY_CONFIG: MemoryConfig = { mode: "inherit", recall: true, reflect: true, kinds: [...MEMORY_KINDS] };
+export const DEFAULT_MEMORY_CONFIG: MemoryConfig = { mode: "inherit", recall: true, reflect: true, kinds: [...MEMORY_KINDS], requireApproval: false };
 
 /** Operator-wide memory defaults (Settings → Memory). Ships OFF. `embeddingModel`/`privacy` are
  *  read-only in the UI (the pgvector dimension is fixed; `agent-scoped` is the only privacy value). */
@@ -57,6 +61,7 @@ export interface MemoryGlobalConfig {
   embeddingModel: string;
   retentionDays: number | null;
   privacy: "agent-scoped";
+  requireApprovalDefault: boolean; // Story 8.6 — staged-approval floor
 }
 
 /** The single rule for whether + how memory runs for an agent — mirrors the server's
@@ -65,10 +70,16 @@ export interface MemoryGlobalConfig {
 export function effectiveMemoryConfig(
   global: MemoryGlobalConfig,
   perAgent: MemoryConfig,
-): { enabled: boolean; recall: boolean; reflect: boolean; kinds: MemoryKind[] } {
-  if (global.killSwitch) return { enabled: false, recall: false, reflect: false, kinds: [] };
+): { enabled: boolean; recall: boolean; reflect: boolean; kinds: MemoryKind[]; requireApproval: boolean } {
+  if (global.killSwitch) return { enabled: false, recall: false, reflect: false, kinds: [], requireApproval: false };
   const enabled = perAgent.mode === "on" ? true : perAgent.mode === "off" ? false : global.defaultEnabled;
-  return { enabled, recall: enabled && perAgent.recall, reflect: enabled && perAgent.reflect, kinds: enabled ? perAgent.kinds : [] };
+  return {
+    enabled,
+    recall: enabled && perAgent.recall,
+    reflect: enabled && perAgent.reflect,
+    kinds: enabled ? perAgent.kinds : [],
+    requireApproval: enabled && (global.requireApprovalDefault || perAgent.requireApproval),
+  };
 }
 
 /** The definition fields a publish snapshots — the tab dots and the dirty bar read from this. */

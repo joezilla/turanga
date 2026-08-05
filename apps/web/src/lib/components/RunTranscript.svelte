@@ -9,7 +9,13 @@
 
   // showMetrics: the review renders per-call metrics inline (observability); the test pane keeps
   // metrics in its own resolution summary (last-metrics), so it passes false — behavior unchanged.
-  let { transcript, showMetrics = false }: { transcript: RunMessage[]; showMetrics?: boolean } = $props();
+  // memoryById (Story 8.6): optional id→{kind,summary} map so a `recall` row can name WHICH memories
+  // were injected inline in the transcript (the causal chain, in place). Omitted → just the count.
+  let {
+    transcript,
+    showMetrics = false,
+    memoryById = {},
+  }: { transcript: RunMessage[]; showMetrics?: boolean; memoryById?: Record<string, { kind: string; summary: string }> } = $props();
 
   const fmtNum = (n: number) => n.toLocaleString("en-US");
   const refusalLabel = (kind: "egress" | "permission") => (kind === "egress" ? "Blocked egress" : "Permission denied");
@@ -41,6 +47,22 @@
       <span class="tool-outcome">· {toolWord(msg.outcome)}</span>
       <span class="tool-latency mono-num">· {fmtNum(msg.latencyMs)} ms</span>
       {#if msg.detail && msg.outcome !== "ok"}<span class="tool-detail">— {msg.detail}</span>{/if}
+    </div>
+  {:else if msg.type === "recall"}
+    <!-- Recall attribution (Story 8.6): memory was injected into this run at the start. Names the
+         memories inline when a summary map is provided; otherwise just the count. -->
+    <div class="recall">
+      <Circle size={7} fill="var(--state-succeeded)" color="var(--state-succeeded)" aria-hidden="true" />
+      <span class="recall-kind">Recalled {msg.count} {msg.count === 1 ? "memory" : "memories"}</span>
+      {#if msg.memoryIds.some((id) => memoryById[id])}
+        <ul class="recall-list">
+          {#each msg.memoryIds as id (id)}
+            {#if memoryById[id]}
+              <li><span class="recall-mkind">{memoryById[id].kind}</span> {memoryById[id].summary}</li>
+            {/if}
+          {/each}
+        </ul>
+      {/if}
     </div>
   {:else if msg.type === "metrics" && showMetrics}
     <p class="metrics mono-num">{fmtNum(msg.latencyMs)} ms · {fmtNum(msg.tokens)} tokens · {formatMicros(msg.costMicros)}</p>
@@ -85,6 +107,36 @@
     margin: 0;
     font-size: var(--text-sm);
     color: var(--text-secondary);
+  }
+  .recall {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin: 0;
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+  }
+  .recall-kind {
+    color: var(--state-succeeded);
+    font-weight: var(--weight-medium);
+    white-space: nowrap;
+  }
+  .recall-list {
+    flex-basis: 100%;
+    margin: 0;
+    padding: 0 0 0 var(--space-4);
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    color: var(--text-secondary);
+  }
+  .recall-mkind {
+    font-size: var(--text-2xs);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-tertiary);
   }
   .tool {
     display: flex;

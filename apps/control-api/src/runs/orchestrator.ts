@@ -3,7 +3,7 @@
 // Run with a stated reason and NEVER falls through to unsandboxed execution (NFR-1). Each control
 // message is published to the RunHub so the SSE endpoint can stream it live (E4-AD-7). The per-run
 // cost key + kill-on-429 is Story 4.5.
-import { ulid, effectiveMemoryConfig, type LifecycleState, type AttachedSkill, type AttachedTool, type CostCap, type Money } from "@turanga/domain";
+import { ulid, effectiveMemoryConfig, type LifecycleState, type AttachedSkill, type AttachedTool, type CostCap, type Money, type MemoryEventKind } from "@turanga/domain";
 import { CONTRACT_VERSION, ControlChannelMessageSchema, type JobSpec, type JobConnection, type JobTool, type JobMemory, type GuardRunEvent } from "@turanga/contracts";
 import type { RunsRepo, RunRow, RunStatus } from "./repo.js";
 import type { SandboxRuntime, SandboxHandle } from "./runtime.js";
@@ -232,6 +232,12 @@ export function runOrchestrator(deps: OrchestratorDeps) {
         .filter((m) => eff.kinds.includes(m.kind))
         .filter((m) => m.kind !== "procedure" || toolCallCount >= PROCEDURE_TOOL_THRESHOLD);
 
+      // Story 8.6 — staged approval: when required, a new memory starts PENDING (never recalled) until
+      // the builder accepts it; otherwise it's active immediately (the auto-apply loop).
+      const status = eff.requireApproval ? "pending" : "active";
+      const logEvent = (kind: MemoryEventKind, summary: string, memoryId: string | null) =>
+        void memoryRepo!.logMemoryEvent({ id: ulid(Date.now()), agentId, memoryId, kind, summary, sourceRunId: run.id, at: new Date().toISOString() }).catch(() => {});
+
       const now = new Date().toISOString();
       for (const m of distilled) {
         const embedding = await modelGateway.embed(m.content, global.embeddingModel);
@@ -239,12 +245,16 @@ export function runOrchestrator(deps: OrchestratorDeps) {
         const dup = await memoryRepo.findSimilar(agentId, embedding, m.kind, DEDUPE_MAX_DISTANCE);
         if (dup) {
           await memoryRepo.bumpSalience(agentId, dup.id, 1);
+          logEvent("reinforced", dup.summary || m.summary, dup.id);
           continue;
         }
         // Supersede: a same-topic memory that is close-but-not-a-dup is the stale prior fact ⇒ close it.
         if (m.topic) {
           const stale = await memoryRepo.findSimilar(agentId, embedding, m.kind, SUPERSEDE_MAX_DISTANCE);
-          if (stale && stale.topic === m.topic) await memoryRepo.supersede(agentId, stale.id, now);
+          if (stale && stale.topic === m.topic) {
+            await memoryRepo.supersede(agentId, stale.id, now);
+            logEvent("superseded", stale.summary, stale.id);
+          }
         }
         const mem: MemoryRow = {
           id: ulid(Date.now()),
@@ -256,6 +266,7 @@ export function runOrchestrator(deps: OrchestratorDeps) {
           topic: m.topic,
           salience: 1,
           pinned: false, // Story 8.5 — a new memory starts unpinned (prunable)
+          status, // Story 8.6 — pending (staged approval) or active (auto-apply)
           sourceRunId: run.id, // the auditable causal link (8.5 renders "learned from this run")
           validFrom: now,
           validUntil: null,
@@ -264,17 +275,22 @@ export function runOrchestrator(deps: OrchestratorDeps) {
           createdAt: now,
         };
         await memoryRepo.createMemory(mem);
+        logEvent("learned", m.summary, mem.id);
       }
 
       // Prune: keep the agent's memory set within budget, forgetting lowest-salience (then oldest)
-      // first. PINNED memories (Story 8.5) are never pruned — they're excluded from the candidate set.
+      // first. The budget is on TOTAL storage, but PINNED (8.5) and non-active (pending/quarantined,
+      // 8.6) memories are never candidates — only active, unpinned rows can be forgotten.
       const all = await memoryRepo.listForAgent(agentId);
       if (all.length > MAX_MEMORIES_PER_AGENT) {
         const doomed = all
-          .filter((m) => !m.pinned)
+          .filter((m) => !m.pinned && m.status === "active")
           .sort((a, b) => a.salience - b.salience || (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0))
           .slice(0, all.length - MAX_MEMORIES_PER_AGENT);
-        for (const d of doomed) await memoryRepo.deleteMemory(agentId, d.id);
+        for (const d of doomed) {
+          await memoryRepo.deleteMemory(agentId, d.id);
+          logEvent("forgotten", d.summary, d.id);
+        }
       }
     } catch {
       /* fail-safe — reflection never affects the completed run */

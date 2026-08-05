@@ -34,7 +34,7 @@
   function setMode(mode: MemoryConfig["mode"]) {
     onchange({ ...value, mode });
   }
-  function setFlag(key: "recall" | "reflect", on: boolean) {
+  function setFlag(key: "recall" | "reflect" | "requireApproval", on: boolean) {
     onchange({ ...value, [key]: on });
   }
   function toggleKind(kind: MemoryKind, on: boolean) {
@@ -113,7 +113,17 @@
             <span class="opt-desc">Distil each completed run into durable memories afterward — the self-improving loop.</span>
           </span>
         </label>
+        <label class="opt">
+          <input type="checkbox" checked={value.requireApproval} onchange={(e) => setFlag("requireApproval", (e.currentTarget as HTMLInputElement).checked)} />
+          <span class="opt-body">
+            <span class="opt-name">Require my approval</span>
+            <span class="opt-desc">Hold newly-learned memories <strong>pending</strong> until you accept them — nothing is recalled until you approve it. The strong human-in-the-loop.</span>
+          </span>
+        </label>
       </div>
+      {#if global.requireApprovalDefault && !value.requireApproval}
+        <p class="inert-note">The global default already requires approval for every agent.</p>
+      {/if}
       {#if !effective.enabled}
         <p class="inert-note">These apply once memory is on for this agent.</p>
       {/if}

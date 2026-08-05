@@ -33,6 +33,7 @@ const memRow = (over: Partial<MemoryRow> = {}): MemoryRow => ({
   topic: null,
   salience: 0,
   pinned: false,
+  status: "active",
   sourceRunId: null,
   validFrom: "2026-08-05T00:00:00.000Z",
   validUntil: null,
@@ -96,8 +97,8 @@ describe("memory repo — agent-scoped store (Story 8.1)", () => {
     expect(fresh).toEqual(DEFAULT_MEMORY_CONFIG);
     expect(fresh.mode).toBe("inherit");
 
-    await repo.setAgentMemoryConfig("new-agent", { mode: "on", recall: true, reflect: false, kinds: ["semantic"] });
-    expect(await repo.getAgentMemoryConfig("new-agent")).toEqual({ mode: "on", recall: true, reflect: false, kinds: ["semantic"] });
+    await repo.setAgentMemoryConfig("new-agent", { mode: "on", recall: true, reflect: false, kinds: ["semantic"], requireApproval: false });
+    expect(await repo.getAgentMemoryConfig("new-agent")).toEqual({ mode: "on", recall: true, reflect: false, kinds: ["semantic"], requireApproval: false });
   });
 
   it("off by default, end-to-end: a fresh agent's inherit config resolves to disabled", async () => {
@@ -272,5 +273,48 @@ describe("memory repo — updateMemory + pinned (Story 8.5)", () => {
     const repo = memoryMemoryRepo();
     await repo.createMemory(memRow({ id: "m", agentId: "A" }));
     expect((await repo.getMemory("A", "m"))!.pinned).toBe(false);
+  });
+});
+
+describe("memory repo — status filter + changelog (Story 8.6)", () => {
+  const embedded = (over: Partial<MemoryRow> & { content: string }) => memRow({ ...over, embedding: fakeEmbed(over.content) });
+
+  it("recall returns ONLY active memories — pending and quarantined are excluded", async () => {
+    const repo = memoryMemoryRepo();
+    await repo.createMemory(embedded({ id: "active", agentId: "A", content: "shared fact", status: "active" }));
+    await repo.createMemory(embedded({ id: "pending", agentId: "A", content: "shared fact", status: "pending" }));
+    await repo.createMemory(embedded({ id: "quar", agentId: "A", content: "shared fact", status: "quarantined" }));
+    const ids = (await repo.recall("A", fakeEmbed("shared fact"), 10)).map((h) => h.id);
+    expect(ids).toEqual(["active"]);
+  });
+
+  it("findSimilar (evolve dedupe) ignores pending and quarantined memories", async () => {
+    const repo = memoryMemoryRepo();
+    await repo.createMemory(embedded({ id: "pending", agentId: "A", kind: "semantic", content: "the user loves cats", status: "pending" }));
+    // A pending near-duplicate must NOT be found → reflect will insert a new one, not reinforce the pending one.
+    expect(await repo.findSimilar("A", fakeEmbed("the user loves cats"), "semantic", 0.05)).toBeNull();
+    await repo.createMemory(embedded({ id: "quar", agentId: "A", kind: "semantic", content: "the user loves dogs", status: "quarantined" }));
+    expect(await repo.findSimilar("A", fakeEmbed("the user loves dogs"), "semantic", 0.05)).toBeNull();
+  });
+
+  it("updateMemory sets status, agent-scoped (the accept/quarantine setter)", async () => {
+    const repo = memoryMemoryRepo();
+    await repo.createMemory(memRow({ id: "m", agentId: "A", status: "pending" }));
+    await repo.updateMemory("A", "m", { status: "active" });
+    expect((await repo.getMemory("A", "m"))!.status).toBe("active");
+    await repo.updateMemory("B", "m", { status: "quarantined" }); // wrong agent → no-op (FR-7)
+    expect((await repo.getMemory("A", "m"))!.status).toBe("active");
+  });
+
+  it("logMemoryEvent + listMemoryEvents are append-only, newest-first, and agent-scoped (FR-7)", async () => {
+    const repo = memoryMemoryRepo();
+    await repo.logMemoryEvent({ id: ulid(1), agentId: "A", memoryId: "m1", kind: "learned", summary: "first", sourceRunId: "run-1", at: "2026-08-05T00:00:01.000Z" });
+    await repo.logMemoryEvent({ id: ulid(2), agentId: "A", memoryId: "m1", kind: "accepted", summary: "first", sourceRunId: null, at: "2026-08-05T00:00:02.000Z" });
+    await repo.logMemoryEvent({ id: ulid(3), agentId: "B", memoryId: "b1", kind: "learned", summary: "other agent", sourceRunId: null, at: "2026-08-05T00:00:03.000Z" });
+
+    const events = await repo.listMemoryEvents("A", 10);
+    expect(events.map((e) => e.kind)).toEqual(["accepted", "learned"]); // newest first
+    expect(events.every((e) => e.agentId === "A")).toBe(true); // FR-7 — never another agent's history
+    expect(await repo.listMemoryEvents("A", 1)).toHaveLength(1); // limit honored
   });
 });

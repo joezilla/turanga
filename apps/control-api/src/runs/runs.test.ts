@@ -529,6 +529,7 @@ describe("run orchestrator — recall (Story 8.3)", () => {
     topic: null,
     salience: 0,
     pinned: false,
+    status: "active",
     sourceRunId: null,
     validFrom: "2026-08-05T00:00:00.000Z",
     validUntil: null,
@@ -543,7 +544,7 @@ describe("run orchestrator — recall (Story 8.3)", () => {
     const memoryRepo = memoryMemoryRepo();
     if (opts.recall) {
       await memoryRepo.setGlobalConfig({ defaultEnabled: true });
-      await memoryRepo.setAgentMemoryConfig("a1", { mode: "on", recall: true, reflect: true, kinds: ["episodic", "semantic", "procedure"] });
+      await memoryRepo.setAgentMemoryConfig("a1", { mode: "on", recall: true, reflect: true, kinds: ["episodic", "semantic", "procedure"], requireApproval: false });
     }
     await memoryRepo.createMemory(embeddedMemory({ id: "mem-cats", content: "the user loves cats", summary: "the user loves cats" }));
     const runtime = fakeSandboxRuntime({ lines: [nd({ type: "done", v: CONTRACT_VERSION, status: "succeeded" })] });
@@ -606,7 +607,7 @@ describe("run orchestrator — recall (Story 8.3)", () => {
     const runsRepo = memoryRunsRepo();
     const memoryRepo = memoryMemoryRepo();
     await memoryRepo.setGlobalConfig({ defaultEnabled: true });
-    await memoryRepo.setAgentMemoryConfig("a1", { mode: "on", recall: true, reflect: true, kinds: ["episodic", "semantic", "procedure"] });
+    await memoryRepo.setAgentMemoryConfig("a1", { mode: "on", recall: true, reflect: true, kinds: ["episodic", "semantic", "procedure"], requireApproval: false });
     const longContent = "x".repeat(5000); // empty summary → falls back to (long) content
     await memoryRepo.createMemory(embeddedMemory({ id: "big", content: longContent, summary: "" }));
     const runtime = fakeSandboxRuntime({ lines: [nd({ type: "done", v: CONTRACT_VERSION, status: "succeeded" })] });
@@ -621,11 +622,12 @@ describe("run orchestrator — recall (Story 8.3)", () => {
 });
 
 describe("run orchestrator — reflect (Story 8.4)", () => {
-  const memConfig = (over: Partial<{ recall: boolean; reflect: boolean }> = {}) => ({
+  const memConfig = (over: Partial<{ recall: boolean; reflect: boolean; requireApproval: boolean }> = {}) => ({
     mode: "on" as const,
     recall: false,
     reflect: true,
     kinds: ["episodic", "semantic", "procedure"] as ("episodic" | "semantic" | "procedure")[],
+    requireApproval: false,
     ...over,
   });
 
@@ -683,7 +685,7 @@ describe("run orchestrator — reflect (Story 8.4)", () => {
     const { o, memoryRepo } = await reflectOrch({ reflect: true, reflector: fakeReflector({ memories: [{ kind: "semantic", content: "brand new distinct memory", summary: "new", topic: null }] }) });
     // Seed exactly the budget (200), including one deliberately-lowest-salience row.
     for (let i = 0; i < 200; i++) {
-      await memoryRepo.createMemory({ id: `seed-${i}`, agentId: "a1", kind: "semantic", content: `seed ${i}`, summary: "", embedding: [i / 200], topic: null, salience: i === 7 ? 0 : 10, pinned: false, sourceRunId: null, validFrom: "2026-08-05T00:00:00.000Z", validUntil: null, useCount: 0, lastUsedAt: null, createdAt: "2026-08-05T00:00:00.000Z" });
+      await memoryRepo.createMemory({ id: `seed-${i}`, agentId: "a1", kind: "semantic", content: `seed ${i}`, summary: "", embedding: [i / 200], topic: null, salience: i === 7 ? 0 : 10, pinned: false, status: "active", sourceRunId: null, validFrom: "2026-08-05T00:00:00.000Z", validUntil: null, useCount: 0, lastUsedAt: null, createdAt: "2026-08-05T00:00:00.000Z" });
     }
     await o.launch("a1", "add one more"); // inserts 1 → 201 → prune 1 (the salience-0 seed-7)
     // Wait on the actual post-condition (the lowest-salience row is forgotten) — NOT on count===200,
@@ -696,7 +698,7 @@ describe("run orchestrator — reflect (Story 8.4)", () => {
     const { o, memoryRepo } = await reflectOrch({ reflect: true, reflector: fakeReflector({ memories: [{ kind: "semantic", content: "another brand new distinct memory", summary: "new2", topic: null }] }) });
     // 200 seeds: p-7 is pinned + lowest salience (must survive); p-3 is unpinned + lowest salience (gets pruned).
     for (let i = 0; i < 200; i++) {
-      await memoryRepo.createMemory({ id: `p-${i}`, agentId: "a1", kind: "semantic", content: `seed ${i}`, summary: "", embedding: [i / 200], topic: null, salience: i === 7 || i === 3 ? 0 : 10, pinned: i === 7, sourceRunId: null, validFrom: "2026-08-05T00:00:00.000Z", validUntil: null, useCount: 0, lastUsedAt: null, createdAt: "2026-08-05T00:00:00.000Z" });
+      await memoryRepo.createMemory({ id: `p-${i}`, agentId: "a1", kind: "semantic", content: `seed ${i}`, summary: "", embedding: [i / 200], topic: null, salience: i === 7 || i === 3 ? 0 : 10, pinned: i === 7, status: "active", sourceRunId: null, validFrom: "2026-08-05T00:00:00.000Z", validUntil: null, useCount: 0, lastUsedAt: null, createdAt: "2026-08-05T00:00:00.000Z" });
     }
     await o.launch("a1", "add one more"); // 201 → prune 1 (the unpinned lowest, p-3)
     await vi.waitFor(async () => expect(await memoryRepo.getMemory("a1", "p-3")).toBeNull());
@@ -732,5 +734,65 @@ describe("run orchestrator — reflect (Story 8.4)", () => {
     // the SECOND established sandbox carries the recalled memory in its JobSpec.
     expect(runtime.established[1].jobSpecJson).toContain("the user loves cats");
     if (r2.ok) expect(r2.run.transcript.some((m) => m.type === "recall")).toBe(true);
+  });
+});
+
+describe("run orchestrator — reflect under require-approval (Story 8.6)", () => {
+  const memConfig = (over: Partial<{ recall: boolean; reflect: boolean; requireApproval: boolean }> = {}) => ({
+    mode: "on" as const,
+    recall: false,
+    reflect: true,
+    kinds: ["episodic", "semantic", "procedure"] as ("episodic" | "semantic" | "procedure")[],
+    requireApproval: false,
+    ...over,
+  });
+
+  async function reflectOrch(opts: { requireApproval: boolean; reflector?: ReturnType<typeof fakeReflector> }) {
+    const runsRepo = memoryRunsRepo();
+    const memoryRepo = memoryMemoryRepo();
+    await memoryRepo.setGlobalConfig({ defaultEnabled: true });
+    await memoryRepo.setAgentMemoryConfig("a1", memConfig({ reflect: true, requireApproval: opts.requireApproval }));
+    const reflector = opts.reflector ?? fakeReflector({ memories: [{ kind: "semantic", content: "a distinct new fact", summary: "distinct fact", topic: null }] });
+    const runtime = fakeSandboxRuntime({ lines: [nd({ type: "turn", v: CONTRACT_VERSION, role: "agent", text: "done" }), nd({ type: "done", v: CONTRACT_VERSION, status: "succeeded" })] });
+    const o = runOrchestrator({ runsRepo, agentsRepo: agentsRepo(agent()), runtime, guard: fakeRunGuard(), hub: createRunHub(), memoryRepo, reflector, modelGateway: fakeModelGateway(), image: "img", sandboxVolume: "vol" });
+    return { o, memoryRepo };
+  }
+
+  it("requireApproval ON: a learned memory is written PENDING (never recalled until accepted) and logs 'learned'", async () => {
+    const { o, memoryRepo } = await reflectOrch({ requireApproval: true });
+    const r = await o.launch("a1", "learn something");
+    expect(r.ok).toBe(true);
+    await vi.waitFor(async () => expect(await memoryRepo.listForAgent("a1")).toHaveLength(1));
+    const [mem] = await memoryRepo.listForAgent("a1");
+    expect(mem.status).toBe("pending"); // held out of recall until a human accepts
+    // A pending memory is not recallable even on an exact-match query.
+    expect((await memoryRepo.recall("a1", mem.embedding!, 10)).map((h) => h.id)).not.toContain(mem.id);
+    // The learning is journaled.
+    await vi.waitFor(async () => expect((await memoryRepo.listMemoryEvents("a1", 10)).some((e) => e.kind === "learned")).toBe(true));
+  });
+
+  it("requireApproval OFF: a learned memory is written ACTIVE (immediately recallable)", async () => {
+    const { o, memoryRepo } = await reflectOrch({ requireApproval: false });
+    const r = await o.launch("a1", "learn something");
+    expect(r.ok).toBe(true);
+    await vi.waitFor(async () => expect(await memoryRepo.listForAgent("a1")).toHaveLength(1));
+    expect((await memoryRepo.listForAgent("a1"))[0].status).toBe("active");
+  });
+
+  it("prune skips PENDING memories — the budget is enforced over active rows, pending is never force-forgotten", async () => {
+    const { o, memoryRepo } = await reflectOrch({
+      requireApproval: false,
+      reflector: fakeReflector({ memories: [{ kind: "semantic", content: "yet another distinct memory", summary: "yad", topic: null }] }),
+    });
+    // 200 active seeds (at budget) + one PENDING seed with the lowest salience. The pending one must
+    // survive the prune; the lowest-salience ACTIVE row (seed-7) is the one forgotten.
+    for (let i = 0; i < 200; i++) {
+      await memoryRepo.createMemory({ id: `seed-${i}`, agentId: "a1", kind: "semantic", content: `seed ${i}`, summary: "", embedding: [i / 200], topic: null, salience: i === 7 ? 0 : 10, pinned: false, status: "active", sourceRunId: null, validFrom: "2026-08-05T00:00:00.000Z", validUntil: null, useCount: 0, lastUsedAt: null, createdAt: "2026-08-05T00:00:00.000Z" });
+    }
+    await memoryRepo.createMemory({ id: "pend", agentId: "a1", kind: "semantic", content: "pending low", summary: "", embedding: [0.999], topic: null, salience: 0, pinned: false, status: "pending", sourceRunId: null, validFrom: "2026-08-05T00:00:00.000Z", validUntil: null, useCount: 0, lastUsedAt: null, createdAt: "2026-08-05T00:00:00.000Z" });
+
+    await o.launch("a1", "add one more");
+    await vi.waitFor(async () => expect(await memoryRepo.getMemory("a1", "seed-7")).toBeNull());
+    expect(await memoryRepo.getMemory("a1", "pend")).not.toBeNull(); // pending → never prune-forgotten
   });
 });

@@ -156,6 +156,7 @@ export const agentMemories = pgTable(
     topic: text("topic"),
     salience: integer("salience").notNull().default(0),
     pinned: boolean("pinned").notNull().default(false), // Story 8.5 — protect from the reflect prune / decay
+    status: text("status").notNull().default("active"), // Story 8.6 — 'active' | 'pending' | 'quarantined'; only 'active' is recalled
     sourceRunId: text("source_run_id"),
     validFrom: timestamp("valid_from", { withTimezone: true }).notNull().defaultNow(),
     validUntil: timestamp("valid_until", { withTimezone: true }), // null = still valid
@@ -181,5 +182,23 @@ export const memorySettings = pgTable("memory_settings", {
   embeddingModel: text("embedding_model").notNull().default("text-embedding-3-small"),
   retentionDays: integer("retention_days"), // null = keep indefinitely
   privacy: text("privacy").notNull().default("agent-scoped"),
+  requireApprovalDefault: boolean("require_approval_default").notNull().default(false), // Story 8.6 — staged-approval floor
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+// The per-agent learning changelog (Epic 8, Story 8.6) — an append-only "git-log for the agent's mind".
+// control-api is the sole writer (AD-7); reads are agent-scoped (FR-7). Each row snapshots the memory
+// `summary` at event time so the log reads even after the memory is forgotten/rejected (its row gone).
+export const memoryEvents = pgTable(
+  "memory_events",
+  {
+    id: text("id").primaryKey(), // ULID
+    agentId: text("agent_id").notNull(),
+    memoryId: text("memory_id"), // nullable — a forgotten memory's row may be gone
+    kind: text("kind").notNull(), // learned | reinforced | superseded | forgotten | accepted | rejected | quarantined | unquarantined | edited | pinned | unpinned
+    summary: text("summary").notNull().default(""), // snapshot at event time
+    sourceRunId: text("source_run_id"),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("memory_events_agent_idx").on(t.agentId)],
+);

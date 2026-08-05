@@ -109,3 +109,53 @@ test("agent header links to a Memory page that shows the empty state for a fresh
   await page.getByLabel("Back to agent").click();
   await expect(page).toHaveURL(url);
 });
+
+test("Settings → Memory: the 'require approval by default' toggle persists (Story 8.6)", async ({ page }) => {
+  await signIn(page);
+  await page.goto("/settings/memory");
+  await expect(page.getByRole("heading", { name: "Memory" })).toBeVisible();
+
+  // Off by default; flip it on and confirm the server-backed switch state (poll, don't .check()).
+  const approvalToggle = page.getByRole("switch", { name: "Toggle require-approval by default" });
+  await expect(approvalToggle).not.toBeChecked();
+  await approvalToggle.click();
+  await expect(approvalToggle).toBeChecked();
+
+  // Persists across a reload (control-api is the sole writer, AD-7).
+  await page.reload();
+  await expect(page.getByRole("switch", { name: "Toggle require-approval by default" })).toBeChecked();
+
+  // Restore the off default so the rest of the suite sees a clean platform state.
+  await page.getByRole("switch", { name: "Toggle require-approval by default" }).click();
+  await expect(page.getByRole("switch", { name: "Toggle require-approval by default" })).not.toBeChecked();
+});
+
+test("agent editor Memory tab: the per-agent 'Require my approval' checkbox persists (Story 8.6)", async ({ page }) => {
+  await signIn(page);
+  await newAgent(page);
+
+  await page.getByRole("button", { name: /^Memory/ }).click();
+  // Turn the agent On so the flags are live, then require approval.
+  await page.getByRole("button", { name: "On", exact: true }).click();
+  await expect(page.getByText(/Effectively on/)).toBeVisible();
+
+  await page.getByRole("checkbox", { name: /Require my approval/ }).check();
+  await saveDraft(page);
+
+  // Persists across a reload.
+  await page.reload();
+  await page.getByRole("button", { name: /^Memory/ }).click();
+  await expect(page.getByRole("checkbox", { name: /Require my approval/ })).toBeChecked();
+});
+
+test("Memory page: the learning-history changelog opens and is empty for a fresh agent (Story 8.6)", async ({ page }) => {
+  await signIn(page);
+  await newAgent(page);
+
+  await page.getByRole("link", { name: "Memory", exact: true }).click();
+  await expect(page).toHaveURL(/\/agents\/[0-9A-Z]{26}\/memory$/);
+
+  // The changelog is collapsed by default; opening it loads the (empty) history for a fresh agent.
+  await page.getByRole("button", { name: /Learning history/ }).click();
+  await expect(page.getByText("No changes recorded yet.")).toBeVisible();
+});

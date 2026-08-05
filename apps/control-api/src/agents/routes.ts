@@ -145,10 +145,11 @@ async function parseTools(input: unknown, toolsRepo: ToolsRepo): Promise<{ ok: t
 const MEMORY_MODES = new Set(["inherit", "on", "off"]);
 function parseMemoryConfig(input: unknown): { ok: true; value: MemoryConfig } | { ok: false; error: string } {
   if (input === null || typeof input !== "object" || Array.isArray(input)) return { ok: false, error: "Memory config must be an object." };
-  const m = input as { mode?: unknown; recall?: unknown; reflect?: unknown; kinds?: unknown };
+  const m = input as { mode?: unknown; recall?: unknown; reflect?: unknown; kinds?: unknown; requireApproval?: unknown };
   if (typeof m.mode !== "string" || !MEMORY_MODES.has(m.mode)) return { ok: false, error: "Memory mode must be inherit, on, or off." };
   if (typeof m.recall !== "boolean") return { ok: false, error: "recall must be true or false." };
   if (typeof m.reflect !== "boolean") return { ok: false, error: "reflect must be true or false." };
+  if (m.requireApproval !== undefined && typeof m.requireApproval !== "boolean") return { ok: false, error: "requireApproval must be true or false." };
   if (!Array.isArray(m.kinds)) return { ok: false, error: "Memory kinds must be a list." };
   const allowed = new Set<string>(MEMORY_KINDS);
   const seen = new Set<MemoryKind>();
@@ -159,7 +160,7 @@ function parseMemoryConfig(input: unknown): { ok: true; value: MemoryConfig } | 
   // Store in canonical MEMORY_KINDS order (kinds is a SET) — de-dupes AND keeps the stored order stable
   // so the editor's dirty check doesn't flag a re-ordered-but-equal set as an unsaved change (52f1c84).
   const kinds: MemoryKind[] = MEMORY_KINDS.filter((k) => seen.has(k));
-  return { ok: true, value: { mode: m.mode as MemoryConfig["mode"], recall: m.recall, reflect: m.reflect, kinds } };
+  return { ok: true, value: { mode: m.mode as MemoryConfig["mode"], recall: m.recall, reflect: m.reflect, kinds, requireApproval: m.requireApproval ?? false } };
 }
 
 export function agentRoutes(repo: AgentsRepo, connectionsRepo: ConnectionsRepo, toolsRepo: ToolsRepo) {

@@ -158,6 +158,25 @@ export interface Memory {
   createdAt: string; // UTC ISO-8601
 }
 
+/** A memory's lifecycle state (Story 8.6). Only `active` is recalled; `pending` awaits staged approval;
+ *  `quarantined` is a non-destructive rollback (excluded from recall, not deleted). */
+export type MemoryStatus = "active" | "pending" | "quarantined";
+export const MEMORY_STATUSES: readonly MemoryStatus[] = ["active", "pending", "quarantined"] as const;
+
+/** A learning-changelog event kind (Story 8.6) — the "git-log for the agent's mind". */
+export type MemoryEventKind =
+  | "learned"
+  | "reinforced"
+  | "superseded"
+  | "forgotten"
+  | "accepted"
+  | "rejected"
+  | "quarantined"
+  | "unquarantined"
+  | "edited"
+  | "pinned"
+  | "unpinned";
+
 /** Per-agent memory configuration (Story 8.1). `inherit` follows the global default — which ships OFF —
  *  so a new agent is effectively memory-off until deliberately enabled. */
 export interface MemoryConfig {
@@ -165,11 +184,12 @@ export interface MemoryConfig {
   recall: boolean; // inject relevant memories at run start (8.3)
   reflect: boolean; // distill the run into memories afterward (8.4)
   kinds: MemoryKind[]; // which kinds this agent may learn/recall
+  requireApproval: boolean; // Story 8.6 — hold new memories PENDING until the builder accepts them
 }
 
 /** The per-agent config a NEW agent gets: inherit + all capabilities on — effectively OFF while the
  *  global default is off (the operator turns memory on globally or per-agent). */
-export const DEFAULT_MEMORY_CONFIG: MemoryConfig = { mode: "inherit", recall: true, reflect: true, kinds: [...MEMORY_KINDS] };
+export const DEFAULT_MEMORY_CONFIG: MemoryConfig = { mode: "inherit", recall: true, reflect: true, kinds: [...MEMORY_KINDS], requireApproval: false };
 
 /** Operator-wide memory defaults (Story 8.1). Ships OFF: memory is a privacy-sensitive, opt-in surface.
  *  `embeddingModel` drives compute in 8.3; the pgvector column dimension is fixed at build time. */
@@ -179,6 +199,7 @@ export interface MemoryGlobalConfig {
   embeddingModel: string;
   retentionDays: number | null; // null = keep indefinitely
   privacy: "agent-scoped"; // "shared across a builder's agents" is a deliberate later opt-in
+  requireApprovalDefault: boolean; // Story 8.6 — a platform-wide staged-approval floor (OR'd with per-agent)
 }
 
 export const DEFAULT_MEMORY_GLOBAL_CONFIG: MemoryGlobalConfig = {
@@ -187,6 +208,7 @@ export const DEFAULT_MEMORY_GLOBAL_CONFIG: MemoryGlobalConfig = {
   embeddingModel: "text-embedding-3-small",
   retentionDays: null,
   privacy: "agent-scoped",
+  requireApprovalDefault: false,
 };
 
 /** The single source of truth for whether + how memory runs for an agent (Story 8.1). Pure — the
@@ -195,14 +217,16 @@ export const DEFAULT_MEMORY_GLOBAL_CONFIG: MemoryGlobalConfig = {
 export function effectiveMemoryConfig(
   global: MemoryGlobalConfig,
   perAgent: MemoryConfig,
-): { enabled: boolean; recall: boolean; reflect: boolean; kinds: MemoryKind[] } {
-  if (global.killSwitch) return { enabled: false, recall: false, reflect: false, kinds: [] };
+): { enabled: boolean; recall: boolean; reflect: boolean; kinds: MemoryKind[]; requireApproval: boolean } {
+  if (global.killSwitch) return { enabled: false, recall: false, reflect: false, kinds: [], requireApproval: false };
   const enabled = perAgent.mode === "on" ? true : perAgent.mode === "off" ? false : global.defaultEnabled;
   return {
     enabled,
     recall: enabled && perAgent.recall,
     reflect: enabled && perAgent.reflect,
     kinds: enabled ? perAgent.kinds : [],
+    // Story 8.6 — OR: the operator can mandate approval platform-wide; an agent can additionally opt in.
+    requireApproval: enabled && (global.requireApprovalDefault || perAgent.requireApproval),
   };
 }
 

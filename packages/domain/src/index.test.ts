@@ -26,18 +26,31 @@ describe("domain", () => {
   it("effectiveMemoryConfig: memory is OFF by default and the toggle resolves correctly (Story 8.1)", () => {
     const global = DEFAULT_MEMORY_GLOBAL_CONFIG; // defaultEnabled false, killSwitch false
     // A brand-new agent (inherit) with the default-off global → effectively OFF.
-    expect(effectiveMemoryConfig(global, DEFAULT_MEMORY_CONFIG)).toEqual({ enabled: false, recall: false, reflect: false, kinds: [] });
+    expect(effectiveMemoryConfig(global, DEFAULT_MEMORY_CONFIG)).toEqual({ enabled: false, recall: false, reflect: false, kinds: [], requireApproval: false });
     // inherit follows the global default when it's ON.
     expect(effectiveMemoryConfig({ ...global, defaultEnabled: true }, DEFAULT_MEMORY_CONFIG).enabled).toBe(true);
     // mode:"on" enables regardless of the global default.
-    const on: MemoryConfig = { mode: "on", recall: true, reflect: true, kinds: ["semantic"] };
-    expect(effectiveMemoryConfig(global, on)).toEqual({ enabled: true, recall: true, reflect: true, kinds: ["semantic"] });
+    const on: MemoryConfig = { mode: "on", recall: true, reflect: true, kinds: ["semantic"], requireApproval: false };
+    expect(effectiveMemoryConfig(global, on)).toEqual({ enabled: true, recall: true, reflect: true, kinds: ["semantic"], requireApproval: false });
     // mode:"off" disables even when the global default is on.
     expect(effectiveMemoryConfig({ ...global, defaultEnabled: true }, { ...on, mode: "off" }).enabled).toBe(false);
     // recall/reflect are gated by BOTH enabled and the per-agent flag.
-    expect(effectiveMemoryConfig(global, { mode: "on", recall: false, reflect: true, kinds: [...DEFAULT_MEMORY_CONFIG.kinds] })).toMatchObject({ enabled: true, recall: false, reflect: true });
+    expect(effectiveMemoryConfig(global, { mode: "on", recall: false, reflect: true, kinds: [...DEFAULT_MEMORY_CONFIG.kinds], requireApproval: false })).toMatchObject({ enabled: true, recall: false, reflect: true });
     // killSwitch overrides everything — even an explicitly-on agent.
-    expect(effectiveMemoryConfig({ ...global, killSwitch: true }, on)).toEqual({ enabled: false, recall: false, reflect: false, kinds: [] });
+    expect(effectiveMemoryConfig({ ...global, killSwitch: true }, on)).toEqual({ enabled: false, recall: false, reflect: false, kinds: [], requireApproval: false });
+  });
+
+  it("effectiveMemoryConfig: requireApproval resolves OR(global default, per-agent), gated by enabled (Story 8.6)", () => {
+    const g = DEFAULT_MEMORY_GLOBAL_CONFIG;
+    const onAgent: MemoryConfig = { mode: "on", recall: true, reflect: true, kinds: ["semantic"], requireApproval: false };
+    // Default: off both → auto-apply (no approval).
+    expect(effectiveMemoryConfig(g, onAgent).requireApproval).toBe(false);
+    // Per-agent opts in.
+    expect(effectiveMemoryConfig(g, { ...onAgent, requireApproval: true }).requireApproval).toBe(true);
+    // Global mandates it platform-wide (floor) even when the agent didn't ask.
+    expect(effectiveMemoryConfig({ ...g, requireApprovalDefault: true }, onAgent).requireApproval).toBe(true);
+    // But a disabled agent (off) never requires approval (nothing is learned to approve).
+    expect(effectiveMemoryConfig({ ...g, requireApprovalDefault: true }, { ...onAgent, mode: "off" }).requireApproval).toBe(false);
   });
 
   it("activationBlockers: the Activate gate truth table (Story 5.1)", () => {
