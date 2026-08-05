@@ -173,13 +173,16 @@
   const definedNames = $derived(vars.map((v) => v.name).filter((n) => VAR_NAME_RE.test(n)));
   const undefinedNames = $derived(undefinedVariables(instructions, definedNames));
 
+  // Blockers read the LIVE editor state (model, costCap) — not the saved `agent.*` — so typing a
+  // model or a cap clears its line immediately, before you save. The Activate button stays gated on
+  // the saved draft via its separate `unsaved` guard, so this only changes the note, not what can run.
   const modelProviderConnected = $derived.by(() => {
-    if (!agent?.model) return false;
-    const prefix = agent.model.split("/")[0];
+    if (!model) return false;
+    const prefix = model.split("/")[0];
     return providers.some((p) => p.status === "connected" && (p.provider === prefix || p.name === prefix));
   });
   const activateBlockers = $derived(
-    agent ? activationBlockers({ model: agent.model, costCap: agent.costCap }, modelProviderConnected) : [],
+    agent ? activationBlockers({ model, costCap }, modelProviderConnected) : [],
   );
 
   const nextVersion = $derived((agent?.publishedVersion ?? 0) + 1);
