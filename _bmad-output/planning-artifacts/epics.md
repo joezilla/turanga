@@ -146,6 +146,15 @@ The builder can deploy their **own** trusted tool containers into turanga and ha
 ### Epic 8: Agent memory — the self-improving loop
 Agents **learn from their runs**. turanga already records every run (the transcript) but nothing reads it back. This epic closes the loop: a control-plane **memory store** (pgvector), a **recall** step that injects the most relevant memories into the immutable job spec at run start, and a post-run **reflection** step that distills the transcript into durable, scoped memories — so an agent that fails a task once can succeed the next time because it *remembered* (the Hermes-style do → reflect → remember → recall → improve loop, on turanga's isolation rails). Memory is **off by default and three-level configurable — per individual agent (enable/disable, recall vs reflect, per kind) governed by global defaults an operator sets once** — because it is a privacy-sensitive, data-collecting surface; the toggle is enforced control-plane (AD-7). All storage/retrieval/consolidation is control-plane; the sandbox never touches memory (AD-1); memories are secret-free spec content (AD-10); recall is zero-cost (embedding-only) and reflection is observed-not-metered. mempalace's distinctives (scoped recall, temporal knowledge graph, memory-as-a-tool) are additive later phases. *(Post-MVP; captured 2026-08-03. AD-1, AD-7, AD-9, AD-10, FR-7.)*
 
+### Epic 9: Chat — a multi-turn conversation with a published agent
+The builder **converses** with an agent instead of firing one-shot test tasks. Chat is **threaded runs**: each user message spawns a fresh run — against the agent's **published version**, with the conversation history injected into the immutable job spec — whose reply streams back and appends to the thread. Every turn stays network-isolated, cost-capped, Guard-fronted, and observable (AD-1/AD-9); the conversation is a control-plane thread that reuses the entire run/harness/Guard/observability machinery. Chat is short-term *thread* memory and composes with Epic 8's long-term memory. **Builder-first** (single-tenant, control-plane only); a **deployable/shared end-user** surface (identity, access control, per-conversation isolation, abuse/rate limits) is an additive later phase, and true mid-turn human-in-the-loop is deferred (a turn completes, then you reply). Requires a published agent — ties into the draft/publish model. *(Post-MVP; captured 2026-08-05. AD-1, AD-7, AD-9, AD-10.)*
+
+### Epic 10: Evals — measuring agent performance over time
+A repeatable way to **grade an agent** so quality is a tracked number, not a vibe. An **eval case** = a fixed task input + a grader (**assertion** — deterministic; **LLM-as-judge** — a control-plane, observed-not-metered model call; or **human rating**); an eval run is just a turanga run, so it reuses the whole run/Guard/observability stack. Produces a **per-agent score timeline** correlated with publish versions and learning events. Its keystone use is **memory oversight**: run a suite against different **memory states** (off / current / a snapshot) and after each consolidation — if learning drops the score, alert and quarantine the offending memories. Evals also gate publishes and (Epic 9) chat flows. *(Post-MVP; captured 2026-08-05. Consumes Epic 8's memory-state hooks. AD-1, AD-7.)*
+
+### Epic 11: Agent data & artifacts — an agent-scoped store
+A first-class, **agent-scoped, authoritative data store** for the structured/exact data an agent owns (the stock-advisor's **portfolio**), distinct from learned memory: a **structured store** (CRUD records), **artifacts/blobs** (files the agent reads/writes), and **reference knowledge** (user-authored authoritative docs). Runtime read/write means it is **Guard-brokered** (the Epic 6 tool path, not job-spec injection), agent-isolated (enforced control-plane), quota'd, credential Guard-held — effectively a first-party "the agent's own store" tool. Inherits **Epic 8's foundations**: the agent-scoped control-plane store + isolation pattern, the generalized "first-party store exposed as a Guard tool" seam, and the embedding/recall infra (for reference-knowledge RAG). *(Post-MVP; captured 2026-08-05. Builds on Epic 6 broker + Epic 8 store patterns. AD-1, AD-5, AD-7, AD-10.)*
+
 > **Cross-cutting UX conventions** (applied as ACs across all UI stories, not standalone): UX-DR14 interaction primitives, UX-DR15 accessibility floor, UX-DR16 voice/microcopy, UX-DR19 Lucide icons. Established as project conventions in Story 1.2 and re-asserted per surface.
 
 ## Epic 1: Foundation & Access
@@ -835,6 +844,31 @@ So that I can trust the loop — inspect what it knows, see which memory changed
 **When** the builder acts on it
 **Then** they can **pin** (protect from decay), **edit**, or **forget** it (control-api sole writer) — the curation surface; memories that can carry real user data are handled per the privacy/redaction default set in 8.2.
 
+### Story 8.6: Learning visibility + human oversight
+
+As the builder,
+I want to see what an agent learned and be able to gate it before it takes effect,
+So that a self-improving agent with real access can't silently drift — I stay in the loop.
+
+**Acceptance Criteria:**
+
+**Given** a run/conversation that produced new memories
+**When** reflection completes
+**Then** a legible **"here's what I learned"** surface shows the new memories in plain language, each with **pin / edit / forget**; and an **optional staged-approval mode** (per-agent / global config, default off = auto-apply) holds new memories **pending** until the builder accepts them — the strong human-in-the-loop form for an agent with real access.
+
+**Given** an agent's memory over time
+**When** it is viewed
+**Then** a per-agent **learning changelog** shows what was learned / forgotten (low salience) / superseded (temporal validity), version by version — the "git-log for the agent's mind"; and where a run recalled a memory, it is **attributed inline** in the transcript (the auditable causality made visible; lands in Epic 9 chat too).
+
+**Given** a memory suspected of hurting performance
+**When** the builder — or an eval (Epic 10) — flags it
+**Then** it can be **quarantined** (disabled non-destructively, not just forgotten) so a learning regression is rolled back and A/B-comparable — the seam Epic 10 evals gate on.
+
+### Foundations this epic lays (for future epics)
+Epic 8 is deliberately shaped so two later epics plug in without a rewrite:
+- **Evals (Epic 10)** — recall is **parameterizable by memory state** (off / current / a named snapshot), memories are individually **quarantinable**, and every recall records its causal link to a run. An eval can therefore run a suite against a chosen memory state and gate learning on the score delta (the memory-oversight loop).
+- **Agent data & artifacts (Epic 11)** — the **agent-scoped, control-plane, single-writer, isolated store** pattern (`agent_memories`) is written to **generalize** (memory is the first store; a structured data store is the next), and the **memory-as-a-Guard-tool** later phase is designed as a general **"first-party store exposed as a Guard tool"** seam (runtime CRUD), of which memory is the first instance. The embedding/recall infra is reusable for reference-knowledge RAG.
+
 ### Provisional later-phase sketch (NOT broken down — the mempalace distinctives, additive)
 - **Structured/scoped recall** — topic/room scoping + verbatim-plus-summary duality (recall quality beyond flat top-k).
 - **Temporal knowledge graph** — entity→relationship edges with validity windows: *the differentiator* — an agent with real access must never act on a stale fact (a changed endpoint, a rotated format).
@@ -849,3 +883,109 @@ So that I can trust the loop — inspect what it knows, see which memory changed
 - Memory privacy: memories can carry real user data (email contents) — redaction rules; and per-agent isolation vs the later shared-per-builder scope.
 - e2e/testability: a `fakeEmbedder` + `fakeReflector` (mirroring `fakeMcpVerifier`) so recall/reflect are deterministically testable without a live model.
 - Config precedence + retroactivity: does turning memory **off** stop recall only, or also purge? Does changing a global default apply to `inherit` agents immediately?
+
+---
+
+## Epic 9: Chat — a multi-turn conversation with a published agent
+
+The builder **converses** with an agent instead of firing one-shot test tasks (the test console). Chat turns the interaction model from single-shot into a thread — while keeping every turn inside the same isolation guarantees.
+
+**The keystone: chat = threaded runs.** A run today is single-shot: an immutable `JobSpec` (AD-9) → a `--network=none`, cost-capped, Guard-fronted sandbox → a transcript → done. Chat makes each user message a **fresh run** whose `JobSpec` carries the conversation history so far; the agent's reply streams back and appends to the thread. A **Conversation** is a control-plane entity (an ordered thread of turns); every turn stays immutable, sandboxed, cost-capped, and observable. This reuses the run/harness/Guard/observability machinery wholesale and preserves AD-1/AD-9 — no long-lived stateful sandbox, no bidirectional side-channel into a running sandbox. **Chat is short-term *thread* memory; Epic 8 is long-term cross-conversation memory — they compose** (same seam: inject context into the immutable spec at run start).
+
+**Decisions (operator, 2026-08-05):** (1) **Builder-first** — single-tenant, the builder chatting with their own agents (a productized, multi-turn evolution of the test console); a deployable/shared end-user surface is an additive later phase, not a rewrite. (2) **Against the published version** — a conversation runs the agent's **published snapshot**, not the working draft (the draft editor + test console stay the iteration loop; Chat is where you *use* the stable thing). This ties into the draft/publish model — an unpublished agent can't be chatted with until it's published. (3) **Threaded runs** — confirmed over a long-lived interactive session; the one accepted limitation is no mid-turn human-in-the-loop (a turn completes, then the user replies).
+
+### Architecture & scope decisions (binding constraints)
+- **A turn is a normal run, parameterized by a DEFINITION.** Today the orchestrator resolves the agent's *draft* row (`agents`) to build a run. Chat generalizes this: a run is built from a **definition** — the test console runs the draft; a chat turn runs the **published snapshot** (`agent_versions`). The run's model/instructions/skills/attachedTools/costCap all come from the snapshot, so a chat turn behaves exactly as the published definition specifies.
+- **The conversation pins its published version.** A conversation records the published version it started against; republishing the agent does NOT retroactively change an in-flight conversation (the immutable-snapshot model makes this clean). The UI surfaces "the agent was updated — start a new chat to use v_N."
+- **History injected into the immutable spec (AD-9/AD-10).** A new sandbox-visible `JobSpec.history` field carries the prior turns (role + content) — secret-free content, like instructions/task input; the harness folds it into the model context ahead of the current message. CONTRACT_VERSION bump. No mid-run side-channel; the whole thread-so-far is baked in at turn start.
+- **Every turn is isolated + capped + guarded.** Each turn is a fresh `--network=none` sandbox (AD-1), one control channel out, Guard-fronted model/tool/connection access, and the published version's **cost caps** apply per turn (kill-on-breach unchanged). A conversation-level budget is a later refinement.
+- **control-api is the sole writer (AD-7).** New `conversations` state + the run↔conversation link are control-plane; the run-orchestrator owns run/turn writes, control-api owns conversation metadata.
+- **Reuses the run SSE for streaming.** A turn's reply streams over the existing run event stream (the test console's mechanism); the chat surface renders turns with the existing `RunTranscript`.
+- **Deployable-later is designed for, not built.** The Conversation model is shaped so a future shared/end-user surface (identity, access control, per-conversation isolation, abuse/rate limits, embed) is additive.
+
+### Story 9.1: The conversation model + published-version binding (spine)
+
+As the builder,
+I want turanga to model a chat conversation as a first-class thread bound to a published agent version,
+So that chatting is a stable, governed capability before any turn runs.
+
+**Acceptance Criteria:**
+
+**Given** the domain + contracts
+**When** chat is modeled
+**Then** a `Conversation` is a control-plane thread `{ id, agentId, publishedVersion (pinned), title, createdAt }`; a run gains a `conversationId` + `turnIndex` link; and `JobSpec` gains a sandbox-visible `history` field (prior turns, secret-free — AD-10) — CONTRACT_VERSION bump. control-api is the sole writer (AD-7).
+
+**Given** an agent that has never been published
+**When** a chat is attempted
+**Then** it is refused with a stated cause ("Publish this agent to chat with it") — chat runs a published snapshot, never the draft.
+
+**Given** the store
+**When** it is created
+**Then** a `conversations` table lands (control-plane), IDs/timestamps per convention; the run table carries the conversation link.
+
+### Story 9.2: Run a chat turn against the published version, with history
+
+As the builder,
+I want each message I send to run the agent's published definition with the conversation so far,
+So that the agent replies in context, safely, exactly as published.
+
+**Acceptance Criteria:**
+
+**Given** a conversation pinned to published version v_N
+**When** the builder sends a message
+**Then** the orchestrator builds a run from the **published snapshot** (`agent_versions` v_N) — model/instructions/skills/attachedTools/costCap from the snapshot, NOT the draft — injects the prior turns into `JobSpec.history`, and runs it as a fresh `--network=none`, cost-capped, Guard-fronted sandbox (AD-1/AD-9); the harness folds the history into the model context ahead of the new message.
+
+**Given** the turn runs
+**When** the agent replies
+**Then** the reply streams over the run event stream and is appended to the conversation as the next turn (the run is linked by `conversationId`/`turnIndex`); the published version's caps apply per turn (kill-on-breach unchanged), observed like any run.
+
+**Given** the agent is republished mid-conversation
+**When** the next turn runs
+**Then** it still uses the conversation's **pinned** version (in-flight behavior doesn't change); the UI offers starting a new chat for the newer version.
+
+### Story 9.3: The chat surface (web) + enable the nav
+
+As the builder,
+I want a chat page where I pick a published agent and hold a conversation,
+So that I can actually use my agents conversationally.
+
+**Acceptance Criteria:**
+
+**Given** the `/chat` route (the nav's disabled Chat item is enabled)
+**When** it is opened
+**Then** the builder picks a **published** agent, starts or continues a conversation, sends a message, and sees the reply **stream** in (reusing `RunTranscript` + the run SSE); multiple conversations per agent are listed. An agent with no published version shows the "publish first" empty state.
+
+**Given** a conversation
+**When** it is viewed
+**Then** the thread shows the interleaved user/agent turns, the pinned version, and per-turn cost/observability — voice + a11y per the cross-cutting conventions (UX-DR15/16, NFR-6).
+
+### Story 9.4: Conversation management + guardrails
+
+As the builder,
+I want to manage my conversations and trust their limits,
+So that chat is organized and safe to leave running.
+
+**Acceptance Criteria:**
+
+**Given** a list of conversations
+**When** the builder manages them
+**Then** they can rename, delete, and start a new conversation (control-api sole writer, AD-7); a conversation surfaces its agent + pinned version + last activity.
+
+**Given** a long conversation
+**When** a turn runs
+**Then** the injected `history` is bounded (a windowing/summarization policy — the seam that later composes with Epic 8 memory), so a turn's context (and cost) can't grow unbounded; the per-turn cost cap remains authoritative.
+
+### Provisional later-phase sketch (NOT broken down — additive)
+- **Deployable / shared end-user chat** — a surface where others chat with a published agent (share/embed): identity, access control, per-conversation isolation, abuse + rate limiting, a per-conversation/per-viewer budget. The single biggest additive phase.
+- **Mid-turn human-in-the-loop** — an agent that pauses to ask a clarifying question and resumes with the answer (needs a suspend/resume run model — a real departure from immutable single-shot).
+- **Token-level streaming** — stream model deltas, not just per-turn (a harness + control-channel change).
+- **Chat against the draft** — a dev-loop variant that converses with the working draft (blurs into the test console; deliberately not the default).
+- **Conversation-level cost budgets** — a cap across a whole thread, above the per-turn cap.
+
+### Open questions (resolve at story time)
+- Version pin: latest-at-conversation-start (chosen) vs a per-conversation selectable version vs always-latest-published.
+- History windowing: raw last-K turns vs summarize-old-turns (the Epic 8 memory tie-in) vs a token budget.
+- Conversation titles: auto-derived from the first message vs user-named.
+- The run path refactor: how cleanly can "run this definition" be parameterized so the test console (draft) and chat (published snapshot) share one orchestrator path without a fork.
+- Relationship to the test console: coexist (test = draft iteration, chat = published use) vs eventually fold the test console into chat-against-draft.
+- e2e/testability: a threaded-run test (turn N sees turns 1..N-1 in its `JobSpec.history`) without a live model.
