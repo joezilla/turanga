@@ -22,6 +22,8 @@ import { memoryToolsRepo, type ToolsRepo } from "./tools/repo.js";
 import { memoryMemoryRepo, type MemoryRepo } from "./memory/repo.js";
 import { fakeReflector, type Reflector } from "./memory/reflector.js";
 import { memoryRoutes } from "./memory/routes.js";
+import { conversationRoutes } from "./conversations/routes.js";
+import { memoryConversationsRepo, type ConversationsRepo } from "./conversations/repo.js";
 import { fakeMcpVerifier, type McpVerifier } from "./tools/mcp.js";
 import { runOrchestrator, type RunOrchestrator } from "./runs/orchestrator.js";
 import { fakeSandboxRuntime } from "./runs/runtime.js";
@@ -42,6 +44,7 @@ export interface AppDeps {
   runsRepo?: RunsRepo;
   toolsRepo?: ToolsRepo; // Epic 6 (Story 6.1) — first-class tools
   memoryRepo?: MemoryRepo; // Epic 8 (Story 8.1) — agent memory store + config (recall/reflect consume it in 8.3/8.4)
+  conversationsRepo?: ConversationsRepo; // Epic 9 (Story 9.1) — chat conversation threads
   reflector?: Reflector; // Epic 8 (Story 8.4) — post-run transcript distillation; defaults to a fake (tests / no-model boot)
   mcpVerifier?: McpVerifier; // Epic 6 (Story 6.2) — connect-time MCP handshake; defaults to a fake (tests / no-network boot)
   runHub?: RunHub; // the live SSE relay; MUST be the same instance the orchestrator publishes to
@@ -75,6 +78,8 @@ export function createApp(deps: AppDeps = {}) {
   app.use("/tools/*", requireSession(authRepo));
   app.use("/memory", requireSession(authRepo));
   app.use("/memory/*", requireSession(authRepo));
+  app.use("/conversations", requireSession(authRepo));
+  app.use("/conversations/*", requireSession(authRepo));
   const agentsRepo = deps.agentsRepo ?? memoryAgentsRepo();
   const connectionsRepo = deps.connectionsRepo ?? memoryConnectionsRepo();
   const gateway = deps.modelGateway ?? fakeModelGateway();
@@ -92,6 +97,9 @@ export function createApp(deps: AppDeps = {}) {
   const mcpVerifier = deps.mcpVerifier ?? fakeMcpVerifier();
   app.route("/", toolRoutes(toolsRepo, mcpVerifier)); // Epic 6 — manage + connect first-class tools
   app.route("/", memoryRoutes(memoryRepo, gateway)); // Epic 8 — memory settings/purge (8.2) + list/edit/forget (8.5); gateway re-embeds on edit
+
+  const conversationsRepo = deps.conversationsRepo ?? memoryConversationsRepo(); // Epic 9 (Story 9.1) — chat threads
+  app.route("/", conversationRoutes(conversationsRepo, agentsRepo)); // Epic 9 — create (publish-first + version pin) / list / get
 
   const runsRepo = deps.runsRepo ?? memoryRunsRepo();
   // The hub is the live SSE relay; the orchestrator and the routes MUST share one instance.

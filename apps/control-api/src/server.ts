@@ -14,6 +14,7 @@ import { drizzleAgentsRepo } from "./agents/repo.js";
 import { drizzleRunsRepo } from "./runs/repo.js";
 import { drizzleToolsRepo } from "./tools/repo.js";
 import { drizzleMemoryRepo } from "./memory/repo.js";
+import { drizzleConversationsRepo } from "./conversations/repo.js";
 import { httpReflector } from "./memory/reflector.js";
 import { httpMcpVerifier } from "./tools/mcp.js";
 import { runOrchestrator } from "./runs/orchestrator.js";
@@ -65,6 +66,7 @@ async function main() {
   const agentsRepo = drizzleAgentsRepo(db);
   const toolsRepo = drizzleToolsRepo(db); // Epic 6 — first-class tools
   const memoryRepo = drizzleMemoryRepo(db); // Epic 8 — agent memory store + config (recall/reflect in 8.3/8.4)
+  const conversationsRepo = drizzleConversationsRepo(db); // Epic 9 — chat conversation threads
   const reflector = httpReflector(litellmBaseUrl, litellmMasterKey); // Epic 8 (Story 8.4) — post-run distillation (master key, unmetered)
 
   // Run-orchestrator wiring (Epic 4). Runtime kind is explicit (fail-closed; dev-insecure refused
@@ -108,6 +110,7 @@ async function main() {
     runsRepo,
     toolsRepo,
     memoryRepo,
+    conversationsRepo,
     reflector,
     mcpVerifier: httpMcpVerifier(),
     runHub,

@@ -8,6 +8,10 @@ export type RunStatus = "created" | "running" | "succeeded" | "failed" | "killed
 export interface RunRow {
   id: string;
   agentId: string;
+  // Story 9.1 — the run↔conversation link. NULL for a standalone/test-console run; a chat turn
+  // (Story 9.2) sets both (its conversation + its 0-based position in the thread).
+  conversationId: string | null;
+  turnIndex: number | null;
   status: RunStatus;
   taskInput: string;
   transcript: ControlChannelMessage[];
@@ -68,7 +72,9 @@ export function reduceToolStats(runs: { transcript: ControlChannelMessage[]; cre
 // Written only by the run-orchestrator (AD-7). No `update(patch)` surface beyond these. LiteLLM owns
 // spend; this `costMicros` summary is the summed run metrics the Guard reported (AD-7 — read, not recomputed).
 export interface RunsRepo {
-  create(row: Omit<RunRow, "costMicros"> & { costMicros?: number }): Promise<void>;
+  // conversationId/turnIndex default null (a standalone/test-console run has no conversation); a chat
+  // turn (Story 9.2) passes both. costMicros defaults 0 (filled from the summed metrics later).
+  create(row: Omit<RunRow, "costMicros" | "conversationId" | "turnIndex"> & { costMicros?: number; conversationId?: string | null; turnIndex?: number | null }): Promise<void>;
   get(id: string): Promise<RunRow | null>;
   list(agentId?: string, limit?: number): Promise<RunRow[]>; // newest first, bounded
   listSummary(agentId?: string, limit?: number): Promise<RunSummary[]>; // newest first, bounded — run history (Story 5.3), no transcript
@@ -92,6 +98,8 @@ function toRow(r: typeof runs.$inferSelect): RunRow {
   return {
     id: r.id,
     agentId: r.agentId,
+    conversationId: r.conversationId,
+    turnIndex: r.turnIndex,
     status: r.status as RunStatus,
     taskInput: r.taskInput,
     transcript: r.transcript as ControlChannelMessage[],
@@ -106,6 +114,8 @@ function toRow(r: typeof runs.$inferSelect): RunRow {
 const summaryCols = {
   id: runs.id,
   agentId: runs.agentId,
+  conversationId: runs.conversationId,
+  turnIndex: runs.turnIndex,
   status: runs.status,
   taskInput: runs.taskInput,
   reason: runs.reason,
@@ -118,6 +128,8 @@ function toSummary(r: SummarySelect): RunSummary {
   return {
     id: r.id,
     agentId: r.agentId,
+    conversationId: r.conversationId,
+    turnIndex: r.turnIndex,
     status: r.status as RunStatus,
     taskInput: r.taskInput,
     reason: r.reason,
@@ -133,6 +145,8 @@ export function drizzleRunsRepo(db: Db): RunsRepo {
       await db.insert(runs).values({
         id: row.id,
         agentId: row.agentId,
+        conversationId: row.conversationId ?? null,
+        turnIndex: row.turnIndex ?? null,
         status: row.status,
         taskInput: row.taskInput,
         transcript: row.transcript,
@@ -206,7 +220,7 @@ export function memoryRunsRepo(): RunsRepo {
   const order: string[] = [];
   return {
     async create(row) {
-      rows.set(row.id, { costMicros: 0, ...row, transcript: [...row.transcript] });
+      rows.set(row.id, { costMicros: 0, conversationId: null, turnIndex: null, ...row, transcript: [...row.transcript] });
       order.unshift(row.id);
     },
     async get(id) {
@@ -228,6 +242,8 @@ export function memoryRunsRepo(): RunsRepo {
         .map((r): RunSummary => ({
           id: r.id,
           agentId: r.agentId,
+          conversationId: r.conversationId,
+          turnIndex: r.turnIndex,
           status: r.status,
           taskInput: r.taskInput,
           reason: r.reason,

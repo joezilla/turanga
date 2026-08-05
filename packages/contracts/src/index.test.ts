@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { JobSpecSchema, JobToolSchema, JobMemorySchema, ToolCallRequestSchema, ToolCallResponseSchema, ControlChannelMessageSchema, GuardConnectionRequestSchema, GuardConnectionResponseSchema, GuardRunEventSchema, authorizes, SKILL_OPS, OP_REQUIREMENTS, CONTRACT_VERSION } from "./index.js";
+import { JobSpecSchema, JobToolSchema, JobMemorySchema, JobHistoryTurnSchema, ToolCallRequestSchema, ToolCallResponseSchema, ControlChannelMessageSchema, GuardConnectionRequestSchema, GuardConnectionResponseSchema, GuardRunEventSchema, authorizes, SKILL_OPS, OP_REQUIREMENTS, CONTRACT_VERSION } from "./index.js";
 
 describe("contracts", () => {
-  it("contract version is 7 (Story 8.3 — recall / JobSpec.memories)", () => {
-    expect(CONTRACT_VERSION).toBe(7);
+  it("contract version is 8 (Story 9.1 — chat / JobSpec.history)", () => {
+    expect(CONTRACT_VERSION).toBe(8);
   });
 
-  it("job spec round-trips (with logical connection + tool handles + recalled memories)", () => {
+  it("job spec round-trips (with logical connection + tool handles + recalled memories + chat history)", () => {
     const spec = {
       v: CONTRACT_VERSION,
       runId: "r1",
@@ -17,17 +17,22 @@ describe("contracts", () => {
       connections: [{ id: "gmail", provider: "gmail" as const }],
       tools: [{ id: "t1", name: "weather", operations: ["get_weather"] }],
       memories: [{ id: "m1", kind: "semantic" as const, summary: "the user prefers concise replies" }],
+      history: [
+        { role: "user" as const, content: "what's the weather?" },
+        { role: "agent" as const, content: "clear skies" },
+      ],
       taskInput: "go",
     };
     expect(JobSpecSchema.parse(spec)).toEqual(spec);
   });
 
-  it("defaults connections + tools + memories to [] when omitted (older construction stays valid)", () => {
+  it("defaults connections + tools + memories + history to [] when omitted (older construction stays valid)", () => {
     const spec = { v: CONTRACT_VERSION, runId: "r1", agentId: "a1", model: "m", instructions: "", skills: [], taskInput: "" };
     const parsed = JobSpecSchema.parse(spec);
     expect(parsed.connections).toEqual([]);
     expect(parsed.tools).toEqual([]);
     expect(parsed.memories).toEqual([]);
+    expect(parsed.history).toEqual([]);
   });
 
   it("JobMemory is secret-free — id/kind/summary only; extra keys stripped (AD-10)", () => {
@@ -38,6 +43,16 @@ describe("contracts", () => {
     expect(JSON.stringify(stripped)).not.toContain("embedding");
     // an unknown kind is rejected
     expect(JobMemorySchema.safeParse({ id: "m", kind: "made-up", summary: "s" }).success).toBe(false);
+  });
+
+  it("JobHistoryTurn is secret-free — role/content only; extra keys stripped (Story 9.1, AD-10)", () => {
+    const t = JobHistoryTurnSchema.parse({ role: "user", content: "hi" });
+    expect(Object.keys(t).sort()).toEqual(["content", "role"]);
+    // an extra key (a leaked secret) is stripped — never reaches the sandbox
+    const stripped = JobHistoryTurnSchema.parse({ role: "agent", content: "reply", token: "secret" } as unknown as { role: "agent"; content: string });
+    expect(JSON.stringify(stripped)).not.toContain("secret");
+    // an unknown role is rejected (the thread only carries user/agent turns)
+    expect(JobHistoryTurnSchema.safeParse({ role: "system", content: "x" }).success).toBe(false);
   });
 
   it("parses a `recall` transcript event (Story 8.3) — memory ids + count, no cost", () => {

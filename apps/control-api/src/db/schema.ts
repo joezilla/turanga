@@ -113,6 +113,10 @@ export const agentVersions = pgTable(
 export const runs = pgTable("runs", {
   id: text("id").primaryKey(), // ULID
   agentId: text("agent_id").notNull(),
+  // Story 9.1 — a chat turn links to its conversation + its position in the thread. NULL for a
+  // standalone/test-console run (no conversation); a chat turn (Story 9.2) populates both.
+  conversationId: text("conversation_id"),
+  turnIndex: integer("turn_index"),
   status: text("status").notNull(), // created | running | succeeded | failed | killed
   taskInput: text("task_input").notNull().default(""),
   transcript: jsonb("transcript").$type<unknown[]>().notNull().default([]), // ControlChannelMessage[]
@@ -121,6 +125,21 @@ export const runs = pgTable("runs", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   endedAt: timestamp("ended_at", { withTimezone: true }),
 });
+
+// Chat conversations (Epic 9, Story 9.1). Written ONLY by control-api (AD-7). A conversation is a
+// thread bound to a PUBLISHED agent version — `publishedVersion` is pinned at creation
+// (latest-at-conversation-start) and never null (chat runs a published snapshot, never the draft).
+export const conversations = pgTable(
+  "conversations",
+  {
+    id: text("id").primaryKey(), // ULID
+    agentId: text("agent_id").notNull(),
+    publishedVersion: integer("published_version").notNull(), // the pinned snapshot this chat talks to
+    title: text("title").notNull().default(""),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("conversations_agent_idx").on(t.agentId)],
+);
 
 // Tools (Epic 6, Story 6.1). A first-class MCP tool an agent can invoke. Dedicated table (like
 // data_connections). control-api is the only writer (AD-7). The endpoint TYPE is an adapter (remote

@@ -3,6 +3,10 @@
 // they harden in Epic 4. The `v` field is the contract version — bump on any change.
 import { z } from "zod";
 
+// v8 (Story 9.1): history — a sandbox-visible `JobSpec.history` of prior conversation turns (chat =
+// threaded runs; each turn is a fresh run carrying the thread so far). Secret-free turn content like
+// taskInput (AD-10); default [] keeps every non-chat spec valid. The harness folds it into the model
+// context in Story 9.2.
 // v7 (Story 8.3): recall — a sandbox-visible `JobSpec.memories` list folded into the model's system
 // context, plus a `recall` transcript event recording which memories a run injected. Memories are
 // secret-free distilled text (AD-10); recall is embedding-only (no LLM cost).
@@ -14,7 +18,7 @@ import { z } from "zod";
 // channel (metrics + kill) is defined here (E4-AD-10, out-of-band control-plane).
 // v3 (Story 4.4): provider-agnostic connection ops (read | label | send), refusal `kind`, skill policy.
 // v2 (Story 4.3): connection-read entries + logical connection handles.
-export const CONTRACT_VERSION = 7 as const;
+export const CONTRACT_VERSION = 8 as const;
 
 /** A logical connection handle the agent is configured to use. NO token, URL, or destination —
  *  the Guard holds the credential + allowlist per-run (AD-10); the sandbox names only the handle. */
@@ -43,6 +47,16 @@ export const JobMemorySchema = z.object({
 });
 export type JobMemory = z.infer<typeof JobMemorySchema>;
 
+/** A prior conversation turn injected into a chat run (Story 9.1). Chat is threaded runs: each turn is
+ *  a fresh run whose spec carries the thread so far. `content` is secret-free turn text like taskInput
+ *  (AD-10) — NEVER a credential/endpoint. The role literals mirror the `turn` control message. The
+ *  harness folds these into the model context ahead of the current message (Story 9.2). */
+export const JobHistoryTurnSchema = z.object({
+  role: z.enum(["user", "agent"]),
+  content: z.string(),
+});
+export type JobHistoryTurn = z.infer<typeof JobHistoryTurnSchema>;
+
 /** Immutable job spec injected into a sandbox at run start (AD-9). */
 export const JobSpecSchema = z.object({
   v: z.literal(CONTRACT_VERSION),
@@ -60,6 +74,9 @@ export const JobSpecSchema = z.object({
   // Memories recalled for this run (Story 8.3; secret-free distilled text — AD-10). Default keeps
   // older specs valid; recall is off by default, so most specs carry [].
   memories: z.array(JobMemorySchema).default([]),
+  // Prior conversation turns for a chat run (Story 9.1; secret-free content like taskInput — AD-10).
+  // Default [] keeps every non-chat spec valid; the harness folds it into the model context in 9.2.
+  history: z.array(JobHistoryTurnSchema).default([]),
   // Runtime data ingress is proxy-mediated (AD-9); the spec carries only the task input.
   taskInput: z.string(),
 });

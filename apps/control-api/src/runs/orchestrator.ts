@@ -349,11 +349,13 @@ export function runOrchestrator(deps: OrchestratorDeps) {
       // The job spec carries only LOGICAL handles + skill/tool IDs + secret-free recalled memories — the
       // minted access token, the cost key, AND the authoritative scope/send grants + tool credentials
       // live in `provision` and go to the Guard over the admin API, NEVER into the sandbox (AD-10).
-      const jobSpec: JobSpec = { v: CONTRACT_VERSION, runId, agentId, model: agent.model, instructions: agent.instructions, skills: jobSkills, connections: jobConnections, tools: jobTools, memories, taskInput };
+      // Story 9.1 — a standalone/test-console run carries no conversation history; a chat turn (9.2)
+      // populates `history` from the pinned conversation (and builds from the published snapshot).
+      const jobSpec: JobSpec = { v: CONTRACT_VERSION, runId, agentId, model: agent.model, instructions: agent.instructions, skills: jobSkills, connections: jobConnections, tools: jobTools, memories, history: [], taskInput };
       // Auditable causality (NFR-4): record which memories this run recalled, as a transcript event on the
       // row at creation (orchestrator-authored, not a harness stream message), and bump their usage counters.
       const transcript = recalledIds.length > 0 ? [{ type: "recall" as const, v: CONTRACT_VERSION, memoryIds: recalledIds, count: recalledIds.length }] : [];
-      const row: RunRow = { id: runId, agentId, status: "created", taskInput, transcript, reason: null, costMicros: 0, createdAt: now, endedAt: null };
+      const row: RunRow = { id: runId, agentId, conversationId: null, turnIndex: null, status: "created", taskInput, transcript, reason: null, costMicros: 0, createdAt: now, endedAt: null };
       await runsRepo.create(row);
       if (recalledIds.length > 0 && memoryRepo) void memoryRepo.markRecalled(agentId, recalledIds).catch(() => {}); // best-effort; never blocks the run
       hub.open(runId); // hub state exists before start() hands the run back — the SSE subscriber won't miss the opening

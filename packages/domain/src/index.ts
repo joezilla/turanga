@@ -237,6 +237,20 @@ export interface Run {
   createdAt: string;
 }
 
+// ── Chat / conversations (Epic 9) ──────────────────────────────────────────────────────────────
+/** A chat conversation (Story 9.1) — a control-plane thread bound to a PUBLISHED agent version.
+ *  Chat is threaded runs: each turn is a fresh run carrying the thread so far. The conversation PINS
+ *  the published version it started against (version-pin = latest-at-conversation-start); republishing
+ *  the agent never retroactively changes an in-flight conversation. control-api is the sole writer
+ *  (AD-7). A conversation exists only against a published version (`publishedVersion` is never null). */
+export interface Conversation {
+  id: Ulid;
+  agentId: Ulid;
+  publishedVersion: number; // the pinned published snapshot this chat talks to
+  title: string;
+  createdAt: string; // UTC ISO-8601
+}
+
 /** Structured refusal record — never silent (NFR-4). */
 export interface Refusal {
   kind: "egress" | "permission";

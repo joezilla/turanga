@@ -508,6 +508,19 @@ describe("RunsRepo (memory)", () => {
     expect(await repo.listSummary("other")).toHaveLength(1);
     expect((await repo.listSummary()).map((r) => r.id)).toEqual(["r3", "r2", "r1"]); // all agents when unscoped
   });
+
+  it("a run defaults to no conversation link; a chat turn sets it; the summary projection preserves both (Story 9.1)", async () => {
+    const repo = memoryRunsRepo();
+    // A standalone/test-console run: link fields default to null when omitted from create().
+    await repo.create({ id: "solo", agentId: "a1", status: "created", taskInput: "x", transcript: [], reason: null, createdAt: "2026-08-01T00:00:00.000Z", endedAt: null });
+    const solo = await repo.get("solo");
+    expect(solo).toMatchObject({ conversationId: null, turnIndex: null });
+    // A chat turn (Story 9.2 shape): the link is carried on both get() and the summary projection.
+    await repo.create({ id: "turn", agentId: "a1", status: "created", taskInput: "hi", transcript: [], reason: null, createdAt: "2026-08-02T00:00:00.000Z", endedAt: null, conversationId: "conv-1", turnIndex: 2 });
+    expect(await repo.get("turn")).toMatchObject({ conversationId: "conv-1", turnIndex: 2 });
+    const summary = (await repo.listSummary("a1")).find((r) => r.id === "turn")!;
+    expect(summary).toMatchObject({ conversationId: "conv-1", turnIndex: 2 }); // not dropped by the summary projection
+  });
 });
 
 describe("resolveSandboxRuntimeKind", () => {
