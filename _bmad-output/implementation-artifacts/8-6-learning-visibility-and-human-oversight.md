@@ -3,7 +3,7 @@ baseline_commit: 6e0504025e3b19ed25ea230349d7d182c3fb271d
 ---
 # Story 8.6: Learning visibility + human oversight
 
-Status: review
+Status: done
 
 <!-- SIXTH + FINAL story of Epic 8 — the oversight CAPSTONE. 8.1–8.5 made an agent learn (reflect),
      recall, and be inspectable/curatable. This closes the epic's promise: a self-improving agent with
@@ -181,3 +181,27 @@ claude-opus-4-8 (Claude Opus 4.8)
 | Date | Version | Description |
 |------|---------|-------------|
 | 2026-08-05 | 0.1 | Story 8.6 implemented — the oversight capstone: status model (active/pending/quarantined), staged approval (per-agent + global `requireApproval`), the `memory_events` learning changelog, quarantine/unquarantine, and inline recall attribution. Migration 0018. No contract bump. Status → review. |
+| 2026-08-05 | 0.2 | Code review of 8.4–8.6 (Blind Hunter + Edge Case Hunter + Acceptance Auditor): no High findings — security spine confirmed. Applied 7 patches: deferred supersede to accept-time (no recall gap under requireApproval; shared `memory/tuning.ts`), quarantine active-only (staged-approval bypass closed), prune budget over the active set (non-active rows no longer force-evict), per-item embed fail-safe, changelog error-retry, independent edited-vs-pin changelog events, and recall "N no longer present" attribution. 4 deferred (ULID intra-ms ordering, cross-builder tenancy, concurrent-reflect RMW, single-neighbor supersede) → deferred-work.md. Status → done. |
+
+## Review Findings
+
+_Code review of stories 8.4–8.6 (`5a4cec9..f0e8c90`), 2026-08-05 — Blind Hunter + Edge Case Hunter + Acceptance Auditor. No High findings: all three reviewers independently confirmed the security spine holds (active-only recall/findSimilar gate, no-secret-in-sandbox AD-10, control-plane `requireApproval` resolution AD-7/AD-9, fail-safe non-awaited reflect, no CONTRACT_VERSION bump). Findings below are Medium/Low correctness + robustness._
+
+- [x] [Review][Decision→Patch] **Supersede + require-approval opens a recall gap** — RESOLVED (user chose: defer supersede to accept-time). Reflect now skips the supersede while the new memory is `pending` (leaving the stale fact recallable); the `/accept` route runs the supersede at approval-time (the accepted memory carries a stored embedding and, while still pending, is excluded from `findSimilar`'s active-only set, so it can't match itself). The active path also switched to lookup-before-insert then supersede-after-insert, so a failed insert can never orphan the prior fact. Shared `SUPERSEDE_MAX_DISTANCE` extracted to `memory/tuning.ts`. [orchestrator.ts reflectRun + memory/routes.ts accept]
+
+- [x] [Review][Patch] **Quarantine accepts a `pending` memory → unquarantine promotes it to active, bypassing staged approval** — FIXED: quarantine from-set = `["active"]`; a pending memory can only reach active via `/accept`. Test added (quarantine-of-pending → 400). [apps/control-api/src/memory/routes.ts]
+
+- [x] [Review][Patch] **Prune budget counts non-active rows, so pending/quarantined accumulation force-evicts the ACTIVE working set** — FIXED: the budget is measured over the ACTIVE set (non-active rows uncounted); pinned rows count toward the budget but are never candidates. An unreviewed pending backlog / accumulating quarantine no longer evicts active memories. [apps/control-api/src/runs/orchestrator.ts]
+
+- [x] [Review][Patch] **Embedding failure mid-batch aborts remaining distilled memories AND skips the prune** — FIXED: each distilled item is wrapped in its own try/catch, so one bad embed skips only that item; the batch + prune continue. [apps/control-api/src/runs/orchestrator.ts]
+
+- [x] [Review][Patch] **"Learning history" changelog never refetches after a failed load** — FIXED: `toggleChangelog` retries from the `"error"` state, and the error branch now shows a Retry button (shared `loadChangelog`). [apps/web/src/routes/(app)/agents/[id]/memory/+page.svelte]
+
+- [x] [Review][Patch] **A combined content+pin PATCH drops the `edited` changelog event** — FIXED: the pin and edited logs are independent `if`s, so a PATCH that both re-writes content and flips the pin records both. [apps/control-api/src/memory/routes.ts]
+
+- [x] [Review][Patch] **Recall attribution resolves against LIVE memory — count and named list can disagree** — FIXED: the recall row surfaces "N no longer present" for memories that no longer resolve, so the count and the named list reconcile visibly. [apps/web/src/lib/components/RunTranscript.svelte]
+
+- [x] [Review][Defer] **Same-millisecond changelog events sort non-deterministically** — `ulid()` uses a `Math.random()` suffix (not monotonic); `listMemoryEvents` orders `desc(at), desc(id)`, so events minted in the same ms within one reflect pass (superseded/learned/reinforced) display in arbitrary order. [packages/domain/src/index.ts ulid + repo.ts listMemoryEvents] — deferred, shared-infra change (monotonic ULID factory).
+- [x] [Review][Defer] **No cross-builder ownership check on memory routes** — routes read `agentId` from the URL with only `requireSession`; any authenticated operator can read/curate another's memories + full content. [apps/control-api/src/memory/routes.ts] — deferred, pre-existing: identical to `/agents`, `/runs`, `/connections` (platform is single-operator/all-trusted in pre-alpha; a real tenancy model is a cross-cutting epic).
+- [x] [Review][Defer] **Concurrent reflect runs for one agent are an unguarded read-modify-write** — dedupe/insert/prune are separate awaited calls with no transaction/row-lock on Postgres; two near-simultaneous runs can both insert a near-dup or over-prune. [apps/control-api/src/runs/orchestrator.ts reflectRun] — deferred, pre-existing (8.4); in-memory path is single-threaded-safe.
+- [x] [Review][Defer] **Supersede inspects only the single nearest neighbor's topic** — `findSimilar` returns one row; a same-topic stale fact shadowed by a closer different-topic memory is never superseded, so contradictory facts co-accumulate. [apps/control-api/src/runs/orchestrator.ts:252-256] — deferred, pre-existing 8.4 dedupe design (top-N-within-distance is a follow-up).

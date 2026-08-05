@@ -13,6 +13,7 @@ import { decryptSecret } from "../secrets/crypto.js";
 import type { GoogleOAuth } from "../oauth/google.js";
 import type { ModelGateway } from "../litellm/gateway.js";
 import type { MemoryRepo, MemoryRow } from "../memory/repo.js";
+import { SUPERSEDE_MAX_DISTANCE } from "../memory/tuning.js";
 import type { Reflector } from "../memory/reflector.js";
 
 interface AgentLike {
@@ -100,7 +101,6 @@ export function runOrchestrator(deps: OrchestratorDeps) {
   // Story 8.4 (reflect/evolve) tuning constants.
   const PROCEDURE_TOOL_THRESHOLD = 2; // a run needs ≥ this many tool calls to distill "procedure" memories
   const DEDUPE_MAX_DISTANCE = 0.05; // ≤ this cosine distance to an existing same-kind memory ⇒ a duplicate (bump, don't insert)
-  const SUPERSEDE_MAX_DISTANCE = 0.25; // a same-topic memory this close (but not a dup) is the stale prior fact ⇒ close it
   const MAX_MEMORIES_PER_AGENT = 200; // per-agent budget; excess is pruned lowest-salience-first
   const runTimeoutMs = deps.runTimeoutMs ?? 120_000;
   let active = 0;
@@ -240,53 +240,68 @@ export function runOrchestrator(deps: OrchestratorDeps) {
 
       const now = new Date().toISOString();
       for (const m of distilled) {
-        const embedding = await modelGateway.embed(m.content, global.embeddingModel);
-        // Dedupe: a near-identical existing memory ⇒ promote-on-reuse (bump salience), do NOT insert.
-        const dup = await memoryRepo.findSimilar(agentId, embedding, m.kind, DEDUPE_MAX_DISTANCE);
-        if (dup) {
-          await memoryRepo.bumpSalience(agentId, dup.id, 1);
-          logEvent("reinforced", dup.summary || m.summary, dup.id);
-          continue;
-        }
-        // Supersede: a same-topic memory that is close-but-not-a-dup is the stale prior fact ⇒ close it.
-        if (m.topic) {
-          const stale = await memoryRepo.findSimilar(agentId, embedding, m.kind, SUPERSEDE_MAX_DISTANCE);
-          if (stale && stale.topic === m.topic) {
-            await memoryRepo.supersede(agentId, stale.id, now);
-            logEvent("superseded", stale.summary, stale.id);
+        // Per-item fail-safe (8.6 review): a single bad distilled item (e.g. a transient embed error)
+        // must not abort the remaining items OR skip the prune below. Isolate each iteration.
+        try {
+          const embedding = await modelGateway.embed(m.content, global.embeddingModel);
+          // Dedupe: a near-identical existing memory ⇒ promote-on-reuse (bump salience), do NOT insert.
+          const dup = await memoryRepo.findSimilar(agentId, embedding, m.kind, DEDUPE_MAX_DISTANCE);
+          if (dup) {
+            await memoryRepo.bumpSalience(agentId, dup.id, 1);
+            logEvent("reinforced", dup.summary || m.summary, dup.id);
+            continue;
           }
+          // Find the stale same-topic prior fact BEFORE inserting (so the new row can't be its own match —
+          // findSimilar returns only the single nearest). Superseding is DEFERRED when the new memory is
+          // PENDING: the accept route closes the stale fact at accept-time, so the topic keeps a
+          // recallable fact until the builder approves the replacement (8.6 review).
+          let staleToClose: MemoryRow | null = null;
+          if (status === "active" && m.topic) {
+            const stale = await memoryRepo.findSimilar(agentId, embedding, m.kind, SUPERSEDE_MAX_DISTANCE);
+            if (stale && stale.topic === m.topic) staleToClose = stale;
+          }
+          const mem: MemoryRow = {
+            id: ulid(Date.now()),
+            agentId,
+            kind: m.kind,
+            content: m.content,
+            summary: m.summary,
+            embedding,
+            topic: m.topic,
+            salience: 1,
+            pinned: false, // Story 8.5 — a new memory starts unpinned (prunable)
+            status, // Story 8.6 — pending (staged approval) or active (auto-apply)
+            sourceRunId: run.id, // the auditable causal link (8.5 renders "learned from this run")
+            validFrom: now,
+            validUntil: null,
+            useCount: 0,
+            lastUsedAt: null,
+            createdAt: now,
+          };
+          // Insert FIRST, then supersede — a failed insert must never orphan the prior fact (8.6 review).
+          await memoryRepo.createMemory(mem);
+          logEvent("learned", m.summary, mem.id);
+          if (staleToClose) {
+            await memoryRepo.supersede(agentId, staleToClose.id, now);
+            logEvent("superseded", staleToClose.summary, staleToClose.id);
+          }
+        } catch {
+          /* per-item fail-safe — this item is skipped; the batch + prune continue */
         }
-        const mem: MemoryRow = {
-          id: ulid(Date.now()),
-          agentId,
-          kind: m.kind,
-          content: m.content,
-          summary: m.summary,
-          embedding,
-          topic: m.topic,
-          salience: 1,
-          pinned: false, // Story 8.5 — a new memory starts unpinned (prunable)
-          status, // Story 8.6 — pending (staged approval) or active (auto-apply)
-          sourceRunId: run.id, // the auditable causal link (8.5 renders "learned from this run")
-          validFrom: now,
-          validUntil: null,
-          useCount: 0,
-          lastUsedAt: null,
-          createdAt: now,
-        };
-        await memoryRepo.createMemory(mem);
-        logEvent("learned", m.summary, mem.id);
       }
 
       // Prune: keep the agent's memory set within budget, forgetting lowest-salience (then oldest)
-      // first. The budget is on TOTAL storage, but PINNED (8.5) and non-active (pending/quarantined,
-      // 8.6) memories are never candidates — only active, unpinned rows can be forgotten.
-      const all = await memoryRepo.listForAgent(agentId);
-      if (all.length > MAX_MEMORIES_PER_AGENT) {
-        const doomed = all
-          .filter((m) => !m.pinned && m.status === "active")
+      // first. The budget is measured over the ACTIVE set — non-active (pending/quarantined, 8.6) rows
+      // are NOT counted, so an unreviewed pending backlog or an accumulating quarantine (the Epic-10
+      // seam) never force-evicts the working set (8.6 review — pre-fix the count was over TOTAL storage,
+      // which let non-recallable rows squeeze out active ones). PINNED rows count toward the budget (they
+      // are active + recallable) but are never candidates — only active, unpinned rows can be forgotten.
+      const active = (await memoryRepo.listForAgent(agentId)).filter((m) => m.status === "active");
+      if (active.length > MAX_MEMORIES_PER_AGENT) {
+        const doomed = active
+          .filter((m) => !m.pinned)
           .sort((a, b) => a.salience - b.salience || (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0))
-          .slice(0, all.length - MAX_MEMORIES_PER_AGENT);
+          .slice(0, active.length - MAX_MEMORIES_PER_AGENT);
         for (const d of doomed) {
           await memoryRepo.deleteMemory(agentId, d.id);
           logEvent("forgotten", d.summary, d.id);

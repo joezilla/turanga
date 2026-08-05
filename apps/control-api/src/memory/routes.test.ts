@@ -242,6 +242,40 @@ describe("memory routes — oversight: staged approval + quarantine + changelog 
     expect(events[0]).toMatchObject({ kind: "accepted", memoryId: "p" });
   });
 
+  it("a PENDING memory CANNOT be quarantined (staged-approval bypass is closed) — 400", async () => {
+    const repo = memoryMemoryRepo();
+    await repo.createMemory(memRow({ id: "p", agentId: "A", status: "pending" }));
+    const { app, cookie } = await appWithSession(repo);
+    // Pre-fix, quarantine accepted pending; quarantine→unquarantine then smuggled it to active without
+    // an accept. Quarantine is now active-only, so approval must go through /accept.
+    const res = await app.request("/memory/agents/A/p/quarantine", { method: "POST", headers: { cookie } });
+    expect(res.status).toBe(400);
+    expect((await repo.getMemory("A", "p"))!.status).toBe("pending"); // unchanged — never recallable without accept
+  });
+
+  it("accept SUPERSEDES the stale same-topic active fact (deferred supersede), keeping the topic covered", async () => {
+    const repo = memoryMemoryRepo();
+    const embed = (over: Partial<MemoryRow> & { id: string; content: string; topic: string; status: MemoryRow["status"] }) =>
+      memRow({ ...over, agentId: "A", kind: "semantic", embedding: fakeEmbed(over.content) });
+    // The current fact (active) and its pending replacement share a topic + near-identical embedding.
+    await repo.createMemory(embed({ id: "old", content: "deadline is April", topic: "deadline", status: "active" }));
+    await repo.createMemory(embed({ id: "new", content: "deadline is April", topic: "deadline", status: "pending" }));
+    const { app, cookie } = await appWithSession(repo);
+
+    // Before accept: old is still recallable (reflect deferred the supersede) — the topic never goes dark.
+    expect((await repo.recall("A", fakeEmbed("deadline is April"), 5)).map((m) => m.id)).toContain("old");
+
+    const res = await app.request("/memory/agents/A/new/accept", { method: "POST", headers: { cookie } });
+    expect(res.status).toBe(200);
+    expect((await repo.getMemory("A", "new"))!.status).toBe("active"); // approved → recallable
+    // On accept, the stale prior fact is closed (superseded → no longer recalled).
+    const recalled = (await repo.recall("A", fakeEmbed("deadline is April"), 5)).map((m) => m.id);
+    expect(recalled).toContain("new");
+    expect(recalled).not.toContain("old");
+    // Both the accept and the supersede are journaled.
+    expect((await repo.listMemoryEvents("A", 10)).map((e) => e.kind).sort()).toEqual(["accepted", "superseded"]);
+  });
+
   it("POST quarantine (active→quarantined) then unquarantine (→active); each logs; bad transitions 400", async () => {
     const repo = memoryMemoryRepo();
     await repo.createMemory(memRow({ id: "m", agentId: "A", status: "active" }));

@@ -84,18 +84,21 @@
   let changelogOpen = $state(false);
   let changelog = $state<MemoryEvent[]>([]);
   let changelogState = $state<"idle" | "loading" | "ok" | "error">("idle");
+  async function loadChangelog() {
+    changelogState = "loading";
+    const r = await listMemoryChangelog(id);
+    if (r.ok) {
+      changelog = r.value;
+      changelogState = "ok";
+    } else {
+      changelogState = "error";
+    }
+  }
   async function toggleChangelog() {
     changelogOpen = !changelogOpen;
-    if (changelogOpen && changelogState === "idle") {
-      changelogState = "loading";
-      const r = await listMemoryChangelog(id);
-      if (r.ok) {
-        changelog = r.value;
-        changelogState = "ok";
-      } else {
-        changelogState = "error";
-      }
-    }
+    // Load lazily on open; retry from "error" too, so a transient failure isn't permanent until a full
+    // page reload (8.6 review). "loading"/"ok" don't re-fetch.
+    if (changelogOpen && (changelogState === "idle" || changelogState === "error")) await loadChangelog();
   }
   const EVENT_VERB: Record<MemoryEvent["kind"], string> = {
     learned: "learned",
@@ -263,7 +266,7 @@
       {#if changelogState === "loading"}
         <p class="muted">Loading history…</p>
       {:else if changelogState === "error"}
-        <p class="error">Couldn't load the learning history.</p>
+        <p class="error">Couldn't load the learning history. <button type="button" class="link-retry" onclick={loadChangelog}>Retry</button></p>
       {:else if changelog.length === 0}
         <p class="muted">No changes recorded yet.</p>
       {:else}
@@ -563,6 +566,15 @@
   }
   .log-toggle:hover {
     color: var(--text-primary);
+  }
+  .link-retry {
+    background: transparent;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: var(--text-link);
+    text-decoration: underline;
+    cursor: pointer;
   }
   .chev {
     transition: transform var(--duration-fast) var(--ease-standard);

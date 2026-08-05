@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { ulid, type MemoryGlobalConfig, type MemoryEventKind } from "@turanga/domain";
 import type { MemoryRepo, MemoryRow, MemoryEventRow } from "./repo.js";
 import type { ModelGateway } from "../litellm/gateway.js";
+import { SUPERSEDE_MAX_DISTANCE } from "./tuning.js";
 
 // Memory config surface (Epic 8, Story 8.2). control-api is the sole writer (AD-7). This exposes ONLY
 // the operator's global defaults + an agent-scoped purge — no memory-list/curation (that's 8.5), no
@@ -139,9 +140,12 @@ export function memoryRoutes(repo: MemoryRepo, gateway: ModelGateway) {
     }
     await repo.updateMemory(agentId, id, patch);
     const updated = (await repo.getMemory(agentId, id))!;
-    // Story 8.6 — changelog: a pin toggle logs pinned/unpinned; any other edit logs edited.
+    // Story 8.6 — changelog: a pin toggle logs pinned/unpinned AND a content/summary change logs edited.
+    // Independent (not else-if) so a single PATCH that both re-writes content and flips the pin records
+    // BOTH transitions — the content mutation (which re-embeds + changes what recall injects) must never
+    // be hidden behind the pin event (8.6 review).
     if (patch.pinned !== undefined && patch.pinned !== existing.pinned) await logEvent(repo, agentId, patch.pinned ? "pinned" : "unpinned", updated);
-    else if (patch.content !== undefined || patch.summary !== undefined) await logEvent(repo, agentId, "edited", updated);
+    if (patch.content !== undefined || patch.summary !== undefined) await logEvent(repo, agentId, "edited", updated);
     return c.json({ memory: view(updated) });
   });
 
@@ -157,9 +161,11 @@ export function memoryRoutes(repo: MemoryRepo, gateway: ModelGateway) {
     return c.json({ ok: true });
   });
 
-  // Story 8.6 — staged approval: accept a PENDING memory (→ active, now recallable) or quarantine/
-  // un-quarantine any memory (a non-destructive recall toggle for rolling back a learning regression).
-  // Each logs a changelog event. Agent-scoped (FR-7); the memory resolves only for its owning agent.
+  // Story 8.6 — quarantine / un-quarantine: a non-destructive recall toggle for rolling back a learning
+  // regression. Each logs a changelog event. Agent-scoped (FR-7); the memory resolves only for its
+  // owning agent. Quarantine is ONLY reachable from `active` — a `pending` memory has never been
+  // recalled, and letting it be quarantined-then-unquarantined would smuggle it to `active` without an
+  // explicit accept, defeating staged approval (8.6 review). Approving a pending memory is `/accept`.
   const setStatusRoute = (path: string, from: MemoryRow["status"][] | null, to: MemoryRow["status"], event: MemoryEventKind) =>
     app.post(path, async (c) => {
       const agentId = c.req.param("agentId") ?? "";
@@ -172,9 +178,37 @@ export function memoryRoutes(repo: MemoryRepo, gateway: ModelGateway) {
       await logEvent(repo, agentId, event, updated);
       return c.json({ memory: view(updated) });
     });
-  setStatusRoute("/memory/agents/:agentId/:id/accept", ["pending"], "active", "accepted");
-  setStatusRoute("/memory/agents/:agentId/:id/quarantine", ["active", "pending"], "quarantined", "quarantined");
+  setStatusRoute("/memory/agents/:agentId/:id/quarantine", ["active"], "quarantined", "quarantined");
   setStatusRoute("/memory/agents/:agentId/:id/unquarantine", ["quarantined"], "active", "unquarantined");
+
+  // Accept a PENDING memory → active (now recallable). Staged approval's approve step. This is ALSO
+  // where the DEFERRED supersede happens (8.6 review): reflect held off closing the stale same-topic
+  // fact while the replacement was pending, so the topic never lost its recallable memory. Now that the
+  // builder approves the replacement, close the stale prior fact — using the same threshold as reflect.
+  // The lookup runs while the memory is STILL pending (excluded from findSimilar's active-only set), so
+  // it can't match itself; then we flip it active and supersede the stale one.
+  app.post("/memory/agents/:agentId/:id/accept", async (c) => {
+    const agentId = c.req.param("agentId") ?? "";
+    const id = c.req.param("id") ?? "";
+    const existing = await repo.getMemory(agentId, id);
+    if (!existing) return c.json({ error: "That memory doesn't exist." }, 404);
+    if (existing.status !== "pending") return c.json({ error: `Can't accept a ${existing.status} memory.` }, 400);
+
+    // Find the stale same-topic prior fact to close on approval (best-effort — never blocks the accept).
+    let staleToClose: MemoryRow | null = null;
+    if (existing.embedding && existing.topic) {
+      const stale = await repo.findSimilar(agentId, existing.embedding, existing.kind, SUPERSEDE_MAX_DISTANCE);
+      if (stale && stale.id !== existing.id && stale.topic === existing.topic) staleToClose = stale;
+    }
+    await repo.updateMemory(agentId, id, { status: "active" });
+    const updated = (await repo.getMemory(agentId, id))!;
+    await logEvent(repo, agentId, "accepted", updated);
+    if (staleToClose) {
+      await repo.supersede(agentId, staleToClose.id, new Date().toISOString());
+      await logEvent(repo, agentId, "superseded", staleToClose);
+    }
+    return c.json({ memory: view(updated) });
+  });
 
   // The learning changelog (Story 8.6) — newest-first, agent-scoped (FR-7).
   app.get("/memory/agents/:agentId/events", async (c) => {

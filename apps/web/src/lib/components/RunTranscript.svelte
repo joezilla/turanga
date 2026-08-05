@@ -50,16 +50,20 @@
     </div>
   {:else if msg.type === "recall"}
     <!-- Recall attribution (Story 8.6): memory was injected into this run at the start. Names the
-         memories inline when a summary map is provided; otherwise just the count. -->
+         memories inline when a summary map is provided; otherwise just the count. `memoryById` resolves
+         against the agent's CURRENT memory, so a recalled memory since forgotten/superseded won't
+         resolve — surface that as "N no longer present" rather than silently listing fewer than the
+         header count (8.6 review). -->
+    {@const present = msg.memoryIds.filter((id) => memoryById[id])}
+    {@const missing = msg.memoryIds.length - present.length}
     <div class="recall">
       <Circle size={7} fill="var(--state-succeeded)" color="var(--state-succeeded)" aria-hidden="true" />
       <span class="recall-kind">Recalled {msg.count} {msg.count === 1 ? "memory" : "memories"}</span>
-      {#if msg.memoryIds.some((id) => memoryById[id])}
+      {#if missing > 0}<span class="recall-missing">· {missing} no longer present</span>{/if}
+      {#if present.length > 0}
         <ul class="recall-list">
-          {#each msg.memoryIds as id (id)}
-            {#if memoryById[id]}
-              <li><span class="recall-mkind">{memoryById[id].kind}</span> {memoryById[id].summary}</li>
-            {/if}
+          {#each present as id (id)}
+            <li><span class="recall-mkind">{memoryById[id].kind}</span> {memoryById[id].summary}</li>
           {/each}
         </ul>
       {/if}
@@ -121,6 +125,10 @@
     color: var(--state-succeeded);
     font-weight: var(--weight-medium);
     white-space: nowrap;
+  }
+  .recall-missing {
+    color: var(--text-tertiary);
+    font-size: var(--text-xs);
   }
   .recall-list {
     flex-basis: 100%;
