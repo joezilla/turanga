@@ -74,6 +74,7 @@
   let savedAt = $state("");
   let publishing = $state(false);
   let publishError = $state("");
+  let duplicating = $state(false);
   let lifecycleBusy = $state(false);
   let activateError = $state("");
   let showDeactivateConfirm = $state(false);
@@ -108,6 +109,19 @@
     return out;
   });
   const unsaved = $derived(unsavedFields.length > 0);
+
+  // Human labels for the dirty bar — never surface raw field keys (`attachedTools`, `costCap`).
+  const FIELD_LABEL: Record<string, string> = {
+    name: "Name",
+    description: "Description",
+    model: "Model",
+    instructions: "Instructions",
+    variables: "Variables",
+    skills: "Skills",
+    attachedTools: "Tools",
+    costCap: "Limits",
+  };
+  const labelFields = (fs: string[]): string => fs.map((f) => FIELD_LABEL[f] ?? f).join(", ");
 
   // A tab shows a caution dot when it holds either kind of pending change.
   const tabsWithChange = $derived.by(() => {
@@ -176,9 +190,15 @@
     loadError = "";
     saveError = "";
     publishError = "";
+    activateError = "";
     savedAt = "";
     historyOpen = false;
     toolStats = [];
+    // Clear any in-flight busy flags — a mutation on the previous agent early-returns on the
+    // target guard below without resetting its own flag, so the new agent must start clean.
+    saving = false;
+    publishing = false;
+    lifecycleBusy = false;
     const [a, p, t] = await Promise.all([getAgent(target), listProviders(), listTools()]);
     if (target !== id) return; // navigated away before this resolved — drop it
     loading = false;
@@ -219,15 +239,18 @@
       attachedTools,
       costCap,
     };
+    const target = id; // a save that resolves after navigation must not clobber the new agent
     const mine = ++saveSeq;
     saving = true;
     saveError = "";
-    const r = await updateAgent(id, patch);
-    if (mine !== saveSeq) return; // a newer save superseded this one
+    const r = await updateAgent(target, patch);
+    if (target !== id || mine !== saveSeq) return; // navigated away OR superseded → drop it
     saving = false;
     if (r.ok) {
+      // Adopt the server's canonical row so `unsaved` recomputes — but do NOT re-seed the editable
+      // copies: that would clobber keystrokes typed during the in-flight save. (When nothing was
+      // typed, the local copies already match what was sent; genuine new edits stay flagged unsaved.)
       agent = r.value;
-      seed(r.value); // adopt the server's canonical values (trimming, clamping)
       savedAt = formatTimestamp(new Date().toISOString());
       agentsChanged(); // the list column shows the name + the unpublished marker
     } else {
@@ -243,13 +266,16 @@
 
   async function publish() {
     if (!agent || publishing || publishBlocker) return;
+    const target = id;
     publishing = true;
     publishError = "";
-    const r = await publishAgent(id);
+    const r = await publishAgent(target);
+    if (target !== id) return; // navigated away → drop
     publishing = false;
     if (r.ok) {
+      // Publish is gated on !unsaved, so the draft content is unchanged — adopting the row (without
+      // re-seeding) clears `dirty` while leaving any keystrokes typed during the round-trip intact.
       agent = r.value;
-      seed(r.value);
       agentsChanged();
       if (historyOpen) void loadVersions();
     } else {
@@ -270,30 +296,43 @@
   }
 
   async function duplicate() {
+    if (duplicating) return; // a double-click must not fire two copies
+    duplicating = true;
     const r = await duplicateAgent(id);
     if (r.ok) {
       agentsChanged();
-      await goto(`/agents/${r.value.id}`);
+      await goto(`/agents/${r.value.id}`); // navigates away → the reloaded editor resets `duplicating`
+    } else {
+      duplicating = false;
+      saveError = r.error;
     }
-    else saveError = r.error;
   }
 
   async function doActivate() {
     if (!agent || activateBlockers.length || lifecycleBusy) return;
+    // Activate acts on the SAVED draft — refuse when there are unsaved edits so the user never
+    // activates a config that differs from what's on screen (mirrors Publish's save-first gate).
+    if (unsaved) {
+      activateError = "Save the draft before activating it.";
+      return;
+    }
+    const target = id;
     lifecycleBusy = true;
     activateError = "";
-    const r = await activateAgent(agent.id);
+    const r = await activateAgent(target);
+    if (target !== id) return; // navigated away → drop
     lifecycleBusy = false;
     if (r.ok) {
       agent = r.value;
       agentsChanged();
-    }
-    else activateError = r.error; // e.g. caps cleared between enabling the button and the click
+    } else activateError = r.error; // e.g. caps cleared between enabling the button and the click
   }
   async function doDeactivate() {
     if (!agent || lifecycleBusy) return;
+    const target = id;
     lifecycleBusy = true;
-    const r = await deactivateAgent(agent.id);
+    const r = await deactivateAgent(target);
+    if (target !== id) return; // navigated away → drop
     lifecycleBusy = false;
     showDeactivateConfirm = false;
     if (r.ok) {
@@ -369,14 +408,14 @@
         </button>
         <a class="ghost" href="/agents/{agent.id}/runs">Runs</a>
         <button type="button" class="ghost" onclick={toggleHistory} aria-expanded={historyOpen}>History</button>
-        <button type="button" class="secondary" onclick={duplicate}>Duplicate</button>
+        <button type="button" class="secondary" onclick={duplicate} disabled={duplicating}>Duplicate</button>
         {#if agent.state === "draft"}
           <button
             type="button"
             class="secondary"
             onclick={doActivate}
-            disabled={activateBlockers.length > 0 || lifecycleBusy}
-            title={activateBlockers.join(" ")}
+            disabled={activateBlockers.length > 0 || unsaved || lifecycleBusy}
+            title={unsaved ? "Save the draft before activating it." : activateBlockers.join(" ")}
           >
             Activate
           </button>
@@ -569,7 +608,7 @@
                 <span class="dirty-detail">{saveError}</span>
               {:else}
                 <span class="dirty-label">{unsavedFields.length} unsaved change{unsavedFields.length === 1 ? "" : "s"}</span>
-                <span class="dirty-detail">{unsavedFields.join(", ")}</span>
+                <span class="dirty-detail">{labelFields(unsavedFields)}</span>
               {/if}
             </div>
             <div class="dirty-right">
@@ -587,7 +626,7 @@
               <span class="dirty-label">
                 {agent.publishedVersion === null ? "Never published" : `${agent.changedFields.length} change${agent.changedFields.length === 1 ? "" : "s"} not published`}
               </span>
-              <span class="dirty-detail">{agent.changedFields.join(", ")}</span>
+              <span class="dirty-detail">{labelFields(agent.changedFields)}</span>
             </div>
             <div class="dirty-right">
               {#if agent.publishedAt}<span class="dirty-detail">last published {formatTimestamp(agent.publishedAt)}</span>{/if}

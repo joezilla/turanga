@@ -20,14 +20,24 @@
   // Mirrors the control-api's MIN_PASSWORD_LEN so the mismatch is stated before the round-trip.
   const MIN_LEN = 12;
   const canSubmit = $derived(
-    !busy && currentPassword.length > 0 && newPassword.length >= MIN_LEN && newPassword === confirmPassword,
+    !busy && currentPassword.length > 0 && newPassword.length >= MIN_LEN && newPassword === confirmPassword && newPassword !== currentPassword,
   );
   const hint = $derived.by(() => {
     if (!newPassword) return `At least ${MIN_LEN} characters.`;
     if (newPassword.length < MIN_LEN) return `That is ${newPassword.length} characters — ${MIN_LEN} is the minimum.`;
     if (confirmPassword && newPassword !== confirmPassword) return "The two new passwords don't match.";
+    if (newPassword === currentPassword) return "The new password must be different from your current one.";
     return `At least ${MIN_LEN} characters.`;
   });
+
+  // After a successful change the "done" note lingers; clear it the moment the user edits a field
+  // again, so the length/mismatch hint isn't hidden behind the stale success message.
+  function clearDoneNote() {
+    if (noteKind === "done") {
+      note = "";
+      noteKind = "idle";
+    }
+  }
 
   async function submit() {
     if (!canSubmit) return;
@@ -89,15 +99,15 @@
         <div class="micro">Password</div>
         <label class="field">
           <span>Current password</span>
-          <input type="password" bind:value={currentPassword} autocomplete="current-password" />
+          <input type="password" bind:value={currentPassword} autocomplete="current-password" oninput={clearDoneNote} />
         </label>
         <label class="field">
           <span>New password</span>
-          <input type="password" bind:value={newPassword} autocomplete="new-password" />
+          <input type="password" bind:value={newPassword} autocomplete="new-password" oninput={clearDoneNote} />
         </label>
         <label class="field">
           <span>Confirm new password</span>
-          <input type="password" bind:value={confirmPassword} autocomplete="new-password" />
+          <input type="password" bind:value={confirmPassword} autocomplete="new-password" oninput={clearDoneNote} />
         </label>
         <p class="note" class:error={noteKind === "error"} class:done={noteKind === "done"} aria-live="polite">
           {note || hint}

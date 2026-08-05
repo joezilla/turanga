@@ -4,6 +4,7 @@
   // chrome around them.
   import { page } from "$app/state";
   import { listAgents, type Agent } from "$lib/agents";
+  import { agentsBus } from "$lib/agentsBus.svelte";
 
   let { children } = $props();
 
@@ -34,6 +35,7 @@
   // (to connect a provider, say) doesn't lose track of the agent you were editing.
   let unpublished = $state<Agent[]>([]);
   $effect(() => {
+    void agentsBus.rev; // re-fetch when an agent is published/edited elsewhere (else the banner goes stale)
     void listAgents().then((r) => {
       if (r.ok) unpublished = r.value.filter((a) => a.dirty);
     });

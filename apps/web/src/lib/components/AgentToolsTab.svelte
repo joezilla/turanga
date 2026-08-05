@@ -52,8 +52,14 @@
 
   /** Write a tool's full operation set back, dropping the attachment when nothing is granted. */
   function setOperations(toolId: string, ops: string[]) {
-    const others = value.filter((a) => a.toolId !== toolId);
-    onchange(ops.length > 0 ? [...others, { toolId, operations: ops }] : others);
+    // Order-preserving: update the tool IN PLACE (or append if newly attached), never filter-then-append.
+    // A reorder would make the order-sensitive dirty check flag a phantom "unsaved" change.
+    if (ops.length === 0) return onchange(value.filter((a) => a.toolId !== toolId)); // no grants → detach
+    if (value.some((a) => a.toolId === toolId)) {
+      onchange(value.map((a) => (a.toolId === toolId ? { toolId, operations: ops } : a)));
+    } else {
+      onchange([...value, { toolId, operations: ops }]);
+    }
   }
 
   function toggle(toolId: string, op: string, on: boolean) {
@@ -72,7 +78,10 @@
     for (const g of groups) {
       const current = next.find((a) => a.toolId === g.tool.id)?.operations ?? [];
       const ops = [...new Set([...current, ...g.rows.map((r) => r.name)])];
-      next = [...next.filter((a) => a.toolId !== g.tool.id), { toolId: g.tool.id, operations: ops }];
+      // Order-preserving (see setOperations) — update in place or append, don't reorder.
+      next = next.some((a) => a.toolId === g.tool.id)
+        ? next.map((a) => (a.toolId === g.tool.id ? { toolId: g.tool.id, operations: ops } : a))
+        : [...next, { toolId: g.tool.id, operations: ops }];
     }
     onchange(next);
   }
