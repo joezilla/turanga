@@ -3,6 +3,7 @@ import { ulid } from "@turanga/domain";
 import type { ConversationsRepo, ConversationRow } from "./repo.js";
 import type { AgentsRepo } from "../agents/repo.js";
 import type { RunOrchestrator } from "../runs/orchestrator.js";
+import type { RunsRepo } from "../runs/repo.js";
 
 // Chat conversations surface (Epic 9). control-api is the sole writer (AD-7). A conversation is a
 // thread bound to a PUBLISHED agent version: creating one against an agent that was never published is
@@ -21,7 +22,7 @@ function parseCreate(input: unknown): { ok: true; value: { agentId: string; titl
   return { ok: true, value: { agentId: b.agentId, title: (b.title as string | undefined) ?? "" } };
 }
 
-export function conversationRoutes(repo: ConversationsRepo, agentsRepo: AgentsRepo, orchestrator: RunOrchestrator) {
+export function conversationRoutes(repo: ConversationsRepo, agentsRepo: AgentsRepo, orchestrator: RunOrchestrator, runsRepo: RunsRepo) {
   const app = new Hono();
 
   // Start a conversation. Refused if the agent was never published (publish before you can chat); pins
@@ -55,6 +56,16 @@ export function conversationRoutes(repo: ConversationsRepo, agentsRepo: AgentsRe
     const conversation = await repo.get(c.req.param("id"));
     if (!conversation) return c.json({ error: "That conversation doesn't exist." }, 404);
     return c.json({ conversation });
+  });
+
+  // Story 9.3 — the conversation's turns, so the web can render the thread. A turn is a linked run
+  // (user message = taskInput, agent reply = the transcript's `turn` messages), turnIndex ASC. A READ
+  // (the run-orchestrator remains the sole writer of run state, AD-7). Session-guarded via /conversations/*.
+  app.get("/conversations/:id/runs", async (c) => {
+    const id = c.req.param("id");
+    const conversation = await repo.get(id);
+    if (!conversation) return c.json({ error: "That conversation doesn't exist." }, 404);
+    return c.json({ runs: await runsRepo.listByConversation(id) });
   });
 
   // Story 9.2 — send a message and run a turn. The orchestrator builds the run from the conversation's

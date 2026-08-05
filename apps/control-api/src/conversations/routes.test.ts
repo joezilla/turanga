@@ -6,7 +6,8 @@ import { hashPassword } from "../auth/password.js";
 import { memoryConversationsRepo, type ConversationsRepo } from "./repo.js";
 import type { AgentsRepo, AgentView } from "../agents/repo.js";
 import type { RunOrchestrator } from "../runs/orchestrator.js";
-import type { RunRow } from "../runs/repo.js";
+import { memoryRunsRepo, type RunRow, type RunsRepo } from "../runs/repo.js";
+import { CONTRACT_VERSION } from "@turanga/contracts";
 
 const EMAIL = "admin@turanga.local";
 const PW = "pw-for-tests-123456";
@@ -24,10 +25,10 @@ function stubAgentsRepo(agents: Record<string, number | null>): AgentsRepo {
   } as unknown as AgentsRepo;
 }
 
-async function appWithSession(agents: Record<string, number | null>, conversationsRepo: ConversationsRepo = memoryConversationsRepo(), orchestrator?: RunOrchestrator) {
+async function appWithSession(agents: Record<string, number | null>, conversationsRepo: ConversationsRepo = memoryConversationsRepo(), orchestrator?: RunOrchestrator, runsRepo?: RunsRepo) {
   const authRepo: AuthRepo = memoryAuthRepo();
   await authRepo.createUser({ id: ulid(1), email: EMAIL, passwordHash: await hashPassword(PW) });
-  const app = createApp({ authRepo, agentsRepo: stubAgentsRepo(agents), conversationsRepo, orchestrator });
+  const app = createApp({ authRepo, agentsRepo: stubAgentsRepo(agents), conversationsRepo, orchestrator, runsRepo });
   const login = await app.request("/auth/login", {
     method: "POST",
     headers: { "content-type": "application/json", "x-forwarded-for": `10.11.0.${clientSeq++}` },
@@ -143,5 +144,43 @@ describe("conversation routes — send a message / run a turn (Story 9.2)", () =
   it("is session-guarded (401 without a cookie)", async () => {
     const { app } = await appWithSession({ "agent-a": 1 });
     expect((await app.request("/conversations/conv-1/messages", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
+  });
+});
+
+describe("conversation routes — GET /conversations/:id/runs (the thread, Story 9.3)", () => {
+  const runRow = (over: Partial<RunRow> & { id: string; conversationId: string; turnIndex: number }): RunRow => ({
+    agentId: "a1",
+    status: "succeeded",
+    taskInput: "",
+    transcript: [],
+    reason: null,
+    costMicros: 0,
+    createdAt: "2026-08-05T00:00:00.000Z",
+    endedAt: null,
+    ...over,
+  });
+
+  it("returns the conversation's runs turnIndex-ASC, with transcripts", async () => {
+    const runsRepo = memoryRunsRepo();
+    // Insert out of order; the endpoint sorts by turnIndex ascending.
+    await runsRepo.create(runRow({ id: "t1", conversationId: "conv-1", turnIndex: 1, taskInput: "and tomorrow?", transcript: [{ type: "turn", v: CONTRACT_VERSION, role: "agent", text: "rain" }] }));
+    await runsRepo.create(runRow({ id: "t0", conversationId: "conv-1", turnIndex: 0, taskInput: "hi", transcript: [{ type: "turn", v: CONTRACT_VERSION, role: "agent", text: "hello" }] }));
+    await runsRepo.create(runRow({ id: "other", conversationId: "conv-2", turnIndex: 0 }));
+    const conversationsRepo = memoryConversationsRepo();
+    await conversationsRepo.create({ id: "conv-1", agentId: "a1", publishedVersion: 1, title: "", createdAt: "2026-08-05T00:00:00.000Z" });
+    const { app, cookie } = await appWithSession({ a1: 1 }, conversationsRepo, undefined, runsRepo);
+
+    const res = await app.request("/conversations/conv-1/runs", { headers: { cookie } });
+    expect(res.status).toBe(200);
+    const { runs } = (await res.json()) as { runs: { id: string; turnIndex: number; transcript: unknown[] }[] };
+    expect(runs.map((r) => r.id)).toEqual(["t0", "t1"]); // turnIndex ASC, never conv-2's
+    expect(runs[0].transcript).toHaveLength(1); // full transcript (the agent reply, for rendering)
+  });
+
+  it("404s for an unknown conversation; is session-guarded (401)", async () => {
+    const conversationsRepo = memoryConversationsRepo();
+    const { app, cookie } = await appWithSession({ a1: 1 }, conversationsRepo, undefined, memoryRunsRepo());
+    expect((await app.request("/conversations/nope/runs", { headers: { cookie } })).status).toBe(404);
+    expect((await app.request("/conversations/conv-1/runs")).status).toBe(401);
   });
 });

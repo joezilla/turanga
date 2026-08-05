@@ -109,8 +109,9 @@ export function createApp(deps: AppDeps = {}) {
     deps.orchestrator ??
     runOrchestrator({ runsRepo, agentsRepo, runtime: fakeSandboxRuntime(), guard: fakeRunGuard(), hub: runHub, dataConnectionsRepo, toolsRepo, memoryRepo, conversationsRepo, reflector, googleOAuth: google, modelGateway: gateway, image: "turanga/agent-harness:dev", sandboxVolume: "guard-run" });
   app.route("/", runRoutes(runsRepo, orchestrator, runHub, deps.guardCallbackToken ?? "dev-guard-callback"));
-  // Epic 9 — create (publish-first + version pin) / list / get (9.1) + POST …/messages (9.2, needs the orchestrator).
-  app.route("/", conversationRoutes(conversationsRepo, agentsRepo, orchestrator));
+  // Epic 9 — create (publish-first + version pin) / list / get (9.1) + POST …/messages (9.2) + GET
+  // …/runs (9.3, the thread). Needs the orchestrator (turn execution) + runsRepo (thread read).
+  app.route("/", conversationRoutes(conversationsRepo, agentsRepo, orchestrator, runsRepo));
 
   return app;
 }

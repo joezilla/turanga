@@ -12,7 +12,7 @@
   // surface yet); Runs/Tools have no top-level route — they live under an agent / Settings today.
   const items = [
     { href: "/agents", label: "Agents", icon: LayoutGrid, disabled: false, reason: "" },
-    { href: "/chat", label: "Chat", icon: MessageCircle, disabled: true, reason: "Chat is not available yet" },
+    { href: "/chat", label: "Chat", icon: MessageCircle, disabled: false, reason: "" },
     { href: "/runs", label: "Runs", icon: List, disabled: true, reason: "Run history lives on each agent for now" },
     { href: "/settings/tools", label: "Tools", icon: Wrench, disabled: false, reason: "" },
     { href: "/settings", label: "Settings", icon: Settings, disabled: false, reason: "" },
