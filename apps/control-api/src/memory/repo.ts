@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, cosineDistance, eq, gt, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import {
   DEFAULT_MEMORY_CONFIG,
   DEFAULT_MEMORY_GLOBAL_CONFIG,
@@ -39,6 +39,11 @@ export interface MemoryRepo {
   getMemory(agentId: string, id: string): Promise<MemoryRow | null>; // agentId re-checked — a memory only resolves for its owner
   createMemory(row: MemoryRow): Promise<void>;
   deleteMemory(agentId: string, id: string): Promise<void>;
+  // Recall (Story 8.3) — agent-scoped nearest-neighbor over the embedding column (cosine), excluding
+  // null-embedding + expired rows, optionally filtered to `opts.kinds`, ordered nearest-first, `k` max.
+  recall(agentId: string, queryEmbedding: number[], k: number, opts?: { kinds?: MemoryKind[] }): Promise<MemoryRow[]>;
+  // Bump usage counters on the just-recalled rows (auditable causality; agent-scoped). No-op on [].
+  markRecalled(agentId: string, ids: string[]): Promise<void>;
   // Operator-wide defaults (one singleton row). Reads return the OFF default when unset (no write on read).
   getGlobalConfig(): Promise<MemoryGlobalConfig>;
   setGlobalConfig(patch: Partial<MemoryGlobalConfig>): Promise<MemoryGlobalConfig>;
@@ -111,6 +116,28 @@ export function drizzleMemoryRepo(db: Db): MemoryRepo {
       // Both predicates so a caller can't delete another agent's memory by guessing an id (FR-7).
       await db.delete(agentMemories).where(and(eq(agentMemories.id, id), eq(agentMemories.agentId, agentId)));
     },
+    async recall(agentId, queryEmbedding, k, opts) {
+      const filters = [
+        eq(agentMemories.agentId, agentId), // FR-7 — never crosses the agent boundary
+        isNotNull(agentMemories.embedding), // un-embedded rows can't be compared
+        or(isNull(agentMemories.validUntil), gt(agentMemories.validUntil, new Date())), // temporal validity
+      ];
+      if (opts?.kinds && opts.kinds.length > 0) filters.push(inArray(agentMemories.kind, opts.kinds));
+      const rows = await db
+        .select()
+        .from(agentMemories)
+        .where(and(...filters))
+        .orderBy(cosineDistance(agentMemories.embedding, queryEmbedding)) // nearest-first (matches the HNSW cosine index)
+        .limit(k);
+      return rows.map(toRow);
+    },
+    async markRecalled(agentId, ids) {
+      if (ids.length === 0) return;
+      await db
+        .update(agentMemories)
+        .set({ useCount: sql`${agentMemories.useCount} + 1`, lastUsedAt: new Date() })
+        .where(and(eq(agentMemories.agentId, agentId), inArray(agentMemories.id, ids)));
+    },
     async getGlobalConfig() {
       const rows = await db.select().from(memorySettings).where(eq(memorySettings.id, GLOBAL_ID)).limit(1);
       return rows[0] ? toGlobal(rows[0]) : { ...DEFAULT_MEMORY_GLOBAL_CONFIG };
@@ -152,6 +179,21 @@ export function drizzleMemoryRepo(db: Db): MemoryRepo {
   };
 }
 
+// Cosine distance (1 - cosine similarity) for the in-memory fake — smaller = more similar, matching
+// the drizzle `cosineDistance` order. A zero-magnitude vector sorts last.
+function cosineDist(a: number[], b: number[]): number {
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
+  }
+  if (na === 0 || nb === 0) return 1;
+  return 1 - dot / (Math.sqrt(na) * Math.sqrt(nb));
+}
+
 export function memoryMemoryRepo(): MemoryRepo {
   const rows = new Map<string, MemoryRow>();
   const agentConfigs = new Map<string, MemoryConfig>();
@@ -170,6 +212,25 @@ export function memoryMemoryRepo(): MemoryRepo {
     async deleteMemory(agentId, id) {
       const r = rows.get(id);
       if (r && r.agentId === agentId) rows.delete(id);
+    },
+    async recall(agentId, queryEmbedding, k, opts) {
+      const now = Date.now();
+      const kinds = opts?.kinds;
+      const candidates = [...rows.values()].filter(
+        (r) =>
+          r.agentId === agentId &&
+          r.embedding != null &&
+          (r.validUntil == null || Date.parse(r.validUntil) > now) &&
+          (!kinds || kinds.length === 0 || kinds.includes(r.kind)),
+      );
+      candidates.sort((a, b) => cosineDist(queryEmbedding, a.embedding!) - cosineDist(queryEmbedding, b.embedding!));
+      return candidates.slice(0, k).map((r) => ({ ...r }));
+    },
+    async markRecalled(agentId, ids) {
+      for (const id of ids) {
+        const r = rows.get(id);
+        if (r && r.agentId === agentId) rows.set(id, { ...r, useCount: r.useCount + 1, lastUsedAt: new Date().toISOString() });
+      }
     },
     async getGlobalConfig() {
       return { ...global };

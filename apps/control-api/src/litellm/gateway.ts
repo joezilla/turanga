@@ -31,7 +31,14 @@ export interface ModelGateway {
   mintRunKey(input: { teamId: string; perRunCap: Money | null; runId: string }): Promise<string>; // the per-run key
   deleteKey(key: string): Promise<void>;
   teamSpendMicros(teamId: string): Promise<number>; // best-effort, lags ~60s — display only, never enforcement
+  // Embed text for memory recall (Story 8.3). Uses the control-plane MASTER key (unmetered) — recall
+  // runs before any per-run cost key is minted, so it never touches the cost cap. Throws on failure;
+  // the caller (orchestrator recall) is fail-open and treats a throw as "no memories".
+  embed(text: string, model?: string): Promise<number[]>;
 }
+
+// The embedding model recall commits to (Story 8.1/8.2). Fixed 1536-dim to match the pgvector column.
+export const DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
 
 function stripTrailingSlash(u: string): string {
   return u.replace(/\/+$/, "");
@@ -168,6 +175,22 @@ export function httpModelGateway(litellmBaseUrl: string, masterKey: string): Mod
     async deleteKey(key) {
       await fetch(`${litellmBaseUrl}/key/delete`, { method: "POST", headers: llmHeaders, body: JSON.stringify({ keys: [key] }) }).catch(() => {});
     },
+    async embed(text, model) {
+      // OpenAI-compatible embeddings via LiteLLM, master key (unmetered). No .catch swallow — a failure
+      // must surface so the orchestrator's fail-open path returns "no memories" rather than a bad vector.
+      const res = await fetch(`${litellmBaseUrl}/embeddings`, {
+        method: "POST",
+        headers: llmHeaders,
+        body: JSON.stringify({ model: model ?? DEFAULT_EMBEDDING_MODEL, input: text }),
+      });
+      if (!res.ok) throw new Error(`LiteLLM /embeddings failed (${res.status})`);
+      const json = (await res.json().catch(() => ({}))) as { data?: { embedding?: unknown }[] };
+      const embedding = json.data?.[0]?.embedding;
+      if (!Array.isArray(embedding) || embedding.some((n) => typeof n !== "number")) {
+        throw new Error("LiteLLM /embeddings returned no embedding vector");
+      }
+      return embedding as number[];
+    },
     async teamSpendMicros(teamId) {
       const res = await fetch(`${litellmBaseUrl}/team/info?team_id=${encodeURIComponent(teamId)}`, { headers: llmHeaders }).catch(() => null);
       if (!res?.ok) return 0;
@@ -186,23 +209,40 @@ function fakeCatalog(input: RegisterInput): string[] {
   return input.models ?? [];
 }
 
+// A DETERMINISTIC 1536-dim embedding for the test double: the same text always maps to the same
+// vector (so a seeded memory embedded from `content` and a query embedded from an equal `taskInput`
+// are identical → cosine distance 0), while different text diverges. No randomness (repeatable tests).
+export function fakeEmbed(text: string, dims = 1536): number[] {
+  let h = 2166136261 >>> 0; // FNV-ish seed
+  for (let i = 0; i < text.length; i++) h = (Math.imul(h ^ text.charCodeAt(i), 16777619) >>> 0);
+  const v = new Array<number>(dims);
+  for (let i = 0; i < dims; i++) {
+    h = (Math.imul(h, 1103515245) + 12345) >>> 0;
+    v[i] = (h % 2000) / 1000 - 1; // in [-1, 1)
+  }
+  return v;
+}
+
 // Test double.
-export function fakeModelGateway(opts: { verifyOk?: boolean; verifyError?: string; teamSpendMicros?: number; models?: string[] } = {}): ModelGateway & {
+export function fakeModelGateway(opts: { verifyOk?: boolean; verifyError?: string; teamSpendMicros?: number; models?: string[]; embedThrows?: boolean } = {}): ModelGateway & {
   registered: string[][];
   unregistered: string[];
   mintedKeys: { runId: string; teamId: string; perRunCap: Money | null }[];
   deletedKeys: string[];
+  embedded: string[];
 } {
   const registered: string[][] = [];
   const unregistered: string[] = [];
   const mintedKeys: { runId: string; teamId: string; perRunCap: Money | null }[] = [];
   const deletedKeys: string[] = [];
+  const embedded: string[] = [];
   let counter = 0;
   return {
     registered,
     unregistered,
     mintedKeys,
     deletedKeys,
+    embedded,
     async verify(input) {
       if (opts.verifyOk === false) return { ok: false, error: opts.verifyError ?? "bad key" };
       return { ok: true, models: opts.models ?? fakeCatalog(input) };
@@ -231,6 +271,11 @@ export function fakeModelGateway(opts: { verifyOk?: boolean; verifyError?: strin
     },
     async teamSpendMicros() {
       return opts.teamSpendMicros ?? 0;
+    },
+    async embed(text) {
+      if (opts.embedThrows) throw new Error("fake embed failure");
+      embedded.push(text);
+      return fakeEmbed(text);
     },
   };
 }

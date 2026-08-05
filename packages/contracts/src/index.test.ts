@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { JobSpecSchema, JobToolSchema, ToolCallRequestSchema, ToolCallResponseSchema, ControlChannelMessageSchema, GuardConnectionRequestSchema, GuardConnectionResponseSchema, GuardRunEventSchema, authorizes, SKILL_OPS, OP_REQUIREMENTS, CONTRACT_VERSION } from "./index.js";
+import { JobSpecSchema, JobToolSchema, JobMemorySchema, ToolCallRequestSchema, ToolCallResponseSchema, ControlChannelMessageSchema, GuardConnectionRequestSchema, GuardConnectionResponseSchema, GuardRunEventSchema, authorizes, SKILL_OPS, OP_REQUIREMENTS, CONTRACT_VERSION } from "./index.js";
 
 describe("contracts", () => {
-  it("contract version is 6 (Story 6.5 — tool invocation records)", () => {
-    expect(CONTRACT_VERSION).toBe(6);
+  it("contract version is 7 (Story 8.3 — recall / JobSpec.memories)", () => {
+    expect(CONTRACT_VERSION).toBe(7);
   });
 
-  it("job spec round-trips (with logical connection + tool handles)", () => {
+  it("job spec round-trips (with logical connection + tool handles + recalled memories)", () => {
     const spec = {
       v: CONTRACT_VERSION,
       runId: "r1",
@@ -16,16 +16,38 @@ describe("contracts", () => {
       skills: ["read-search"],
       connections: [{ id: "gmail", provider: "gmail" as const }],
       tools: [{ id: "t1", name: "weather", operations: ["get_weather"] }],
+      memories: [{ id: "m1", kind: "semantic" as const, summary: "the user prefers concise replies" }],
       taskInput: "go",
     };
     expect(JobSpecSchema.parse(spec)).toEqual(spec);
   });
 
-  it("defaults connections + tools to [] when omitted (older construction stays valid)", () => {
+  it("defaults connections + tools + memories to [] when omitted (older construction stays valid)", () => {
     const spec = { v: CONTRACT_VERSION, runId: "r1", agentId: "a1", model: "m", instructions: "", skills: [], taskInput: "" };
     const parsed = JobSpecSchema.parse(spec);
     expect(parsed.connections).toEqual([]);
     expect(parsed.tools).toEqual([]);
+    expect(parsed.memories).toEqual([]);
+  });
+
+  it("JobMemory is secret-free — id/kind/summary only; extra keys stripped (AD-10)", () => {
+    const m = JobMemorySchema.parse({ id: "m1", kind: "semantic", summary: "learned X" });
+    expect(Object.keys(m).sort()).toEqual(["id", "kind", "summary"]);
+    const stripped = JobMemorySchema.parse({ id: "m1", kind: "semantic", summary: "s", embedding: [0.1], token: "secret" } as unknown as { id: string; kind: "semantic"; summary: string });
+    expect(JSON.stringify(stripped)).not.toContain("secret");
+    expect(JSON.stringify(stripped)).not.toContain("embedding");
+    // an unknown kind is rejected
+    expect(JobMemorySchema.safeParse({ id: "m", kind: "made-up", summary: "s" }).success).toBe(false);
+  });
+
+  it("parses a `recall` transcript event (Story 8.3) — memory ids + count, no cost", () => {
+    const msg = ControlChannelMessageSchema.parse({ type: "recall", v: CONTRACT_VERSION, memoryIds: ["m1", "m2"], count: 2 });
+    expect(msg.type).toBe("recall");
+    if (msg.type === "recall") {
+      expect(msg.memoryIds).toEqual(["m1", "m2"]);
+      expect(msg.count).toBe(2);
+      expect(msg).not.toHaveProperty("costMicros");
+    }
   });
 
   it("JobTool: a logical handle carries only id/name/operations — no endpoint URL or credential (AD-10)", () => {
@@ -69,7 +91,7 @@ describe("contracts", () => {
         expect(msg).not.toHaveProperty("costMicros");
       }
     }
-    // a v5 tool message is rejected by the current (v6) schema — mixed-version guard.
+    // a v5 tool message is rejected by the current (v7) schema — mixed-version guard.
     expect(ControlChannelMessageSchema.safeParse({ type: "tool", v: 5, toolId: "t1", toolName: "W", operation: "x", outcome: "ok", latencyMs: 1 }).success).toBe(false);
   });
 

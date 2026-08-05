@@ -3,11 +3,18 @@ import { readJobSpec, opOutcome, toolRecord } from "./main.js";
 import { CONTRACT_VERSION, type GuardConnectionResponse, type ToolCallResponse } from "@turanga/contracts";
 
 describe("agent-harness", () => {
-  it("parses a valid job spec (connections default to [])", () => {
+  it("parses a valid job spec (connections + memories default to [])", () => {
     const spec = { v: CONTRACT_VERSION, runId: "r", agentId: "a", model: "m", instructions: "", skills: [], taskInput: "" };
     const parsed = readJobSpec(spec);
     expect(parsed.runId).toBe("r");
     expect(parsed.connections).toEqual([]);
+    expect(parsed.memories).toEqual([]); // Story 8.3 — a spec without recall carries no memories
+  });
+
+  it("reads recalled memories from the spec (Story 8.3 — folded into system context at run time)", () => {
+    const spec = { v: CONTRACT_VERSION, runId: "r", agentId: "a", model: "m", instructions: "", skills: [], taskInput: "", memories: [{ id: "m1", kind: "semantic", summary: "the user prefers concise replies" }] };
+    const parsed = readJobSpec(spec);
+    expect(parsed.memories).toEqual([{ id: "m1", kind: "semantic", summary: "the user prefers concise replies" }]);
   });
 
   it("opOutcome: a successful read folds a summary into the model context", () => {

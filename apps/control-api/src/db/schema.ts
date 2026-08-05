@@ -141,9 +141,9 @@ export const tools = pgTable("tools", {
 });
 
 // Agent memory (Epic 8, Story 8.1). Control-plane store; agent-scoped; OFF by default; never holds a
-// secret (AD-10). control-api is the sole writer (AD-7). `embedding` is populated by recall (8.3); the
+// secret (AD-10). control-api is the sole writer (AD-7). `embedding` is populated by reflect (8.4); the
 // vector column is fixed at 1536 dims (text-embedding-3-small) — see the story's embedding-dimension
-// decision. The ivfflat/hnsw index is deferred to 8.3 (the distance op is a recall decision).
+// decision. Story 8.3 adds the HNSW cosine index for recall (nearest-neighbor via `<=>`).
 export const agentMemories = pgTable(
   "agent_memories",
   {
@@ -162,7 +162,13 @@ export const agentMemories = pgTable(
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("agent_memories_agent_idx").on(t.agentId)], // recall filters by agent (FR-7)
+  (t) => [
+    index("agent_memories_agent_idx").on(t.agentId), // recall filters by agent (FR-7)
+    // Story 8.3 — HNSW cosine index for recall's nearest-neighbor (`embedding <=> query`). Must match
+    // the cosine distance used by MemoryRepo.recall. drizzle-kit may not emit the opclass cleanly →
+    // the generated migration is hand-verified/edited (mirrors the hand-added CREATE EXTENSION in 0015).
+    index("agent_memories_embedding_idx").using("hnsw", t.embedding.op("vector_cosine_ops")),
+  ],
 );
 
 // Operator-wide memory defaults (Epic 8, Story 8.1) — a single row keyed "global". Ships OFF: memory

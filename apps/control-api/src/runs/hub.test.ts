@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
-import type { ControlChannelMessage } from "@turanga/contracts";
+import { CONTRACT_VERSION, type ControlChannelMessage } from "@turanga/contracts";
 import { createRunHub } from "./hub.js";
 
-const turn = (text: string): ControlChannelMessage => ({ type: "turn", v: 6, role: "agent", text });
+const turn = (text: string): ControlChannelMessage => ({ type: "turn", v: CONTRACT_VERSION, role: "agent", text });
 
 describe("RunHub", () => {
   it("subscribe replays from the given index, then delivers live messages", () => {

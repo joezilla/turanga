@@ -3,6 +3,9 @@
 // they harden in Epic 4. The `v` field is the contract version — bump on any change.
 import { z } from "zod";
 
+// v7 (Story 8.3): recall — a sandbox-visible `JobSpec.memories` list folded into the model's system
+// context, plus a `recall` transcript event recording which memories a run injected. Memories are
+// secret-free distilled text (AD-10); recall is embedding-only (no LLM cost).
 // v6 (Story 6.5): structured `tool` invocation records on the control channel — a recorded,
 // per-tool observability event (outcome + latency); observed only, never metered/killed (AC2).
 // v5 (Story 6.1): tools — a logical JobTool handle on the job spec + the harness↔Guard tool-invoke
@@ -11,7 +14,7 @@ import { z } from "zod";
 // channel (metrics + kill) is defined here (E4-AD-10, out-of-band control-plane).
 // v3 (Story 4.4): provider-agnostic connection ops (read | label | send), refusal `kind`, skill policy.
 // v2 (Story 4.3): connection-read entries + logical connection handles.
-export const CONTRACT_VERSION = 6 as const;
+export const CONTRACT_VERSION = 7 as const;
 
 /** A logical connection handle the agent is configured to use. NO token, URL, or destination —
  *  the Guard holds the credential + allowlist per-run (AD-10); the sandbox names only the handle. */
@@ -30,6 +33,16 @@ export const JobToolSchema = z.object({
 });
 export type JobTool = z.infer<typeof JobToolSchema>;
 
+/** A memory recalled into a run (Story 8.3). Secret-free distilled text — `summary` is like an
+ *  instructions fragment, NEVER a credential/endpoint (AD-10). Injected immutably at run start and
+ *  folded into the model's system context by the harness. */
+export const JobMemorySchema = z.object({
+  id: z.string(),
+  kind: z.enum(["episodic", "semantic", "procedure"]),
+  summary: z.string(),
+});
+export type JobMemory = z.infer<typeof JobMemorySchema>;
+
 /** Immutable job spec injected into a sandbox at run start (AD-9). */
 export const JobSpecSchema = z.object({
   v: z.literal(CONTRACT_VERSION),
@@ -44,6 +57,9 @@ export const JobSpecSchema = z.object({
   // Logical tool handles the harness may invoke (Story 6.1; no endpoint/secret — AD-10). Default
   // keeps older specs valid.
   tools: z.array(JobToolSchema).default([]),
+  // Memories recalled for this run (Story 8.3; secret-free distilled text — AD-10). Default keeps
+  // older specs valid; recall is off by default, so most specs carry [].
+  memories: z.array(JobMemorySchema).default([]),
   // Runtime data ingress is proxy-mediated (AD-9); the spec carries only the task input.
   taskInput: z.string(),
 });
@@ -72,6 +88,15 @@ export const ControlChannelMessageSchema = z.discriminatedUnion("type", [
     outcome: z.enum(["ok", "error", "refused"]),
     latencyMs: z.number(),
     detail: z.string().optional(),
+  }),
+  // Recall (Story 8.3) — an ORCHESTRATOR-authored transcript event (not a harness/Guard stream
+  // message): records which memories recall injected into this run, for the auditable "learned →
+  // recalled" causal chain (NFR-4). No cost, no kill path — recall is embedding-only.
+  z.object({
+    type: z.literal("recall"),
+    v: z.literal(CONTRACT_VERSION),
+    memoryIds: z.array(z.string()),
+    count: z.number(),
   }),
   z.object({ type: z.literal("done"), v: z.literal(CONTRACT_VERSION), status: z.enum(["succeeded", "failed", "killed"]) }),
 ]);

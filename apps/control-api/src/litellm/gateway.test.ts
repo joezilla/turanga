@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { httpModelGateway } from "./gateway.js";
+import { httpModelGateway, fakeModelGateway, fakeEmbed } from "./gateway.js";
 
 // Capture LiteLLM admin calls by stubbing global fetch. The gateway uses the master key bearer.
 function stub(handler: (url: string, init?: RequestInit) => Response) {
@@ -106,5 +106,41 @@ describe("litellm gateway — model registration", () => {
     // litellm_params calls the upstream via the openai provider + the base URL with the raw id.
     expect(body.litellm_params.model).toBe("openai//models/gpt-oss-20b-MXFP4.gguf");
     expect(body.litellm_params.api_base).toBe("http://host:8080/v1");
+  });
+});
+
+describe("litellm gateway — embeddings (Story 8.3, recall)", () => {
+  it("httpModelGateway.embed POSTs to /embeddings with the master key + { model, input } and returns data[0].embedding", async () => {
+    const vec = [0.1, 0.2, 0.3];
+    const calls = stub((url) =>
+      url.endsWith("/embeddings")
+        ? new Response(JSON.stringify({ data: [{ embedding: vec }] }), { status: 200 })
+        : new Response("nope", { status: 404 }),
+    );
+    const out = await gw().embed("some task input");
+    expect(out).toEqual(vec);
+    const call = calls.find((c) => c.url.endsWith("/embeddings"))!;
+    expect(call.auth).toBe("Bearer sk-master"); // master key — unmetered, off the cost cap
+    expect(call.body).toMatchObject({ model: "text-embedding-3-small", input: "some task input" });
+  });
+
+  it("embed throws on a non-ok response or a malformed body (so recall can fail-open)", async () => {
+    stub(() => new Response("boom", { status: 500 }));
+    await expect(gw().embed("x")).rejects.toThrow();
+    vi.unstubAllGlobals();
+    stub(() => new Response(JSON.stringify({ data: [] }), { status: 200 }));
+    await expect(gw().embed("x")).rejects.toThrow();
+  });
+
+  it("fakeModelGateway.embed is deterministic (1536-dim; same text → same vector) and records calls", async () => {
+    const g = fakeModelGateway();
+    const a = await g.embed("hello");
+    const b = await g.embed("hello");
+    const c = await g.embed("world");
+    expect(a).toHaveLength(1536);
+    expect(a).toEqual(b); // deterministic
+    expect(a).not.toEqual(c); // different text diverges
+    expect(g.embedded).toEqual(["hello", "hello", "world"]);
+    expect(fakeEmbed("hello")).toEqual(a); // the exported helper matches
   });
 });

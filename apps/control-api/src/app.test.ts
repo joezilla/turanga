@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { CONTRACT_VERSION } from "@turanga/contracts";
 import { createApp } from "./app.js";
 
 describe("control-api", () => {
@@ -17,7 +18,7 @@ describe("control-api", () => {
 
   it("the Guard callback route rejects a bad token (constant-time) and is NOT web-session-guarded", async () => {
     const app2 = createApp({ guardCallbackToken: "secret-cb" });
-    const event = JSON.stringify({ type: "metrics", v: 6, latencyMs: 1, tokens: 1, costMicros: 1 });
+    const event = JSON.stringify({ type: "metrics", v: CONTRACT_VERSION, latencyMs: 1, tokens: 1, costMicros: 1 });
     // No token → 403 (not 401/redirect — it's control-plane, token-authenticated, not session).
     const bad = await app2.request("/internal/guard/runs/R1/events", { method: "POST", headers: { "content-type": "application/json" }, body: event });
     expect(bad.status).toBe(403);

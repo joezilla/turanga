@@ -3,8 +3,8 @@
 // Run with a stated reason and NEVER falls through to unsandboxed execution (NFR-1). Each control
 // message is published to the RunHub so the SSE endpoint can stream it live (E4-AD-7). The per-run
 // cost key + kill-on-429 is Story 4.5.
-import { ulid, type LifecycleState, type AttachedSkill, type AttachedTool, type CostCap, type Money } from "@turanga/domain";
-import { CONTRACT_VERSION, ControlChannelMessageSchema, type JobSpec, type JobConnection, type JobTool, type GuardRunEvent } from "@turanga/contracts";
+import { ulid, effectiveMemoryConfig, type LifecycleState, type AttachedSkill, type AttachedTool, type CostCap, type Money } from "@turanga/domain";
+import { CONTRACT_VERSION, ControlChannelMessageSchema, type JobSpec, type JobConnection, type JobTool, type JobMemory, type GuardRunEvent } from "@turanga/contracts";
 import type { RunsRepo, RunRow, RunStatus } from "./repo.js";
 import type { SandboxRuntime, SandboxHandle } from "./runtime.js";
 import type { RunGuard, RunProvision, ProvisionConnection, ProvisionTool, SkillGrant } from "./guardClient.js";
@@ -91,8 +91,9 @@ function safeJson(line: string): unknown {
 }
 
 export function runOrchestrator(deps: OrchestratorDeps) {
-  const { runsRepo, agentsRepo, runtime, guard, hub, image, sandboxVolume, dataConnectionsRepo, toolsRepo, googleOAuth, modelGateway } = deps;
+  const { runsRepo, agentsRepo, runtime, guard, hub, image, sandboxVolume, dataConnectionsRepo, toolsRepo, memoryRepo, googleOAuth, modelGateway } = deps;
   const maxConcurrent = deps.maxConcurrent ?? 5;
+  const RECALL_TOP_K = 5; // Story 8.3 — how many memories recall injects at most
   const runTimeoutMs = deps.runTimeoutMs ?? 120_000;
   let active = 0;
   const controllers = new Map<string, RunController>(); // live runs, for Guard→orchestrator callbacks (E4-AD-10)
@@ -172,6 +173,26 @@ export function runOrchestrator(deps: OrchestratorDeps) {
     return { jobTools, provisionTools };
   }
 
+  // Story 8.3 — RECALL: before the spec is built, inject what the agent has learned that's relevant to
+  // the task. Embedding-only (zero LLM cost — runs BEFORE the per-run cost key is minted, on the master
+  // key), gated by effectiveMemoryConfig(...).recall (8.2), agent-scoped (FR-7), secret-free (AD-10),
+  // and FAIL-OPEN: any failure degrades to no memories — a run is NEVER blocked because recall failed.
+  async function resolveRecall(agent: AgentLike, taskInput: string): Promise<{ memories: JobMemory[]; recalledIds: string[] }> {
+    const empty = { memories: [], recalledIds: [] };
+    if (!memoryRepo || !modelGateway) return empty;
+    try {
+      const eff = effectiveMemoryConfig(await memoryRepo.getGlobalConfig(), await memoryRepo.getAgentMemoryConfig(agent.id));
+      if (!eff.recall) return empty; // the gate: off / inherit-off / killSwitch all resolve here
+      const embedding = await modelGateway.embed(taskInput);
+      const rows = await memoryRepo.recall(agent.id, embedding, RECALL_TOP_K, { kinds: eff.kinds });
+      // Secret-free projection (AD-10): id/kind + distilled text only. Prefer summary, fall back to content.
+      const memories: JobMemory[] = rows.map((r) => ({ id: r.id, kind: r.kind, summary: r.summary || r.content }));
+      return { memories, recalledIds: rows.map((r) => r.id) };
+    } catch {
+      return empty; // fail-open — recall is additive, never a guardrail
+    }
+  }
+
   async function finish(runId: string, status: RunStatus, reason: string | undefined, costMicros: number): Promise<RunRow> {
     // Persist the run-cost summary = the summed metrics the Guard reported (AC3, no drift by construction).
     await runsRepo.setStatus(runId, status, { reason: reason ?? null, endedAt: new Date().toISOString(), costMicros });
@@ -203,12 +224,19 @@ export function runOrchestrator(deps: OrchestratorDeps) {
       const { jobConnections, jobSkills, provision } = await resolveRunConnections(agent);
       const { jobTools, provisionTools } = await resolveRunTools(agent); // Story 6.3/6.4 — sandbox handles + Guard-held creds
       provision.tools = provisionTools; // Story 6.4 — the granted tools + decrypted credentials go to the Guard (never the jobSpec)
-      // The job spec carries only LOGICAL handles + skill/tool IDs — the minted access token, the cost key,
-      // AND the authoritative scope/send grants + tool credentials live in `provision` and go to the Guard
-      // over the admin API, NEVER into the sandbox (AD-10).
-      const jobSpec: JobSpec = { v: CONTRACT_VERSION, runId, agentId, model: agent.model, instructions: agent.instructions, skills: jobSkills, connections: jobConnections, tools: jobTools, taskInput };
-      const row: RunRow = { id: runId, agentId, status: "created", taskInput, transcript: [], reason: null, costMicros: 0, createdAt: now, endedAt: null };
+      // Story 8.3 — recall (embedding-only, gated, fail-open) runs HERE, before the cost key is minted
+      // in execute() — so it can never touch the run's cost cap.
+      const { memories, recalledIds } = await resolveRecall(agent, taskInput);
+      // The job spec carries only LOGICAL handles + skill/tool IDs + secret-free recalled memories — the
+      // minted access token, the cost key, AND the authoritative scope/send grants + tool credentials
+      // live in `provision` and go to the Guard over the admin API, NEVER into the sandbox (AD-10).
+      const jobSpec: JobSpec = { v: CONTRACT_VERSION, runId, agentId, model: agent.model, instructions: agent.instructions, skills: jobSkills, connections: jobConnections, tools: jobTools, memories, taskInput };
+      // Auditable causality (NFR-4): record which memories this run recalled, as a transcript event on the
+      // row at creation (orchestrator-authored, not a harness stream message), and bump their usage counters.
+      const transcript = recalledIds.length > 0 ? [{ type: "recall" as const, v: CONTRACT_VERSION, memoryIds: recalledIds, count: recalledIds.length }] : [];
+      const row: RunRow = { id: runId, agentId, status: "created", taskInput, transcript, reason: null, costMicros: 0, createdAt: now, endedAt: null };
       await runsRepo.create(row);
+      if (recalledIds.length > 0 && memoryRepo) void memoryRepo.markRecalled(agentId, recalledIds).catch(() => {}); // best-effort; never blocks the run
       hub.open(runId); // hub state exists before start() hands the run back — the SSE subscriber won't miss the opening
       return { ok: true, runId, jobSpec, row, provision, costCap: agent.costCap ?? null };
     } catch (e) {

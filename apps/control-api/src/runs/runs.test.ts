@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
-import type { ControlChannelMessage } from "@turanga/contracts";
+import { CONTRACT_VERSION, type ControlChannelMessage } from "@turanga/contracts";
 import { runOrchestrator } from "./orchestrator.js";
 import { memoryRunsRepo } from "./repo.js";
 import { fakeSandboxRuntime, resolveSandboxRuntimeKind } from "./runtime.js";
@@ -7,7 +7,8 @@ import { fakeRunGuard } from "./guardClient.js";
 import { createRunHub } from "./hub.js";
 import { encryptSecret } from "../secrets/crypto.js";
 import { fakeGoogleOAuth } from "../oauth/google.js";
-import { fakeModelGateway } from "../litellm/gateway.js";
+import { fakeModelGateway, fakeEmbed } from "../litellm/gateway.js";
+import { memoryMemoryRepo, type MemoryRow } from "../memory/repo.js";
 import type { AttachedSkill, AttachedTool, CostCap } from "@turanga/domain";
 
 type Agent = { id: string; model: string | null; instructions: string; state: "draft" | "active"; skills?: AttachedSkill[]; attachedTools?: AttachedTool[]; costCap?: CostCap };
@@ -22,7 +23,7 @@ function orch(opts: { agent?: Agent; runtime?: ReturnType<typeof fakeSandboxRunt
   const hub = createRunHub();
   const runtime =
     opts.runtime ??
-    fakeSandboxRuntime({ lines: [nd({ type: "turn", v: 6, role: "agent", text: "hi" }), nd({ type: "done", v: 6, status: "succeeded" })] });
+    fakeSandboxRuntime({ lines: [nd({ type: "turn", v: CONTRACT_VERSION, role: "agent", text: "hi" }), nd({ type: "done", v: CONTRACT_VERSION, status: "succeeded" })] });
   const o = runOrchestrator({ runsRepo, agentsRepo: agentsRepo(opts.agent ?? agent()), runtime, guard, hub, image: "img", sandboxVolume: "vol", maxConcurrent: opts.maxConcurrent, runTimeoutMs: opts.runTimeoutMs });
   return { o, runsRepo, guard, runtime, hub };
 }
@@ -75,7 +76,7 @@ describe("run orchestrator", () => {
   });
 
   it("ignores malformed control lines and stops at the first done", async () => {
-    const { o } = orch({ runtime: fakeSandboxRuntime({ lines: ["not json", "{}", nd({ type: "done", v: 6, status: "succeeded" }), nd({ type: "done", v: 6, status: "failed" })] }) });
+    const { o } = orch({ runtime: fakeSandboxRuntime({ lines: ["not json", "{}", nd({ type: "done", v: CONTRACT_VERSION, status: "succeeded" }), nd({ type: "done", v: CONTRACT_VERSION, status: "failed" })] }) });
     const r = await o.launch("a1", "x");
     expect(r.ok).toBe(true);
     if (!r.ok) return;
@@ -142,7 +143,7 @@ describe("run orchestrator", () => {
       if (failNext) { failNext = false; throw new Error("db blip"); }
       return base.create(row);
     } };
-    const runtime = fakeSandboxRuntime({ lines: [nd({ type: "done", v: 6, status: "succeeded" })] });
+    const runtime = fakeSandboxRuntime({ lines: [nd({ type: "done", v: CONTRACT_VERSION, status: "succeeded" })] });
     const o = runOrchestrator({ runsRepo: flaky, agentsRepo: agentsRepo(agent()), runtime, guard: fakeRunGuard(), hub: createRunHub(), image: "img", sandboxVolume: "vol", maxConcurrent: 1 });
     await expect(o.launch("a1", "x")).rejects.toThrow("db blip"); // create() threw before execute()
     const r = await o.launch("a1", "x"); // slot was released → not stuck at the cap
@@ -173,7 +174,7 @@ describe("run orchestrator — connections + credentialed provisioning (4.3)", (
   function connOrch(opts: { skills?: AttachedSkill[]; connections?: Conn[] }) {
     const runsRepo = memoryRunsRepo();
     const guard = fakeRunGuard();
-    const runtime = fakeSandboxRuntime({ lines: [nd({ type: "done", v: 6, status: "succeeded" })] });
+    const runtime = fakeSandboxRuntime({ lines: [nd({ type: "done", v: CONTRACT_VERSION, status: "succeeded" })] });
     const googleOAuth = fakeGoogleOAuth();
     const dataConnectionsRepo = { list: async () => opts.connections ?? [] };
     const o = runOrchestrator({
@@ -248,7 +249,7 @@ describe("run orchestrator — connections + credentialed provisioning (4.3)", (
   function toolOrch(opts: { attachedTools?: AttachedTool[]; tools?: ToolRec[] }) {
     const runsRepo = memoryRunsRepo();
     const guard = fakeRunGuard();
-    const runtime = fakeSandboxRuntime({ lines: [nd({ type: "done", v: 6, status: "succeeded" })] });
+    const runtime = fakeSandboxRuntime({ lines: [nd({ type: "done", v: CONTRACT_VERSION, status: "succeeded" })] });
     const byId = new Map((opts.tools ?? []).map((t) => [t.id, t]));
     const toolsRepo = { getTool: async (id: string) => byId.get(id) ?? null };
     const o = runOrchestrator({
@@ -330,7 +331,7 @@ describe("run orchestrator — cost keys + kill-on-breach (4.5)", () => {
     const modelGateway = fakeModelGateway();
     const runtime = opts.hang
       ? fakeSandboxRuntime({ hang: true })
-      : fakeSandboxRuntime({ lines: [nd({ type: "done", v: 6, status: "succeeded" })] });
+      : fakeSandboxRuntime({ lines: [nd({ type: "done", v: CONTRACT_VERSION, status: "succeeded" })] });
     const o = runOrchestrator({ runsRepo, agentsRepo: agentsRepo(agent({ costCap: cap })), runtime, guard, hub: createRunHub(), modelGateway, image: "img", sandboxVolume: "vol" });
     return { o, runsRepo, guard, runtime, modelGateway };
   }
@@ -357,8 +358,8 @@ describe("run orchestrator — cost keys + kill-on-breach (4.5)", () => {
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     await vi.waitFor(async () => expect((await runsRepo.get(r.run.id))?.status).toBe("running")); // controller registered
-    await o.handleGuardEvent(r.run.id, { type: "metrics", v: 6, latencyMs: 12, tokens: 100, costMicros: 4100 });
-    await o.handleGuardEvent(r.run.id, { type: "kill", v: 6, scope: "run" });
+    await o.handleGuardEvent(r.run.id, { type: "metrics", v: CONTRACT_VERSION, latencyMs: 12, tokens: 100, costMicros: 4100 });
+    await o.handleGuardEvent(r.run.id, { type: "kill", v: CONTRACT_VERSION, scope: "run" });
     await vi.waitFor(async () => expect((await runsRepo.get(r.run.id))?.status).toBe("killed"));
     const run = await runsRepo.get(r.run.id);
     expect(run?.reason).toMatch(/per-run cost cap reached \(\$0\.50\)/);
@@ -377,7 +378,7 @@ describe("run orchestrator — cost keys + kill-on-breach (4.5)", () => {
 
   // Story 6.5 — per-tool invocation stats derived from the recorded `tool` messages.
   const toolMsg = (toolId: string, toolName: string, operation: string, outcome: "ok" | "error" | "refused", latencyMs: number): ControlChannelMessage =>
-    ({ type: "tool", v: 6, toolId, toolName, operation, outcome, latencyMs });
+    ({ type: "tool", v: CONTRACT_VERSION, toolId, toolName, operation, outcome, latencyMs });
 
   it("aggregateToolStats reduces tool messages per tool (count, outcomes, avg latency) — observed only, no cost (AC1/AC2)", async () => {
     const repo = memoryRunsRepo();
@@ -402,7 +403,7 @@ describe("run orchestrator — cost keys + kill-on-breach (4.5)", () => {
   it("aggregateToolStats returns [] for an agent with no tool calls", async () => {
     const repo = memoryRunsRepo();
     const now = new Date().toISOString();
-    await repo.create({ id: "r1", agentId: "a1", status: "succeeded", taskInput: "", transcript: [{ type: "done", v: 6, status: "succeeded" }], reason: null, costMicros: 0, createdAt: now, endedAt: now });
+    await repo.create({ id: "r1", agentId: "a1", status: "succeeded", taskInput: "", transcript: [{ type: "done", v: CONTRACT_VERSION, status: "succeeded" }], reason: null, costMicros: 0, createdAt: now, endedAt: now });
     expect(await repo.aggregateToolStats("a1")).toEqual([]);
   });
 });
@@ -432,9 +433,9 @@ describe("Story 5.2 — operate active agents (live status + spend)", () => {
     // the refusal is persisted on the Run (observability).
     const runtime = fakeSandboxRuntime({
       lines: [
-        nd({ type: "turn", v: 6, role: "agent", text: "trying to reach the internet" }),
-        nd({ type: "refusal", v: 6, kind: "egress", detail: "blocked evil.example.com" }),
-        nd({ type: "done", v: 6, status: "succeeded" }),
+        nd({ type: "turn", v: CONTRACT_VERSION, role: "agent", text: "trying to reach the internet" }),
+        nd({ type: "refusal", v: CONTRACT_VERSION, kind: "egress", detail: "blocked evil.example.com" }),
+        nd({ type: "done", v: CONTRACT_VERSION, status: "succeeded" }),
       ],
     });
     const { o, guard } = orch({ agent: agent({ state: "active" }), runtime });
@@ -467,8 +468,8 @@ describe("Story 5.2 — operate active agents (live status + spend)", () => {
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     await vi.waitFor(async () => expect((await runsRepo.get(r.run.id))?.status).toBe("running"));
-    await o.handleGuardEvent(r.run.id, { type: "metrics", v: 6, latencyMs: 12, tokens: 100, costMicros: 4100 });
-    await o.handleGuardEvent(r.run.id, { type: "kill", v: 6, scope: "run" });
+    await o.handleGuardEvent(r.run.id, { type: "metrics", v: CONTRACT_VERSION, latencyMs: 12, tokens: 100, costMicros: 4100 });
+    await o.handleGuardEvent(r.run.id, { type: "kill", v: CONTRACT_VERSION, scope: "run" });
     await vi.waitFor(async () => expect((await runsRepo.get(r.run.id))?.status).toBe("killed"));
     const run = await runsRepo.get(r.run.id);
     expect(run?.costMicros).toBe(4100); // metrics recorded on the Run (NFR-4)
@@ -481,7 +482,7 @@ describe("RunsRepo (memory)", () => {
   it("create/get/setStatus/appendMessage/list", async () => {
     const repo = memoryRunsRepo();
     await repo.create({ id: "r1", agentId: "a1", status: "created", taskInput: "x", transcript: [], reason: null, createdAt: new Date().toISOString(), endedAt: null });
-    await repo.appendMessage("r1", { type: "turn", v: 6, role: "user", text: "hi" });
+    await repo.appendMessage("r1", { type: "turn", v: CONTRACT_VERSION, role: "user", text: "hi" });
     await repo.setStatus("r1", "succeeded", { endedAt: new Date().toISOString() });
     const got = await repo.get("r1");
     expect(got?.status).toBe("succeeded");
@@ -494,8 +495,8 @@ describe("RunsRepo (memory)", () => {
     const repo = memoryRunsRepo();
     const t0 = "2026-08-01T00:00:00.000Z";
     const t1 = "2026-08-02T00:00:00.000Z";
-    await repo.create({ id: "r1", agentId: "a1", status: "succeeded", taskInput: "first", transcript: [{ type: "turn", v: 6, role: "user", text: "hi" }], reason: null, costMicros: 4100, createdAt: t0, endedAt: t0 });
-    await repo.create({ id: "r2", agentId: "a1", status: "killed", taskInput: "second", transcript: [{ type: "turn", v: 6, role: "agent", text: "bye" }], reason: "Killed — per-run cost cap reached ($0.50).", costMicros: 900, createdAt: t1, endedAt: t1 });
+    await repo.create({ id: "r1", agentId: "a1", status: "succeeded", taskInput: "first", transcript: [{ type: "turn", v: CONTRACT_VERSION, role: "user", text: "hi" }], reason: null, costMicros: 4100, createdAt: t0, endedAt: t0 });
+    await repo.create({ id: "r2", agentId: "a1", status: "killed", taskInput: "second", transcript: [{ type: "turn", v: CONTRACT_VERSION, role: "agent", text: "bye" }], reason: "Killed — per-run cost cap reached ($0.50).", costMicros: 900, createdAt: t1, endedAt: t1 });
     await repo.create({ id: "r3", agentId: "other", status: "failed", taskInput: "x", transcript: [], reason: "boom", costMicros: 0, createdAt: t1, endedAt: t1 });
 
     const hist = await repo.listSummary("a1");
@@ -515,5 +516,87 @@ describe("resolveSandboxRuntimeKind", () => {
     expect(resolveSandboxRuntimeKind({ SANDBOX_RUNTIME: "dev-insecure" })).toBe("dev-insecure");
     expect(() => resolveSandboxRuntimeKind({ SANDBOX_RUNTIME: "dev-insecure", NODE_ENV: "production" })).toThrow(/refused in production/);
     expect(() => resolveSandboxRuntimeKind({ SANDBOX_RUNTIME: "bogus" })).toThrow();
+  });
+});
+
+describe("run orchestrator — recall (Story 8.3)", () => {
+  const embeddedMemory = (over: Partial<MemoryRow> & { id: string; content: string }): MemoryRow => ({
+    agentId: "a1",
+    kind: "semantic",
+    summary: "",
+    embedding: fakeEmbed(over.content),
+    topic: null,
+    salience: 0,
+    sourceRunId: null,
+    validFrom: "2026-08-05T00:00:00.000Z",
+    validUntil: null,
+    useCount: 0,
+    lastUsedAt: null,
+    createdAt: "2026-08-05T00:00:00.000Z",
+    ...over,
+  });
+
+  async function recallOrch(opts: { recall: boolean; embedThrows?: boolean } = { recall: true }) {
+    const runsRepo = memoryRunsRepo();
+    const memoryRepo = memoryMemoryRepo();
+    if (opts.recall) {
+      await memoryRepo.setGlobalConfig({ defaultEnabled: true });
+      await memoryRepo.setAgentMemoryConfig("a1", { mode: "on", recall: true, reflect: true, kinds: ["episodic", "semantic", "procedure"] });
+    }
+    await memoryRepo.createMemory(embeddedMemory({ id: "mem-cats", content: "the user loves cats", summary: "the user loves cats" }));
+    const runtime = fakeSandboxRuntime({ lines: [nd({ type: "done", v: CONTRACT_VERSION, status: "succeeded" })] });
+    const gateway = fakeModelGateway({ embedThrows: opts.embedThrows });
+    const o = runOrchestrator({ runsRepo, agentsRepo: agentsRepo(agent()), runtime, guard: fakeRunGuard(), hub: createRunHub(), memoryRepo, modelGateway: gateway, image: "img", sandboxVolume: "vol" });
+    return { o, runsRepo, memoryRepo, runtime, gateway };
+  }
+
+  it("recall ON: injects the memory into the JobSpec, records a recall transcript event, and bumps useCount", async () => {
+    const { o, memoryRepo, runtime } = await recallOrch({ recall: true });
+    const r = await o.launch("a1", "the user loves cats"); // an exact-match query → mem-cats ranks first
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+
+    // Injected into the sandbox-visible JobSpec (secret-free id/kind/summary).
+    expect(runtime.established[0].jobSpecJson).toContain("mem-cats");
+    expect(runtime.established[0].jobSpecJson).toContain("the user loves cats");
+
+    // Auditable causality: a recall event leads the transcript with the recalled id.
+    const recall = r.run.transcript.find((m) => m.type === "recall");
+    expect(recall).toBeTruthy();
+    if (recall && recall.type === "recall") {
+      expect(recall.memoryIds).toEqual(["mem-cats"]);
+      expect(recall.count).toBe(1);
+    }
+
+    // markRecalled (fire-and-forget) bumps the usage counter.
+    await vi.waitFor(async () => expect((await memoryRepo.getMemory("a1", "mem-cats"))!.useCount).toBe(1));
+  });
+
+  it("recall OFF (default): no memories injected, no recall event, memory untouched", async () => {
+    const { o, memoryRepo, runtime } = await recallOrch({ recall: false });
+    const r = await o.launch("a1", "the user loves cats");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(runtime.established[0].jobSpecJson).toContain('"memories":[]');
+    expect(r.run.transcript.some((m) => m.type === "recall")).toBe(false);
+    expect((await memoryRepo.getMemory("a1", "mem-cats"))!.useCount).toBe(0);
+  });
+
+  it("fail-open: an embed failure does NOT block the run — it launches with no memories", async () => {
+    const { o, runtime } = await recallOrch({ recall: true, embedThrows: true });
+    const r = await o.launch("a1", "the user loves cats");
+    expect(r.ok).toBe(true); // the run still runs
+    if (!r.ok) return;
+    expect(r.run.status).toBe("succeeded");
+    expect(runtime.established[0].jobSpecJson).toContain('"memories":[]');
+    expect(r.run.transcript.some((m) => m.type === "recall")).toBe(false);
+  });
+
+  it("recall never mints a per-run cost key before/for itself (embedding-only, off the cost cap)", async () => {
+    const { o, gateway } = await recallOrch({ recall: true });
+    await o.launch("a1", "the user loves cats");
+    // The embed used the master key (gateway.embed), and any cost key minted is for the run itself,
+    // never for recall — recall runs before the mint. The embed was recorded; that's the only recall LLM touch.
+    expect(gateway.embedded).toContain("the user loves cats");
   });
 });

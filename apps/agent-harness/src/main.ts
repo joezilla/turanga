@@ -168,6 +168,12 @@ export async function runHarness(): Promise<void> {
 
   const messages: GuardModelRequest["messages"] = [];
   if (spec.instructions.trim()) messages.push({ role: "system", content: spec.instructions });
+  // Story 8.3 — fold recalled memories into the system context (secret-free spec content, AD-10),
+  // between the instructions and the task, mirroring the instructions fold. Off/empty ⇒ nothing added.
+  if (spec.memories.length > 0) {
+    const learned = spec.memories.map((m) => `- (${m.kind}) ${m.summary}`).join("\n");
+    messages.push({ role: "system", content: `Relevant things you've learned from past runs:\n${learned}` });
+  }
   messages.push({ role: "user", content: spec.taskInput });
 
   // The run's own subdir of the shared volume is mounted at /guard (per-run isolation, E4-AD-1).
