@@ -5,7 +5,7 @@ import { conversations } from "../db/schema.js";
 // A chat conversation (Epic 9, Story 9.1) — a control-plane thread pinned to a PUBLISHED agent
 // version. Written ONLY by control-api (AD-7). Agent-scoped reads. `publishedVersion` is pinned at
 // creation (latest-at-conversation-start) and never null (chat runs a published snapshot, never the
-// draft). Rename/delete are Story 9.4; the spine needs create/get/listForAgent.
+// draft). Rename/delete land in Story 9.4.
 export interface ConversationRow {
   id: string;
   agentId: string;
@@ -18,6 +18,8 @@ export interface ConversationsRepo {
   create(row: ConversationRow): Promise<void>;
   get(id: string): Promise<ConversationRow | null>;
   listForAgent(agentId: string): Promise<ConversationRow[]>; // newest first
+  rename(id: string, title: string): Promise<void>; // Story 9.4
+  delete(id: string): Promise<void>; // Story 9.4 — the conversation row only; the cascade of its runs is the route's job
 }
 
 function toRow(r: typeof conversations.$inferSelect): ConversationRow {
@@ -53,6 +55,12 @@ export function drizzleConversationsRepo(db: Db): ConversationsRepo {
         .orderBy(desc(conversations.createdAt), desc(conversations.id));
       return rows.map(toRow);
     },
+    async rename(id, title) {
+      await db.update(conversations).set({ title }).where(eq(conversations.id, id));
+    },
+    async delete(id) {
+      await db.delete(conversations).where(eq(conversations.id, id));
+    },
   };
 }
 
@@ -73,6 +81,15 @@ export function memoryConversationsRepo(): ConversationsRepo {
         .map((id) => rows.get(id)!)
         .filter((r) => r.agentId === agentId)
         .map((r) => ({ ...r }));
+    },
+    async rename(id, title) {
+      const r = rows.get(id);
+      if (r) r.title = title;
+    },
+    async delete(id) {
+      rows.delete(id);
+      const i = order.indexOf(id);
+      if (i >= 0) order.splice(i, 1);
     },
   };
 }

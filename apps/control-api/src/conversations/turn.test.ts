@@ -125,4 +125,40 @@ describe("chat turn — build from the published snapshot (Story 9.2)", () => {
     if (goneVersion.ok) return;
     expect(goneVersion.status).toBe(404);
   });
+
+  it("bounds the injected history to the last 20 exchanges; turnIndex stays the true position (Story 9.4)", async () => {
+    const { o, runsRepo, conversationsRepo, runtime } = chatOrch({ versions: [version(1, snapshot())] });
+    await conversationsRepo.create({ id: "conv-1", agentId: "a1", publishedVersion: 1, title: "", createdAt: now });
+    // Seed 25 prior turns (each a distinct user+agent exchange). MAX_HISTORY_RUNS = 20.
+    for (let i = 0; i < 25; i++) {
+      await runsRepo.create({
+        id: `t${i}`,
+        agentId: "a1",
+        conversationId: "conv-1",
+        turnIndex: i,
+        status: "succeeded",
+        taskInput: `USER-${i}`,
+        transcript: [
+          { type: "turn", v: CONTRACT_VERSION, role: "user", text: `USER-${i}` },
+          { type: "turn", v: CONTRACT_VERSION, role: "agent", text: `AGENT-${i}` },
+        ],
+        reason: null,
+        createdAt: now,
+        endedAt: null,
+      });
+    }
+
+    const r = await o.startChatTurn("conv-1", "next");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.run.turnIndex).toBe(25); // the TRUE position — not windowed
+
+    await vi.waitFor(() => expect(runtime.established).toHaveLength(1));
+    const history = JSON.parse(runtime.established[0].jobSpecJson).history as { role: string; content: string }[];
+    // Only the last 20 runs (2 turns each) → 40 history entries; the oldest 5 exchanges are dropped.
+    expect(history).toHaveLength(40);
+    expect(history.some((h) => h.content === "USER-4")).toBe(false); // exchange 4 (of 0..24) is outside the last 20 → dropped
+    expect(history[0]).toEqual({ role: "user", content: "USER-5" }); // the window starts at exchange 5
+    expect(history.at(-1)).toEqual({ role: "agent", content: "AGENT-24" }); // …ends at the newest
+  });
 });

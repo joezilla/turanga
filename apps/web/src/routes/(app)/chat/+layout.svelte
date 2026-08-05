@@ -5,8 +5,9 @@
   import { page } from "$app/state";
   import { goto } from "$app/navigation";
   import { listAgents, type Agent } from "$lib/agents";
-  import { listConversations, createConversation, getConversation, type Conversation } from "$lib/conversations";
+  import { listConversations, createConversation, getConversation, listConversationActivity, type Conversation } from "$lib/conversations";
   import { formatTimestamp } from "$lib/datetime";
+  import { chatBus } from "$lib/chatBus.svelte";
   import ControlStatus from "$lib/components/ControlStatus.svelte";
 
   let { children } = $props();
@@ -17,6 +18,7 @@
   let selectedAgentId = $state("");
 
   let conversations = $state<Conversation[]>([]);
+  let activity = $state<Record<string, string>>({}); // conversationId → last run createdAt (ISO); derived server-side
   let convState = $state<"loading" | "ok" | "error">("loading");
   let convError = $state("");
   let creating = $state(false);
@@ -54,6 +56,10 @@
     if (r.ok) {
       conversations = r.value;
       convState = "ok";
+      // Last activity per conversation (best-effort — a failure just falls back to createdAt in the row).
+      void listConversationActivity(selectedAgentId).then((a) => {
+        if (a.ok) activity = a.value;
+      });
     } else {
       convError = r.error;
       convState = "error";
@@ -77,6 +83,11 @@
   $effect(() => {
     void selectedAgentId;
     loadConversations();
+  });
+
+  // The thread page bumps this after a rename/delete — refresh the list at once.
+  $effect(() => {
+    if (chatBus.rev > 0) loadConversations();
   });
 
   async function onNew() {
@@ -146,7 +157,7 @@
               <span class="name">{c.title || "Untitled conversation"}</span>
               <span class="ver mono-num">v{c.publishedVersion}</span>
             </span>
-            <span class="row-bottom mono-num">{formatTimestamp(c.createdAt)}</span>
+            <span class="row-bottom mono-num">{formatTimestamp(activity[c.id] ?? c.createdAt)}</span>
           </a>
         {/each}
       {/if}

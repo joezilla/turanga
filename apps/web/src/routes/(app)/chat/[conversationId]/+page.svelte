@@ -9,8 +9,10 @@
   import { Circle } from "@lucide/svelte";
   import RunTranscript from "$lib/components/RunTranscript.svelte";
   import RunStatusDot from "$lib/components/RunStatusDot.svelte";
-  import { getConversation, listConversationRuns, sendMessage, runEventsUrl, getRun, runCause, type Conversation, type Run, type RunMessage } from "$lib/conversations";
+  import { goto } from "$app/navigation";
+  import { getConversation, listConversationRuns, sendMessage, renameConversation, deleteConversation, runEventsUrl, getRun, runCause, type Conversation, type Run, type RunMessage } from "$lib/conversations";
   import { getAgent } from "$lib/agents";
+  import { conversationsChanged } from "$lib/chatBus.svelte";
   import { formatMicros } from "$lib/money";
 
   const conversationId = $derived(page.params.conversationId ?? "");
@@ -165,6 +167,38 @@
 
   // The persisted cost of a completed turn (summed metrics = the run's costMicros summary).
   const turnCost = (r: Run) => r.costMicros;
+
+  // Management (Story 9.4) — rename + delete.
+  let renaming = $state(false);
+  let renameDraft = $state("");
+  let confirmDelete = $state(false);
+  let managing = $state(false); // an in-flight rename/delete
+
+  function startRename() {
+    renameDraft = conversation?.title ?? "";
+    renaming = true;
+  }
+  async function saveRename() {
+    if (!conversation || managing) return;
+    managing = true;
+    const r = await renameConversation(conversation.id, renameDraft.trim());
+    managing = false;
+    if (r.ok) {
+      conversation = r.value;
+      renaming = false;
+      conversationsChanged(); // refresh the list column
+    }
+  }
+  async function doDelete() {
+    if (!conversation || managing) return;
+    managing = true;
+    const r = await deleteConversation(conversation.id);
+    managing = false;
+    if (r.ok) {
+      conversationsChanged();
+      await goto("/chat");
+    }
+  }
 </script>
 
 <main class="thread-pane">
@@ -182,8 +216,35 @@
     </div>
   {:else if conversation}
     <header class="head">
-      <span class="agent">{agentName || conversation.agentId}</span>
-      <span class="ver mono-num">pinned v{conversation.publishedVersion}</span>
+      <div class="head-main">
+        {#if renaming}
+          <input
+            class="rename-input"
+            bind:value={renameDraft}
+            aria-label="Conversation title"
+            onkeydown={(e) => {
+              if (e.key === "Enter") saveRename();
+              else if (e.key === "Escape") renaming = false;
+            }}
+          />
+          <button type="button" class="ghost" onclick={saveRename} disabled={managing}>Save</button>
+          <button type="button" class="ghost" onclick={() => (renaming = false)} disabled={managing}>Cancel</button>
+        {:else}
+          <span class="title">{conversation.title || "Untitled conversation"}</span>
+          <button type="button" class="ghost" onclick={startRename}>Rename</button>
+        {/if}
+      </div>
+      <div class="head-meta">
+        <span class="agent mono-num">{agentName || conversation.agentId}</span>
+        <span class="ver mono-num">pinned v{conversation.publishedVersion}</span>
+        {#if confirmDelete}
+          <span class="confirm">Delete this conversation?</span>
+          <button type="button" class="danger" onclick={doDelete} disabled={managing}>Delete</button>
+          <button type="button" class="ghost" onclick={() => (confirmDelete = false)} disabled={managing}>Cancel</button>
+        {:else}
+          <button type="button" class="ghost" onclick={() => (confirmDelete = true)}>Delete</button>
+        {/if}
+      </div>
     </header>
 
     <div class="thread" role="log" aria-live="polite">
@@ -261,21 +322,86 @@
   }
   .head {
     flex: none;
-    height: 48px;
     display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    padding: 0 var(--space-5);
+    flex-direction: column;
+    gap: var(--space-1);
+    padding: var(--space-2-5) var(--space-5);
     border-bottom: 1px solid var(--border-hairline);
   }
-  .agent {
+  .head-main {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+  }
+  .title {
     font-size: var(--text-base);
     font-weight: var(--weight-medium);
     color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
-  .ver {
+  .rename-input {
+    flex: 1;
+    min-width: 0;
+    height: 26px;
+    padding: 0 var(--space-2);
+    font-size: var(--text-sm);
+    color: var(--text-primary);
+    background: var(--surface-card);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+  }
+  .rename-input:focus-visible {
+    outline: none;
+    border-color: var(--border-focus);
+    box-shadow: var(--focus-ring);
+  }
+  .head-meta {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
     font-size: var(--text-xs);
     color: var(--text-tertiary);
+  }
+  .agent {
+    color: var(--text-secondary);
+  }
+  .ver {
+    color: var(--text-tertiary);
+  }
+  .confirm {
+    color: var(--text-secondary);
+  }
+  .ghost,
+  .danger {
+    height: 22px;
+    padding: 0 var(--space-2);
+    font-size: var(--text-2xs);
+    border-radius: var(--radius-md);
+    background: transparent;
+    border: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+  .ghost:hover:not(:disabled) {
+    color: var(--text-primary);
+    background: var(--surface-hover);
+  }
+  .danger {
+    color: var(--state-failed);
+    border-color: var(--border-strong);
+  }
+  .ghost:disabled,
+  .danger:disabled {
+    color: var(--text-disabled);
+    cursor: default;
+  }
+  .ghost:focus-visible,
+  .danger:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
   }
   .thread {
     flex: 1;

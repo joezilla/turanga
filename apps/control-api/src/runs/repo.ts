@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNotNull, sql } from "drizzle-orm";
 import type { ControlChannelMessage } from "@turanga/contracts";
 import type { Db } from "../db/client.js";
 import { runs } from "../db/schema.js";
@@ -79,6 +79,8 @@ export interface RunsRepo {
   list(agentId?: string, limit?: number): Promise<RunRow[]>; // newest first, bounded
   listSummary(agentId?: string, limit?: number): Promise<RunSummary[]>; // newest first, bounded — run history (Story 5.3), no transcript
   listByConversation(conversationId: string): Promise<RunRow[]>; // a conversation's turns, turnIndex ASC, WITH transcript (chat history, Story 9.2)
+  deleteByConversation(conversationId: string): Promise<void>; // cascade a deleted conversation's turns (Story 9.4)
+  lastActivityByAgent(agentId: string): Promise<Record<string, string>>; // { conversationId → newest run createdAt (ISO) } for the agent (Story 9.4)
 
   setStatus(id: string, status: RunStatus, patch?: { reason?: string | null; endedAt?: string; costMicros?: number }): Promise<void>;
   appendMessage(id: string, msg: ControlChannelMessage): Promise<void>;
@@ -170,6 +172,19 @@ export function drizzleRunsRepo(db: Db): RunsRepo {
       const rows = await db.select().from(runs).where(eq(runs.conversationId, conversationId)).orderBy(asc(runs.turnIndex));
       return rows.map(toRow);
     },
+    async deleteByConversation(conversationId) {
+      await db.delete(runs).where(eq(runs.conversationId, conversationId));
+    },
+    async lastActivityByAgent(agentId) {
+      const rows = await db
+        .select({ conversationId: runs.conversationId, last: sql<Date>`max(${runs.createdAt})` })
+        .from(runs)
+        .where(and(eq(runs.agentId, agentId), isNotNull(runs.conversationId)))
+        .groupBy(runs.conversationId);
+      const out: Record<string, string> = {};
+      for (const r of rows) if (r.conversationId && r.last) out[r.conversationId] = new Date(r.last).toISOString();
+      return out;
+    },
     async listSummary(agentId, limit = DEFAULT_LIST_LIMIT) {
       const q = db.select(summaryCols).from(runs).orderBy(desc(runs.createdAt), desc(runs.id)).limit(limit);
       const rows = agentId ? await q.where(eq(runs.agentId, agentId)) : await q;
@@ -244,6 +259,23 @@ export function memoryRunsRepo(): RunsRepo {
         .filter((r) => r.conversationId === conversationId)
         .sort((a, b) => (a.turnIndex ?? 0) - (b.turnIndex ?? 0)) // turnIndex ASC
         .map((r) => ({ ...r, transcript: [...r.transcript] }));
+    },
+    async deleteByConversation(conversationId) {
+      for (const [id, r] of [...rows.entries()]) {
+        if (r.conversationId === conversationId) {
+          rows.delete(id);
+          const i = order.indexOf(id);
+          if (i >= 0) order.splice(i, 1);
+        }
+      }
+    },
+    async lastActivityByAgent(agentId) {
+      const out: Record<string, string> = {};
+      for (const r of rows.values()) {
+        if (r.agentId !== agentId || !r.conversationId) continue;
+        if (!out[r.conversationId] || r.createdAt > out[r.conversationId]) out[r.conversationId] = r.createdAt;
+      }
+      return out;
     },
     async listSummary(agentId, limit = DEFAULT_LIST_LIMIT) {
       return order

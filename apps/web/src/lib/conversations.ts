@@ -85,3 +85,31 @@ export async function listConversationRuns(id: string): Promise<Result<Run[]>> {
   if (!Array.isArray(r.value.runs)) return { ok: false, error: "The control plane returned an unexpected response." };
   return { ok: true, value: r.value.runs };
 }
+
+// ── Management (Story 9.4) — rename / delete / last-activity. control-api is the sole writer (AD-7). ──
+
+/** Rename a conversation. */
+export async function renameConversation(id: string, title: string): Promise<Result<Conversation>> {
+  const r = await req<{ conversation?: Conversation }>(`/conversations/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ title }),
+  });
+  if (!r.ok) return r;
+  if (!r.value.conversation) return { ok: false, error: "The control plane returned an unexpected response." };
+  return { ok: true, value: r.value.conversation };
+}
+
+/** Delete a conversation (cascades its turns server-side). */
+export async function deleteConversation(id: string): Promise<Result<{ ok: true }>> {
+  return req(`/conversations/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+/** Last activity per conversation for an agent — `{ conversationId → last run createdAt (ISO) }`
+ *  (derived server-side from the linked runs). */
+export async function listConversationActivity(agentId: string): Promise<Result<Record<string, string>>> {
+  const r = await req<{ activity?: Record<string, string> }>(`/conversations/activity?agentId=${encodeURIComponent(agentId)}`);
+  if (!r.ok) return r;
+  if (typeof r.value.activity !== "object" || r.value.activity === null) return { ok: false, error: "The control plane returned an unexpected response." };
+  return { ok: true, value: r.value.activity };
+}

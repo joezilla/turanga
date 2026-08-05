@@ -52,6 +52,14 @@ export function conversationRoutes(repo: ConversationsRepo, agentsRepo: AgentsRe
     return c.json({ conversations: await repo.listForAgent(agentId) });
   });
 
+  // Story 9.4 — last activity per conversation for the list, DERIVED from the linked runs (newest run's
+  // createdAt) in one grouped query. Registered BEFORE /:id so "activity" isn't captured as an id.
+  app.get("/conversations/activity", async (c) => {
+    const agentId = c.req.query("agentId");
+    if (!agentId) return c.json({ error: "agentId is required." }, 400);
+    return c.json({ activity: await runsRepo.lastActivityByAgent(agentId) });
+  });
+
   app.get("/conversations/:id", async (c) => {
     const conversation = await repo.get(c.req.param("id"));
     if (!conversation) return c.json({ error: "That conversation doesn't exist." }, 404);
@@ -83,6 +91,29 @@ export function conversationRoutes(repo: ConversationsRepo, agentsRepo: AgentsRe
     } catch (e) {
       return c.json({ error: `The turn couldn't be launched: ${e instanceof Error ? e.message : "unexpected error"}` }, 500);
     }
+  });
+
+  // Story 9.4 — rename a conversation (control-api sole writer, AD-7).
+  app.patch("/conversations/:id", async (c) => {
+    const id = c.req.param("id");
+    const body = ((await c.req.json().catch(() => ({}))) ?? {}) as { title?: unknown };
+    if (typeof body.title !== "string") return c.json({ error: "title must be text." }, 400);
+    const existing = await repo.get(id);
+    if (!existing) return c.json({ error: "That conversation doesn't exist." }, 404);
+    await repo.rename(id, body.title);
+    return c.json({ conversation: { ...existing, title: body.title } });
+  });
+
+  // Story 9.4 — delete a conversation and CASCADE its turns (a conversation's runs ARE its turns;
+  // leaving them would orphan run history + cost). Control-plane cleanup: the runs cascade first, then
+  // the thread. control-api sole writer (AD-7); the orchestrator still owns run lifecycle.
+  app.delete("/conversations/:id", async (c) => {
+    const id = c.req.param("id");
+    const existing = await repo.get(id);
+    if (!existing) return c.json({ error: "That conversation doesn't exist." }, 404);
+    await runsRepo.deleteByConversation(id);
+    await repo.delete(id);
+    return c.json({ ok: true });
   });
 
   return app;

@@ -84,3 +84,40 @@ test("start a conversation → the thread opens with the composer + empty-thread
   // (Sending a message spawns a real run against the published version — the live reply needs a model
   //  provider, gated in e2e; the send→stream→reply path is unit-covered in 9.2.)
 });
+
+test("rename a conversation → the new title shows in the header + list (Story 9.4)", async ({ page }) => {
+  await signIn(page);
+  const name = `chat-rename-${Date.now()}`;
+  await createPublishedAgent(page, name);
+  await page.goto("/chat");
+  await page.getByLabel("Choose a published agent").selectOption({ label: `${name} · v1` });
+  await page.getByRole("button", { name: "Start one" }).click();
+  await expect(page).toHaveURL(/\/chat\/[0-9A-Z]{26}$/);
+
+  // Rename via the thread header.
+  await page.getByRole("button", { name: "Rename" }).click();
+  const input = page.getByLabel("Conversation title");
+  await input.fill("Portfolio review");
+  await page.getByRole("button", { name: "Save" }).click();
+  // The header shows the new title (scope to the thread pane), and the list row updates via the chat bus.
+  await expect(page.getByRole("main").getByText("Portfolio review")).toBeVisible();
+  await expect(page.locator("a.row", { hasText: "Portfolio review" })).toHaveCount(1);
+});
+
+test("delete a conversation → it disappears from the list and navigates back to /chat (Story 9.4)", async ({ page }) => {
+  await signIn(page);
+  const name = `chat-del-${Date.now()}`;
+  await createPublishedAgent(page, name);
+  await page.goto("/chat");
+  await page.getByLabel("Choose a published agent").selectOption({ label: `${name} · v1` });
+  await page.getByRole("button", { name: "Start one" }).click();
+  await expect(page).toHaveURL(/\/chat\/[0-9A-Z]{26}$/);
+  await expect(page.locator("a.row", { hasText: "Untitled conversation" })).toHaveCount(1);
+
+  // Delete (confirm) from the thread header.
+  await page.getByRole("button", { name: "Delete", exact: true }).click();
+  await page.getByRole("button", { name: "Delete", exact: true }).click(); // the confirm
+  // Navigates back to the empty pane and the row is gone.
+  await expect(page).toHaveURL(/\/chat$/);
+  await expect(page.locator("a.row", { hasText: "Untitled conversation" })).toHaveCount(0);
+});

@@ -108,6 +108,7 @@ export function runOrchestrator(deps: OrchestratorDeps) {
   const PROCEDURE_TOOL_THRESHOLD = 2; // a run needs ≥ this many tool calls to distill "procedure" memories
   const DEDUPE_MAX_DISTANCE = 0.05; // ≤ this cosine distance to an existing same-kind memory ⇒ a duplicate (bump, don't insert)
   const MAX_MEMORIES_PER_AGENT = 200; // per-agent budget; excess is pruned lowest-salience-first
+  const MAX_HISTORY_RUNS = 20; // Story 9.4 — a chat turn injects at most the last N exchanges; older turns are dropped (the summarize-older seam, Epic 8)
   const runTimeoutMs = deps.runTimeoutMs ?? 120_000;
   let active = 0;
   const controllers = new Map<string, RunController>(); // live runs, for Guard→orchestrator callbacks (E4-AD-10)
@@ -403,10 +404,15 @@ export function runOrchestrator(deps: OrchestratorDeps) {
       costCap: snap.costCap,
     };
     // Reconstruct the thread from the conversation's prior runs (each run's transcript already carries
-    // its user turn + the agent reply as `turn` messages). turnIndex = the next 0-based position.
+    // its user turn + the agent reply as `turn` messages). turnIndex = the next 0-based position — the
+    // TRUE thread position, NOT windowed. Story 9.4 — the injected history is BOUNDED to the last N runs
+    // (whole exchanges, so a user turn is never orphaned from its reply) so a long thread's context (and
+    // cost) can't grow unbounded; the per-turn cost cap stays authoritative. Dropping older exchanges is
+    // the summarize-older seam (Epic 8 memory) — additive later.
     const prior = await runsRepo.listByConversation(conv.id);
     const turnIndex = prior.length;
-    const history: JobHistoryTurn[] = prior.flatMap((r) =>
+    const windowed = prior.slice(-MAX_HISTORY_RUNS);
+    const history: JobHistoryTurn[] = windowed.flatMap((r) =>
       r.transcript.filter((m): m is Extract<typeof m, { type: "turn" }> => m.type === "turn").map((m) => ({ role: m.role, content: m.text })),
     );
     return assembleRun(agent, taskInput, { conversationId: conv.id, turnIndex, history });

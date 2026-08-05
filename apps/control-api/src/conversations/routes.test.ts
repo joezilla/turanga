@@ -184,3 +184,74 @@ describe("conversation routes — GET /conversations/:id/runs (the thread, Story
     expect((await app.request("/conversations/conv-1/runs")).status).toBe(401);
   });
 });
+
+describe("conversation routes — management: rename / delete / last-activity (Story 9.4)", () => {
+  const runRow = (over: Partial<RunRow> & { id: string; conversationId: string; turnIndex: number }): RunRow => ({
+    agentId: "a1",
+    status: "succeeded",
+    taskInput: "",
+    transcript: [],
+    reason: null,
+    costMicros: 0,
+    createdAt: "2026-08-05T00:00:00.000Z",
+    endedAt: null,
+    ...over,
+  });
+
+  it("PATCH renames a conversation; unknown id → 404; bad body → 400", async () => {
+    const conversationsRepo = memoryConversationsRepo();
+    await conversationsRepo.create({ id: "c1", agentId: "a1", publishedVersion: 1, title: "old", createdAt: "2026-08-05T00:00:00.000Z" });
+    const { app, cookie } = await appWithSession({ a1: 1 }, conversationsRepo);
+
+    const res = await app.request("/conversations/c1", { method: "PATCH", headers: { "content-type": "application/json", cookie }, body: JSON.stringify({ title: "Weekly digest" }) });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { conversation: { title: string } }).conversation.title).toBe("Weekly digest");
+    expect((await conversationsRepo.get("c1"))!.title).toBe("Weekly digest");
+
+    expect((await app.request("/conversations/nope", { method: "PATCH", headers: { "content-type": "application/json", cookie }, body: JSON.stringify({ title: "x" }) })).status).toBe(404);
+    expect((await app.request("/conversations/c1", { method: "PATCH", headers: { "content-type": "application/json", cookie }, body: JSON.stringify({ title: 5 }) })).status).toBe(400);
+  });
+
+  it("DELETE removes the conversation AND cascades its turns; unknown id → 404", async () => {
+    const conversationsRepo = memoryConversationsRepo();
+    await conversationsRepo.create({ id: "c1", agentId: "a1", publishedVersion: 1, title: "", createdAt: "2026-08-05T00:00:00.000Z" });
+    const runsRepo = memoryRunsRepo();
+    await runsRepo.create(runRow({ id: "t0", conversationId: "c1", turnIndex: 0 }));
+    await runsRepo.create(runRow({ id: "t1", conversationId: "c1", turnIndex: 1 }));
+    await runsRepo.create(runRow({ id: "keep", conversationId: "c2", turnIndex: 0 })); // another conversation — untouched
+    const { app, cookie } = await appWithSession({ a1: 1 }, conversationsRepo, undefined, runsRepo);
+
+    const res = await app.request("/conversations/c1", { method: "DELETE", headers: { cookie } });
+    expect(res.status).toBe(200);
+    expect(await conversationsRepo.get("c1")).toBeNull(); // the thread is gone
+    expect(await runsRepo.listByConversation("c1")).toHaveLength(0); // its turns cascaded
+    expect(await runsRepo.listByConversation("c2")).toHaveLength(1); // another conversation's turns survive
+
+    expect((await app.request("/conversations/nope", { method: "DELETE", headers: { cookie } })).status).toBe(404);
+  });
+
+  it("GET /conversations/activity returns the { conversationId → last run createdAt } map", async () => {
+    const runsRepo = memoryRunsRepo();
+    await runsRepo.create(runRow({ id: "t0", conversationId: "c1", turnIndex: 0, createdAt: "2026-08-05T00:00:00.000Z" }));
+    await runsRepo.create(runRow({ id: "t1", conversationId: "c1", turnIndex: 1, createdAt: "2026-08-06T00:00:00.000Z" })); // newer
+    await runsRepo.create(runRow({ id: "b0", conversationId: "c2", turnIndex: 0, createdAt: "2026-08-04T00:00:00.000Z" }));
+    await runsRepo.create({ id: "solo", agentId: "a1", status: "succeeded", taskInput: "", transcript: [], reason: null, createdAt: "2026-08-07T00:00:00.000Z", endedAt: null }); // standalone run (no conversation) — excluded
+    const { app, cookie } = await appWithSession({ a1: 1 }, memoryConversationsRepo(), undefined, runsRepo);
+
+    const res = await app.request("/conversations/activity?agentId=a1", { headers: { cookie } });
+    expect(res.status).toBe(200);
+    const { activity } = (await res.json()) as { activity: Record<string, string> };
+    expect(activity["c1"]).toBe("2026-08-06T00:00:00.000Z"); // the NEWEST run's time
+    expect(activity["c2"]).toBe("2026-08-04T00:00:00.000Z");
+    expect(Object.keys(activity).sort()).toEqual(["c1", "c2"]); // the standalone run (no conversation) is excluded
+    // A missing agentId is a 400; session-guarded.
+    expect((await app.request("/conversations/activity", { headers: { cookie } })).status).toBe(400);
+    expect((await app.request("/conversations/activity?agentId=a1")).status).toBe(401);
+  });
+
+  it("the management routes are session-guarded (401 without a cookie)", async () => {
+    const { app } = await appWithSession({ a1: 1 });
+    expect((await app.request("/conversations/c1", { method: "PATCH", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
+    expect((await app.request("/conversations/c1", { method: "DELETE" })).status).toBe(401);
+  });
+});
