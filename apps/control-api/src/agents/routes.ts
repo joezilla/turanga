@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { ulid, activationBlockers } from "@turanga/domain";
+import { ulid, activationBlockers, DEFAULT_MEMORY_CONFIG } from "@turanga/domain";
 import { toView, type AgentsRepo, type AgentRow, type AgentPatch, type AgentVariable, type AttachedSkill, type AttachedTool, type CostCap, type Money } from "./repo.js";
 import type { ConnectionsRepo } from "../connections/repo.js";
 import type { ToolsRepo } from "../tools/repo.js";
@@ -149,7 +149,7 @@ export function agentRoutes(repo: AgentsRepo, connectionsRepo: ConnectionsRepo, 
     const body = ((await c.req.json().catch(() => ({}))) ?? {}) as { name?: unknown };
     const trimmed = typeof body.name === "string" ? body.name.trim() : "";
     const name = (trimmed || "Untitled agent").slice(0, MAX_NAME_LEN);
-    const row: AgentRow = { id: ulid(Date.now()), name, description: "", state: "draft", model: null, instructions: "", variables: [], skills: [], attachedTools: [], costCap: { perRun: null, perDay: null }, publishedVersion: null, publishedAt: null, createdAt: new Date().toISOString() };
+    const row: AgentRow = { id: ulid(Date.now()), name, description: "", state: "draft", model: null, instructions: "", variables: [], skills: [], attachedTools: [], costCap: { perRun: null, perDay: null }, memoryConfig: DEFAULT_MEMORY_CONFIG, publishedVersion: null, publishedAt: null, createdAt: new Date().toISOString() };
     await repo.create(row);
     // A brand-new agent has never been published, so everything about it is unpublished.
     return c.json({ agent: toView(row, null) }, 201);

@@ -7,7 +7,7 @@ name: turanga
 
 services:
   postgres:
-    image: postgres:17
+    image: pgvector/pgvector:pg17 # PG 17 + the `vector` extension (Epic 8 memory store); drop-in for postgres:17
     environment:
       POSTGRES_USER: turanga
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-turanga}

@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, jsonb, integer, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, jsonb, integer, boolean, uniqueIndex, index, vector } from "drizzle-orm/pg-core";
 
 // users + sessions — the first control-api tables (AD-7: control-api owns this state).
 export const users = pgTable("users", {
@@ -68,6 +68,12 @@ export const agents = pgTable("agents", {
     .$type<{ perRun: { minor: number; currency: string } | null; perDay: { minor: number; currency: string } | null }>()
     .notNull()
     .default({ perRun: null, perDay: null }), // Story 3.5
+  // Story 8.1 — per-agent memory toggle (OPERATIONAL config, NOT part of the published definition;
+  // deliberately absent from PUBLISHED_FIELDS). Default `inherit` + a global default of OFF = memory off.
+  memoryConfig: jsonb("memory_config")
+    .$type<{ mode: "inherit" | "on" | "off"; recall: boolean; reflect: boolean; kinds: ("episodic" | "semantic" | "procedure")[] }>()
+    .notNull()
+    .default({ mode: "inherit", recall: true, reflect: true, kinds: ["episodic", "semantic", "procedure"] }),
   // The row above is always the WORKING DRAFT. These two point at the newest immutable snapshot
   // in agent_versions; null means the agent has never been published.
   publishedVersion: integer("published_version"),
@@ -132,4 +138,41 @@ export const tools = pgTable("tools", {
   encCredential: text("enc_credential"),
   operations: jsonb("operations").$type<{ name: string; title?: string; description?: string; inputSchema?: unknown }[]>().notNull().default([]), // discovered MCP tools/list (Story 6.2 populates)
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Agent memory (Epic 8, Story 8.1). Control-plane store; agent-scoped; OFF by default; never holds a
+// secret (AD-10). control-api is the sole writer (AD-7). `embedding` is populated by recall (8.3); the
+// vector column is fixed at 1536 dims (text-embedding-3-small) — see the story's embedding-dimension
+// decision. The ivfflat/hnsw index is deferred to 8.3 (the distance op is a recall decision).
+export const agentMemories = pgTable(
+  "agent_memories",
+  {
+    id: text("id").primaryKey(), // ULID
+    agentId: text("agent_id").notNull(),
+    kind: text("kind").notNull(), // 'episodic' | 'semantic' | 'procedure' (MemoryKind)
+    content: text("content").notNull(), // verbatim
+    summary: text("summary").notNull().default(""),
+    embedding: vector("embedding", { dimensions: 1536 }), // nullable until 8.3 computes it
+    topic: text("topic"),
+    salience: integer("salience").notNull().default(0),
+    sourceRunId: text("source_run_id"),
+    validFrom: timestamp("valid_from", { withTimezone: true }).notNull().defaultNow(),
+    validUntil: timestamp("valid_until", { withTimezone: true }), // null = still valid
+    useCount: integer("use_count").notNull().default(0),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("agent_memories_agent_idx").on(t.agentId)], // recall filters by agent (FR-7)
+);
+
+// Operator-wide memory defaults (Epic 8, Story 8.1) — a single row keyed "global". Ships OFF: memory
+// is a privacy-sensitive, opt-in surface. The Settings UI (8.2) edits it; control-api is the sole writer.
+export const memorySettings = pgTable("memory_settings", {
+  id: text("id").primaryKey(), // always 'global'
+  defaultEnabled: boolean("default_enabled").notNull().default(false),
+  killSwitch: boolean("kill_switch").notNull().default(false),
+  embeddingModel: text("embedding_model").notNull().default("text-embedding-3-small"),
+  retentionDays: integer("retention_days"), // null = keep indefinitely
+  privacy: text("privacy").notNull().default("agent-scoped"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

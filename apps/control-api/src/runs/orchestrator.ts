@@ -12,6 +12,7 @@ import type { RunHub } from "./hub.js";
 import { decryptSecret } from "../secrets/crypto.js";
 import type { GoogleOAuth } from "../oauth/google.js";
 import type { ModelGateway } from "../litellm/gateway.js";
+import type { MemoryRepo } from "../memory/repo.js";
 
 interface AgentLike {
   id: string;
@@ -71,6 +72,7 @@ export interface OrchestratorDeps {
   sandboxVolume: string;
   dataConnectionsRepo?: DataConnectionsReader; // Story 4.3 — absent ⇒ no connections (empty allowlist)
   toolsRepo?: ToolsReader; // Story 6.3 — resolve granted-tool names for JobSpec.tools; absent ⇒ no tools
+  memoryRepo?: MemoryRepo; // Story 8.1 — threaded now; recall (8.3) reads + reflect (8.4) writes it. Unused in the run path yet.
   googleOAuth?: GoogleOAuth; // Story 4.3 — mints the short-lived access token handed to the Guard
   modelGateway?: ModelGateway; // Story 4.5 — mints the per-run cost key; absent ⇒ Guard uses the master key (unmetered)
   maxConcurrent?: number;

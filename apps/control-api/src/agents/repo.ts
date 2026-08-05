@@ -2,18 +2,20 @@ import { and, desc, eq, or } from "drizzle-orm";
 import {
   ulid,
   PUBLISHED_FIELDS,
+  DEFAULT_MEMORY_CONFIG,
   type AgentVariable,
   type AttachedSkill,
   type AttachedTool,
   type CostCap,
   type LifecycleState,
+  type MemoryConfig,
   type Money,
   type PublishedField,
 } from "@turanga/domain";
 import type { Db } from "../db/client.js";
 import { agents, agentVersions } from "../db/schema.js";
 
-export type { AgentVariable, AttachedSkill, AttachedTool, CostCap, Money };
+export type { AgentVariable, AttachedSkill, AttachedTool, CostCap, MemoryConfig, Money };
 
 export interface AgentRow {
   id: string;
@@ -26,6 +28,7 @@ export interface AgentRow {
   skills: AttachedSkill[]; // Story 3.4
   attachedTools: AttachedTool[]; // Story 6.3 — per-operation tool grants (default-deny)
   costCap: CostCap; // Story 3.5 — sides default null until set
+  memoryConfig: MemoryConfig; // Story 8.1 — operational; NOT in PUBLISHED_FIELDS (not part of the published definition)
   publishedVersion: number | null; // newest published version; null = never published
   publishedAt: string | null; // UTC ISO-8601 of that publish
   createdAt: string; // UTC ISO-8601
@@ -116,6 +119,7 @@ function toRow(r: typeof agents.$inferSelect): AgentRow {
     skills: r.skills as AttachedSkill[],
     attachedTools: (r.attachedTools ?? []) as AttachedTool[],
     costCap: r.costCap as CostCap,
+    memoryConfig: (r.memoryConfig ?? DEFAULT_MEMORY_CONFIG) as MemoryConfig,
     publishedVersion: r.publishedVersion ?? null,
     publishedAt: r.publishedAt ? r.publishedAt.toISOString() : null,
     createdAt: r.createdAt.toISOString(),
@@ -182,6 +186,7 @@ export function drizzleAgentsRepo(db: Db): AgentsRepo {
         skills: row.skills,
         attachedTools: row.attachedTools,
         costCap: row.costCap,
+        memoryConfig: row.memoryConfig,
         publishedVersion: row.publishedVersion,
         publishedAt: row.publishedAt ? new Date(row.publishedAt) : null,
         createdAt: new Date(row.createdAt),

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ulid, activationBlockers, type Agent } from "./index.js";
+import { ulid, activationBlockers, effectiveMemoryConfig, DEFAULT_MEMORY_CONFIG, DEFAULT_MEMORY_GLOBAL_CONFIG, type Agent, type MemoryConfig } from "./index.js";
 
 describe("domain", () => {
   it("ulid is 26 Crockford-base32 chars", () => {
@@ -16,10 +16,28 @@ describe("domain", () => {
       skills: [{ skill: "read-search", scope: "read", send: false }],
       attachedTools: [],
       costCap: { perRun: { minor: 50, currency: "USD" }, perDay: { minor: 500, currency: "USD" } },
+      memoryConfig: DEFAULT_MEMORY_CONFIG,
       state: "draft",
       createdAt: "2026-07-31T00:00:00.000Z",
     };
     expect(a.costCap.perDay?.minor).toBe(500);
+  });
+
+  it("effectiveMemoryConfig: memory is OFF by default and the toggle resolves correctly (Story 8.1)", () => {
+    const global = DEFAULT_MEMORY_GLOBAL_CONFIG; // defaultEnabled false, killSwitch false
+    // A brand-new agent (inherit) with the default-off global → effectively OFF.
+    expect(effectiveMemoryConfig(global, DEFAULT_MEMORY_CONFIG)).toEqual({ enabled: false, recall: false, reflect: false, kinds: [] });
+    // inherit follows the global default when it's ON.
+    expect(effectiveMemoryConfig({ ...global, defaultEnabled: true }, DEFAULT_MEMORY_CONFIG).enabled).toBe(true);
+    // mode:"on" enables regardless of the global default.
+    const on: MemoryConfig = { mode: "on", recall: true, reflect: true, kinds: ["semantic"] };
+    expect(effectiveMemoryConfig(global, on)).toEqual({ enabled: true, recall: true, reflect: true, kinds: ["semantic"] });
+    // mode:"off" disables even when the global default is on.
+    expect(effectiveMemoryConfig({ ...global, defaultEnabled: true }, { ...on, mode: "off" }).enabled).toBe(false);
+    // recall/reflect are gated by BOTH enabled and the per-agent flag.
+    expect(effectiveMemoryConfig(global, { mode: "on", recall: false, reflect: true, kinds: [...DEFAULT_MEMORY_CONFIG.kinds] })).toMatchObject({ enabled: true, recall: false, reflect: true });
+    // killSwitch overrides everything — even an explicitly-on agent.
+    expect(effectiveMemoryConfig({ ...global, killSwitch: true }, on)).toEqual({ enabled: false, recall: false, reflect: false, kinds: [] });
   });
 
   it("activationBlockers: the Activate gate truth table (Story 5.1)", () => {

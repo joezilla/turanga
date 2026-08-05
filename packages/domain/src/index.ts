@@ -64,6 +64,7 @@ export interface Agent {
   skills: AttachedSkill[];
   attachedTools: AttachedTool[]; // Story 6.3 — tools granted to this agent, per-operation (default-deny)
   costCap: CostCap; // Story 3.5 — always present; sides default null until set
+  memoryConfig: MemoryConfig; // Story 8.1 — per-agent memory toggle (operational, NOT part of the published definition)
   state: LifecycleState;
   publishedVersion?: number | null; // newest published version; null/absent = never published
   publishedAt?: string | null; // UTC ISO-8601 of that publish
@@ -130,6 +131,79 @@ export interface Tool {
 export interface AttachedTool {
   toolId: Ulid;
   operations: string[]; // granted operation names
+}
+
+// ── Agent memory (Epic 8) ─────────────────────────────────────────────────────────────────────────
+// A self-improving loop: reflect on runs → store durable memories → recall them next run. Control-plane
+// only; agent-scoped; OFF by default; never holds a secret (AD-10). Story 8.1 lands the MODEL + store +
+// config; recall (8.3) populates `embedding` + reads, reflection (8.4) writes.
+export type MemoryKind = "episodic" | "semantic" | "procedure";
+export const MEMORY_KINDS: readonly MemoryKind[] = ["episodic", "semantic", "procedure"] as const;
+
+/** A learned memory record. `embedding` is populated by recall (Story 8.3); the record + store are 8.1. */
+export interface Memory {
+  id: Ulid;
+  agentId: Ulid; // agent-scoped — no cross-agent read (FR-7)
+  kind: MemoryKind;
+  content: string; // verbatim
+  summary: string;
+  embedding: number[] | null; // populated in Story 8.3 (recall); the column exists now
+  topic: string | null;
+  salience: number;
+  sourceRunId: Ulid | null;
+  validFrom: string; // UTC ISO-8601
+  validUntil: string | null; // null = still valid; a superseded fact closes its window (8.4)
+  useCount: number;
+  lastUsedAt: string | null;
+  createdAt: string; // UTC ISO-8601
+}
+
+/** Per-agent memory configuration (Story 8.1). `inherit` follows the global default — which ships OFF —
+ *  so a new agent is effectively memory-off until deliberately enabled. */
+export interface MemoryConfig {
+  mode: "inherit" | "on" | "off";
+  recall: boolean; // inject relevant memories at run start (8.3)
+  reflect: boolean; // distill the run into memories afterward (8.4)
+  kinds: MemoryKind[]; // which kinds this agent may learn/recall
+}
+
+/** The per-agent config a NEW agent gets: inherit + all capabilities on — effectively OFF while the
+ *  global default is off (the operator turns memory on globally or per-agent). */
+export const DEFAULT_MEMORY_CONFIG: MemoryConfig = { mode: "inherit", recall: true, reflect: true, kinds: [...MEMORY_KINDS] };
+
+/** Operator-wide memory defaults (Story 8.1). Ships OFF: memory is a privacy-sensitive, opt-in surface.
+ *  `embeddingModel` drives compute in 8.3; the pgvector column dimension is fixed at build time. */
+export interface MemoryGlobalConfig {
+  defaultEnabled: boolean; // the effective value for a new agent's `inherit`
+  killSwitch: boolean; // master off — overrides every agent
+  embeddingModel: string;
+  retentionDays: number | null; // null = keep indefinitely
+  privacy: "agent-scoped"; // "shared across a builder's agents" is a deliberate later opt-in
+}
+
+export const DEFAULT_MEMORY_GLOBAL_CONFIG: MemoryGlobalConfig = {
+  defaultEnabled: false,
+  killSwitch: false,
+  embeddingModel: "text-embedding-3-small",
+  retentionDays: null,
+  privacy: "agent-scoped",
+};
+
+/** The single source of truth for whether + how memory runs for an agent (Story 8.1). Pure — the
+ *  orchestrator (recall 8.3 / reflect 8.4) and the web (8.2) both read it; the harness never decides
+ *  (AD-7/AD-9). `killSwitch` wins over everything; `inherit` follows the global default (OFF). */
+export function effectiveMemoryConfig(
+  global: MemoryGlobalConfig,
+  perAgent: MemoryConfig,
+): { enabled: boolean; recall: boolean; reflect: boolean; kinds: MemoryKind[] } {
+  if (global.killSwitch) return { enabled: false, recall: false, reflect: false, kinds: [] };
+  const enabled = perAgent.mode === "on" ? true : perAgent.mode === "off" ? false : global.defaultEnabled;
+  return {
+    enabled,
+    recall: enabled && perAgent.recall,
+    reflect: enabled && perAgent.reflect,
+    kinds: enabled ? perAgent.kinds : [],
+  };
 }
 
 export interface Run {
