@@ -93,6 +93,20 @@
     costCap = { perRun: a.costCap.perRun, perDay: a.costCap.perDay };
   }
 
+  // Serialize with OBJECT KEYS SORTED (arrays keep their order — reordering is a real edit). A
+  // client-built object and a Postgres-jsonb object that PG re-key-ordered are structurally equal
+  // but stringify differently otherwise; e.g. local costCap `{perRun,perDay}` vs the server's
+  // `{perDay,perRun}` would forever read as an unsaved "Limits" change. This makes the compare stable.
+  function stable(x: unknown): string {
+    return JSON.stringify(x, (_, v) =>
+      v && typeof v === "object" && !Array.isArray(v)
+        ? Object.keys(v as Record<string, unknown>)
+            .sort()
+            .reduce<Record<string, unknown>>((o, k) => ((o[k] = (v as Record<string, unknown>)[k]), o), {})
+        : v,
+    );
+  }
+
   // Typed-but-not-saved. Compared field by field against the last server-confirmed agent, the same
   // way the server compares the saved draft against the published snapshot.
   const unsavedFields = $derived.by((): string[] => {
@@ -102,10 +116,10 @@
     if (description !== agent.description) out.push("description");
     if (model !== agent.model) out.push("model");
     if (instructions !== agent.instructions) out.push("instructions");
-    if (JSON.stringify(validVars()) !== JSON.stringify(agent.variables)) out.push("variables");
-    if (JSON.stringify(skills) !== JSON.stringify(agent.skills)) out.push("skills");
-    if (JSON.stringify(attachedTools) !== JSON.stringify(agent.attachedTools)) out.push("attachedTools");
-    if (JSON.stringify(costCap) !== JSON.stringify(agent.costCap)) out.push("costCap");
+    if (stable(validVars()) !== stable(agent.variables)) out.push("variables");
+    if (stable(skills) !== stable(agent.skills)) out.push("skills");
+    if (stable(attachedTools) !== stable(agent.attachedTools)) out.push("attachedTools");
+    if (stable(costCap) !== stable(agent.costCap)) out.push("costCap");
     return out;
   });
   const unsaved = $derived(unsavedFields.length > 0);
