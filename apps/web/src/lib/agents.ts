@@ -34,6 +34,43 @@ export interface CostCap {
   perDay: Money | null;
 }
 
+// ── Agent memory config (Epic 8) — mirrors @turanga/domain; KEEP IN SYNC. memoryConfig is OPERATIONAL
+// (not in PUBLISHED_FIELDS): editing it saves but never makes an agent "dirty" or requires a republish.
+export type MemoryKind = "episodic" | "semantic" | "procedure";
+export const MEMORY_KINDS: readonly MemoryKind[] = ["episodic", "semantic", "procedure"] as const;
+
+/** Per-agent memory config. `inherit` follows the global default (which ships OFF), so a new agent is
+ *  effectively memory-off until enabled. recall/reflect toggle independently. */
+export interface MemoryConfig {
+  mode: "inherit" | "on" | "off";
+  recall: boolean;
+  reflect: boolean;
+  kinds: MemoryKind[];
+}
+export const DEFAULT_MEMORY_CONFIG: MemoryConfig = { mode: "inherit", recall: true, reflect: true, kinds: [...MEMORY_KINDS] };
+
+/** Operator-wide memory defaults (Settings → Memory). Ships OFF. `embeddingModel`/`privacy` are
+ *  read-only in the UI (the pgvector dimension is fixed; `agent-scoped` is the only privacy value). */
+export interface MemoryGlobalConfig {
+  defaultEnabled: boolean;
+  killSwitch: boolean;
+  embeddingModel: string;
+  retentionDays: number | null;
+  privacy: "agent-scoped";
+}
+
+/** The single rule for whether + how memory runs for an agent — mirrors the server's
+ *  `effectiveMemoryConfig`. `killSwitch` wins; `inherit` follows the global default. Used only for
+ *  legible UI copy here; the run path (8.3/8.4) enforces it server-side. */
+export function effectiveMemoryConfig(
+  global: MemoryGlobalConfig,
+  perAgent: MemoryConfig,
+): { enabled: boolean; recall: boolean; reflect: boolean; kinds: MemoryKind[] } {
+  if (global.killSwitch) return { enabled: false, recall: false, reflect: false, kinds: [] };
+  const enabled = perAgent.mode === "on" ? true : perAgent.mode === "off" ? false : global.defaultEnabled;
+  return { enabled, recall: enabled && perAgent.recall, reflect: enabled && perAgent.reflect, kinds: enabled ? perAgent.kinds : [] };
+}
+
 /** The definition fields a publish snapshots — the tab dots and the dirty bar read from this. */
 export const PUBLISHED_FIELDS = [
   "name",
@@ -58,6 +95,7 @@ export interface Agent {
   skills: AttachedSkill[]; // Story 3.4
   attachedTools: AttachedTool[]; // Story 6.3
   costCap: CostCap; // Story 3.5
+  memoryConfig: MemoryConfig; // Story 8.1/8.2 — operational (NOT a PublishedField)
   publishedVersion: number | null; // null = never published
   publishedAt: string | null;
   dirty: boolean; // server-derived: the draft differs from the published snapshot
@@ -81,6 +119,7 @@ export interface AgentPatch {
   skills?: AttachedSkill[];
   attachedTools?: AttachedTool[];
   costCap?: CostCap;
+  memoryConfig?: MemoryConfig; // Story 8.2 — per-agent memory controls
 }
 
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };

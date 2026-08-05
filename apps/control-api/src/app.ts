@@ -20,6 +20,7 @@ import { memoryRunsRepo, type RunsRepo } from "./runs/repo.js";
 import { toolRoutes } from "./tools/routes.js";
 import { memoryToolsRepo, type ToolsRepo } from "./tools/repo.js";
 import { memoryMemoryRepo, type MemoryRepo } from "./memory/repo.js";
+import { memoryRoutes } from "./memory/routes.js";
 import { fakeMcpVerifier, type McpVerifier } from "./tools/mcp.js";
 import { runOrchestrator, type RunOrchestrator } from "./runs/orchestrator.js";
 import { fakeSandboxRuntime } from "./runs/runtime.js";
@@ -70,6 +71,8 @@ export function createApp(deps: AppDeps = {}) {
   app.use("/runs/*", requireSession(authRepo));
   app.use("/tools", requireSession(authRepo));
   app.use("/tools/*", requireSession(authRepo));
+  app.use("/memory", requireSession(authRepo));
+  app.use("/memory/*", requireSession(authRepo));
   const agentsRepo = deps.agentsRepo ?? memoryAgentsRepo();
   const connectionsRepo = deps.connectionsRepo ?? memoryConnectionsRepo();
   const gateway = deps.modelGateway ?? fakeModelGateway();
@@ -85,6 +88,7 @@ export function createApp(deps: AppDeps = {}) {
 
   const mcpVerifier = deps.mcpVerifier ?? fakeMcpVerifier();
   app.route("/", toolRoutes(toolsRepo, mcpVerifier)); // Epic 6 — manage + connect first-class tools
+  app.route("/", memoryRoutes(memoryRepo)); // Epic 8 (Story 8.2) — global memory settings + agent-scoped purge
 
   const runsRepo = deps.runsRepo ?? memoryRunsRepo();
   // The hub is the live SSE relay; the orchestrator and the routes MUST share one instance.

@@ -641,3 +641,54 @@ describe("duplicate", () => {
     expect((await app.request("/agents/nope/duplicate", { method: "POST", headers: { cookie } })).status).toBe(404);
   });
 });
+
+describe("PATCH /agents/:id memoryConfig (Story 8.2)", () => {
+  it("persists memoryConfig, returns it, and does NOT make the agent dirty (operational, not published)", async () => {
+    const { app, cookie } = await appWithSession();
+    const agent = await createAgent(app, cookie, "Rememberer");
+
+    // A fresh agent ships inherit + all kinds. (A never-published agent is dirty for its published
+    // fields — but memoryConfig is operational, so it is never among changedFields.)
+    const before = ((await (await app.request(`/agents/${agent.id}`, { headers: { cookie } })).json()) as { agent: any }).agent;
+    expect(before.memoryConfig).toEqual({ mode: "inherit", recall: true, reflect: true, kinds: ["episodic", "semantic", "procedure"] });
+    expect(before.changedFields).not.toContain("memoryConfig");
+    const changedBefore = before.changedFields;
+
+    const res = await app.request(`/agents/${agent.id}`, {
+      ...jsonPatch({ memoryConfig: { mode: "on", recall: true, reflect: false, kinds: ["semantic"] } }),
+      headers: { "content-type": "application/json", cookie },
+    });
+    expect(res.status).toBe(200);
+    const updated = ((await res.json()) as { agent: any }).agent;
+    expect(updated.memoryConfig).toEqual({ mode: "on", recall: true, reflect: false, kinds: ["semantic"] });
+    // Operational config — editing it never appears in changedFields and doesn't change the dirty set.
+    expect(updated.changedFields).not.toContain("memoryConfig");
+    expect(updated.changedFields).toEqual(changedBefore);
+  });
+
+  it("de-dupes kinds and rejects invalid memoryConfig 400 (bad mode / unknown kind / non-boolean)", async () => {
+    const { app, cookie } = await appWithSession();
+    const agent = await createAgent(app, cookie, "Validated");
+
+    // de-dupe within kinds
+    const dup = await app.request(`/agents/${agent.id}`, {
+      ...jsonPatch({ memoryConfig: { mode: "on", recall: true, reflect: true, kinds: ["semantic", "semantic", "episodic"] } }),
+      headers: { "content-type": "application/json", cookie },
+    });
+    expect(((await dup.json()) as { agent: any }).agent.memoryConfig.kinds).toEqual(["semantic", "episodic"]);
+
+    for (const bad of [
+      { mode: "sometimes", recall: true, reflect: true, kinds: [] },
+      { mode: "on", recall: "yes", reflect: true, kinds: [] },
+      { mode: "on", recall: true, reflect: true, kinds: ["semantic", "made-up"] },
+      { mode: "on", recall: true, reflect: true, kinds: "semantic" },
+      "not-an-object",
+    ]) {
+      const res = await app.request(`/agents/${agent.id}`, {
+        ...jsonPatch({ memoryConfig: bad }),
+        headers: { "content-type": "application/json", cookie },
+      });
+      expect(res.status, JSON.stringify(bad)).toBe(400);
+    }
+  });
+});

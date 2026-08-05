@@ -21,6 +21,7 @@
     listVersions,
     activationBlockers,
     FIELD_TAB,
+    DEFAULT_MEMORY_CONFIG,
     type Agent,
     type AgentPatch,
     type AgentVariable,
@@ -28,7 +29,10 @@
     type AttachedTool,
     type CostCap,
     type AgentVersion,
+    type MemoryConfig,
+    type MemoryGlobalConfig,
   } from "$lib/agents";
+  import { getMemoryConfig, purgeAgentMemory } from "$lib/memory";
   import { listProviders, type Provider } from "$lib/connections";
   import { listTools, type Tool } from "$lib/tools";
   import { getAgentToolStats, type ToolStat } from "$lib/runs";
@@ -39,6 +43,7 @@
   import InstructionsEditor from "$lib/components/InstructionsEditor.svelte";
   import SkillsEditor from "$lib/components/SkillsEditor.svelte";
   import AgentToolsTab from "$lib/components/AgentToolsTab.svelte";
+  import AgentMemoryTab from "$lib/components/AgentMemoryTab.svelte";
   import CostCapsEditor from "$lib/components/CostCapsEditor.svelte";
   import TestConsole from "$lib/components/TestConsole.svelte";
 
@@ -63,8 +68,13 @@
   let skills = $state<AttachedSkill[]>([]);
   let attachedTools = $state<AttachedTool[]>([]);
   let costCap = $state<CostCap>({ perRun: null, perDay: null });
+  let memoryConfig = $state<MemoryConfig>({ ...DEFAULT_MEMORY_CONFIG, kinds: [...DEFAULT_MEMORY_CONFIG.kinds] });
 
-  type Tab = "definition" | "tools" | "skills" | "limits";
+  // The operator's global memory defaults — read once so the Memory tab can show the EFFECTIVE state
+  // (global → inherit/on/off). Best-effort: a fetch failure falls back to the OFF-by-default shape.
+  let globalMemory = $state<MemoryGlobalConfig>({ defaultEnabled: false, killSwitch: false, embeddingModel: "text-embedding-3-small", retentionDays: null, privacy: "agent-scoped" });
+
+  type Tab = "definition" | "tools" | "skills" | "limits" | "memory";
   let tab = $state<Tab>("definition");
   let consoleOpen = $state(false);
   let consoleRef = $state<TestConsole | null>(null);
@@ -91,6 +101,7 @@
     skills = a.skills.map((s) => ({ ...s }));
     attachedTools = a.attachedTools.map((at) => ({ ...at, operations: [...at.operations] }));
     costCap = { perRun: a.costCap.perRun, perDay: a.costCap.perDay };
+    memoryConfig = { ...a.memoryConfig, kinds: [...a.memoryConfig.kinds] };
   }
 
   // Serialize with OBJECT KEYS SORTED (arrays keep their order — reordering is a real edit). A
@@ -120,6 +131,9 @@
     if (stable(skills) !== stable(agent.skills)) out.push("skills");
     if (stable(attachedTools) !== stable(agent.attachedTools)) out.push("attachedTools");
     if (stable(costCap) !== stable(agent.costCap)) out.push("costCap");
+    // memoryConfig is operational (not a published field) — it still shows as a typed-but-unsaved edit,
+    // and MUST use stable() (object + array) so PG jsonb key re-ordering isn't a phantom change (52f1c84).
+    if (stable(memoryConfig) !== stable(agent.memoryConfig)) out.push("memoryConfig");
     return out;
   });
   const unsaved = $derived(unsavedFields.length > 0);
@@ -134,14 +148,17 @@
     skills: "Skills",
     attachedTools: "Tools",
     costCap: "Limits",
+    memoryConfig: "Memory",
   };
   const labelFields = (fs: string[]): string => fs.map((f) => FIELD_LABEL[f] ?? f).join(", ");
 
-  // A tab shows a caution dot when it holds either kind of pending change.
+  // A tab shows a caution dot when it holds either kind of pending change. `memoryConfig` is not a
+  // PublishedField (so it never lands in `changedFields`), and it maps to the Memory tab, not Definition.
+  const fieldTab = (f: string): Tab => (f === "memoryConfig" ? "memory" : (FIELD_TAB[f as keyof typeof FIELD_TAB] ?? "definition"));
   const tabsWithChange = $derived.by(() => {
     const set = new Set<Tab>();
-    for (const f of unsavedFields) set.add(FIELD_TAB[f as keyof typeof FIELD_TAB] ?? "definition");
-    for (const f of agent?.changedFields ?? []) set.add(FIELD_TAB[f] ?? "definition");
+    for (const f of unsavedFields) set.add(fieldTab(f));
+    for (const f of agent?.changedFields ?? []) set.add(fieldTab(f));
     return set;
   });
 
@@ -150,6 +167,7 @@
     { key: "tools" as Tab, label: "Tools", count: attachedTools.reduce((n, t) => n + t.operations.length, 0) },
     { key: "skills" as Tab, label: "Skills", count: skills.length },
     { key: "limits" as Tab, label: "Limits", count: null as number | null },
+    { key: "memory" as Tab, label: "Memory", count: null as number | null },
   ]);
 
   const definedNames = $derived(vars.map((v) => v.name).filter((n) => VAR_NAME_RE.test(n)));
@@ -226,6 +244,7 @@
     providers = p.ok ? p.value : []; // a provider outage shouldn't block editing the agent
     connectedTools = t.ok ? t.value : []; // a tools outage shouldn't block editing the agent
     void getAgentToolStats(target).then((s) => { if (target === id) toolStats = s; }); // Story 6.5 — best-effort
+    void getMemoryConfig().then((r) => { if (target === id && r.ok) globalMemory = r.value; }); // 8.2 — effective-state copy; best-effort
   }
 
   $effect(() => {
@@ -252,6 +271,7 @@
       skills,
       attachedTools,
       costCap,
+      memoryConfig,
     };
     const target = id; // a save that resolves after navigation must not clobber the new agent
     const mine = ++saveSeq;
@@ -599,7 +619,7 @@
               </section>
             </div>
           </div>
-        {:else}
+        {:else if tab === "limits"}
           <div class="scroll pad">
             <div class="form">
               <section>
@@ -611,6 +631,15 @@
               </section>
             </div>
           </div>
+        {:else}
+          <AgentMemoryTab
+            value={memoryConfig}
+            global={globalMemory}
+            onchange={(next) => (memoryConfig = next)}
+            onpurge={async () => {
+              await purgeAgentMemory(id);
+            }}
+          />
         {/if}
 
         {#if unsaved || saveError}

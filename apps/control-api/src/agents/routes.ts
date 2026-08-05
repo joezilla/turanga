@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { ulid, activationBlockers, DEFAULT_MEMORY_CONFIG } from "@turanga/domain";
+import { ulid, activationBlockers, DEFAULT_MEMORY_CONFIG, MEMORY_KINDS, type MemoryConfig, type MemoryKind } from "@turanga/domain";
 import { toView, type AgentsRepo, type AgentRow, type AgentPatch, type AgentVariable, type AttachedSkill, type AttachedTool, type CostCap, type Money } from "./repo.js";
 import type { ConnectionsRepo } from "../connections/repo.js";
 import type { ToolsRepo } from "../tools/repo.js";
@@ -139,6 +139,26 @@ async function parseTools(input: unknown, toolsRepo: ToolsRepo): Promise<{ ok: t
   return { ok: true, value: out };
 }
 
+// Per-agent memory config (Story 8.2). Operational config (NOT a published field) — saving it never
+// makes an agent dirty. mode ∈ {inherit,on,off}; recall/reflect independent booleans; kinds ⊆ the three
+// memory kinds (deduped). Enforcement of the resolved config is 8.3/8.4 (the run path); this only validates.
+const MEMORY_MODES = new Set(["inherit", "on", "off"]);
+function parseMemoryConfig(input: unknown): { ok: true; value: MemoryConfig } | { ok: false; error: string } {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) return { ok: false, error: "Memory config must be an object." };
+  const m = input as { mode?: unknown; recall?: unknown; reflect?: unknown; kinds?: unknown };
+  if (typeof m.mode !== "string" || !MEMORY_MODES.has(m.mode)) return { ok: false, error: "Memory mode must be inherit, on, or off." };
+  if (typeof m.recall !== "boolean") return { ok: false, error: "recall must be true or false." };
+  if (typeof m.reflect !== "boolean") return { ok: false, error: "reflect must be true or false." };
+  if (!Array.isArray(m.kinds)) return { ok: false, error: "Memory kinds must be a list." };
+  const allowed = new Set<string>(MEMORY_KINDS);
+  const kinds: MemoryKind[] = [];
+  for (const k of m.kinds) {
+    if (typeof k !== "string" || !allowed.has(k)) return { ok: false, error: `Unknown memory kind "${String(k)}".` };
+    if (!kinds.includes(k as MemoryKind)) kinds.push(k as MemoryKind); // de-dupe
+  }
+  return { ok: true, value: { mode: m.mode as MemoryConfig["mode"], recall: m.recall, reflect: m.reflect, kinds } };
+}
+
 export function agentRoutes(repo: AgentsRepo, connectionsRepo: ConnectionsRepo, toolsRepo: ToolsRepo) {
   const app = new Hono<{ Variables: SessionVars }>();
 
@@ -172,6 +192,7 @@ export function agentRoutes(repo: AgentsRepo, connectionsRepo: ConnectionsRepo, 
       skills?: unknown;
       attachedTools?: unknown;
       costCap?: unknown;
+      memoryConfig?: unknown;
     };
     const patch: AgentPatch = {};
 
@@ -234,6 +255,11 @@ export function agentRoutes(repo: AgentsRepo, connectionsRepo: ConnectionsRepo, 
       const parsed = parseCostCap(body.costCap);
       if (!parsed.ok) return c.json({ error: parsed.error }, 400);
       patch.costCap = parsed.value;
+    }
+    if (body.memoryConfig !== undefined) {
+      const parsed = parseMemoryConfig(body.memoryConfig);
+      if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+      patch.memoryConfig = parsed.value; // operational — never sets `dirty` (not in PUBLISHED_FIELDS)
     }
 
     // NOTE (Story 5.1): the general PATCH deliberately does NOT read `body.state` — promotion is a

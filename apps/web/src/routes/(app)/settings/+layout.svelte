@@ -27,6 +27,12 @@
       blurb:
         "MCP servers your agents can call — a remote server or one you deploy yourself. Attach a tool to an agent to grant specific operations.",
     },
+    {
+      href: "/settings/memory",
+      label: "Memory",
+      blurb:
+        "What your agents remember across runs. Set the default for new agents, how long memories are kept, and a master kill switch. Off by default.",
+    },
   ];
 
   const current = $derived(items.find((i) => page.url.pathname.startsWith(i.href)));

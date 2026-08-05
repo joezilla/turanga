@@ -61,6 +61,7 @@ export interface AgentPatch {
   skills?: AttachedSkill[];
   attachedTools?: AttachedTool[]; // Story 6.3
   costCap?: CostCap;
+  memoryConfig?: MemoryConfig; // Story 8.2 — operational config; NOT a published field (never sets dirty)
   state?: LifecycleState; // Story 5.1 — written ONLY by the gated activate/deactivate routes, never the general PATCH
 }
 
@@ -138,6 +139,7 @@ function applyPatch(row: AgentRow, patch: AgentPatch): AgentRow {
     ...(patch.skills !== undefined ? { skills: patch.skills } : {}),
     ...(patch.attachedTools !== undefined ? { attachedTools: patch.attachedTools } : {}),
     ...(patch.costCap !== undefined ? { costCap: patch.costCap } : {}),
+    ...(patch.memoryConfig !== undefined ? { memoryConfig: patch.memoryConfig } : {}),
     ...(patch.state !== undefined ? { state: patch.state } : {}),
   };
 }
@@ -202,6 +204,7 @@ export function drizzleAgentsRepo(db: Db): AgentsRepo {
       if (patch.skills !== undefined) set.skills = patch.skills;
       if (patch.attachedTools !== undefined) set.attachedTools = patch.attachedTools;
       if (patch.costCap !== undefined) set.costCap = patch.costCap;
+      if (patch.memoryConfig !== undefined) set.memoryConfig = patch.memoryConfig;
       if (patch.state !== undefined) set.state = patch.state;
       if (Object.keys(set).length === 0) return repo.get(id); // nothing to change
       const rows = await db.update(agents).set(set).where(eq(agents.id, id)).returning();
