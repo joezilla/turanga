@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, sql } from "drizzle-orm";
 import type { ControlChannelMessage } from "@turanga/contracts";
 import type { Db } from "../db/client.js";
 import { runs } from "../db/schema.js";
@@ -78,6 +78,7 @@ export interface RunsRepo {
   get(id: string): Promise<RunRow | null>;
   list(agentId?: string, limit?: number): Promise<RunRow[]>; // newest first, bounded
   listSummary(agentId?: string, limit?: number): Promise<RunSummary[]>; // newest first, bounded — run history (Story 5.3), no transcript
+  listByConversation(conversationId: string): Promise<RunRow[]>; // a conversation's turns, turnIndex ASC, WITH transcript (chat history, Story 9.2)
 
   setStatus(id: string, status: RunStatus, patch?: { reason?: string | null; endedAt?: string; costMicros?: number }): Promise<void>;
   appendMessage(id: string, msg: ControlChannelMessage): Promise<void>;
@@ -165,6 +166,10 @@ export function drizzleRunsRepo(db: Db): RunsRepo {
       const rows = agentId ? await q.where(eq(runs.agentId, agentId)) : await q;
       return rows.map(toRow);
     },
+    async listByConversation(conversationId) {
+      const rows = await db.select().from(runs).where(eq(runs.conversationId, conversationId)).orderBy(asc(runs.turnIndex));
+      return rows.map(toRow);
+    },
     async listSummary(agentId, limit = DEFAULT_LIST_LIMIT) {
       const q = db.select(summaryCols).from(runs).orderBy(desc(runs.createdAt), desc(runs.id)).limit(limit);
       const rows = agentId ? await q.where(eq(runs.agentId, agentId)) : await q;
@@ -232,6 +237,12 @@ export function memoryRunsRepo(): RunsRepo {
         .map((id) => rows.get(id)!)
         .filter((r) => (agentId ? r.agentId === agentId : true))
         .slice(0, limit)
+        .map((r) => ({ ...r, transcript: [...r.transcript] }));
+    },
+    async listByConversation(conversationId) {
+      return [...rows.values()]
+        .filter((r) => r.conversationId === conversationId)
+        .sort((a, b) => (a.turnIndex ?? 0) - (b.turnIndex ?? 0)) // turnIndex ASC
         .map((r) => ({ ...r, transcript: [...r.transcript] }));
     },
     async listSummary(agentId, limit = DEFAULT_LIST_LIMIT) {

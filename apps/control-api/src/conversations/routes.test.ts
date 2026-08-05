@@ -5,6 +5,8 @@ import { memoryAuthRepo, type AuthRepo } from "../auth/repo.js";
 import { hashPassword } from "../auth/password.js";
 import { memoryConversationsRepo, type ConversationsRepo } from "./repo.js";
 import type { AgentsRepo, AgentView } from "../agents/repo.js";
+import type { RunOrchestrator } from "../runs/orchestrator.js";
+import type { RunRow } from "../runs/repo.js";
 
 const EMAIL = "admin@turanga.local";
 const PW = "pw-for-tests-123456";
@@ -22,10 +24,10 @@ function stubAgentsRepo(agents: Record<string, number | null>): AgentsRepo {
   } as unknown as AgentsRepo;
 }
 
-async function appWithSession(agents: Record<string, number | null>, conversationsRepo: ConversationsRepo = memoryConversationsRepo()) {
+async function appWithSession(agents: Record<string, number | null>, conversationsRepo: ConversationsRepo = memoryConversationsRepo(), orchestrator?: RunOrchestrator) {
   const authRepo: AuthRepo = memoryAuthRepo();
   await authRepo.createUser({ id: ulid(1), email: EMAIL, passwordHash: await hashPassword(PW) });
-  const app = createApp({ authRepo, agentsRepo: stubAgentsRepo(agents), conversationsRepo });
+  const app = createApp({ authRepo, agentsRepo: stubAgentsRepo(agents), conversationsRepo, orchestrator });
   const login = await app.request("/auth/login", {
     method: "POST",
     headers: { "content-type": "application/json", "x-forwarded-for": `10.11.0.${clientSeq++}` },
@@ -103,5 +105,43 @@ describe("conversation routes — list + get (agent-scoped, Story 9.1)", () => {
     expect((await app.request("/conversations", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
     expect((await app.request("/conversations?agentId=agent-a")).status).toBe(401);
     expect((await app.request("/conversations/x")).status).toBe(401);
+  });
+});
+
+describe("conversation routes — send a message / run a turn (Story 9.2)", () => {
+  // A fake orchestrator: records the startChatTurn call and returns a canned running run (the snapshot/
+  // history resolution is unit-tested in turn.test.ts; this is a routing test).
+  function fakeOrchestrator(over: Partial<Awaited<ReturnType<RunOrchestrator["startChatTurn"]>>> = {}) {
+    const calls: { conversationId: string; taskInput: string }[] = [];
+    const run = { id: "run-1", agentId: "a1", conversationId: "conv-1", turnIndex: 0, status: "running", taskInput: "hi", transcript: [], reason: null, costMicros: 0, createdAt: "2026-08-05T00:00:00.000Z", endedAt: null } as RunRow;
+    const orchestrator = {
+      async startChatTurn(conversationId: string, taskInput: string) {
+        calls.push({ conversationId, taskInput });
+        return ("ok" in over ? over : { ok: true, run }) as Awaited<ReturnType<RunOrchestrator["startChatTurn"]>>;
+      },
+    } as unknown as RunOrchestrator;
+    return { orchestrator, calls };
+  }
+
+  it("POST /conversations/:id/messages runs a turn and returns the created run (201)", async () => {
+    const { orchestrator, calls } = fakeOrchestrator();
+    const { app, cookie } = await appWithSession({ "agent-a": 1 }, memoryConversationsRepo(), orchestrator);
+    const res = await app.request("/conversations/conv-1/messages", { method: "POST", headers: { "content-type": "application/json", cookie }, body: JSON.stringify({ taskInput: "what's the weather?" }) });
+    expect(res.status).toBe(201);
+    expect(((await res.json()) as { run: { id: string } }).run.id).toBe("run-1");
+    expect(calls).toEqual([{ conversationId: "conv-1", taskInput: "what's the weather?" }]); // delegated to the orchestrator
+  });
+
+  it("relays the orchestrator's refusal (e.g. an unknown conversation → 404)", async () => {
+    const { orchestrator } = fakeOrchestrator({ ok: false, error: "That conversation doesn't exist.", status: 404 });
+    const { app, cookie } = await appWithSession({ "agent-a": 1 }, memoryConversationsRepo(), orchestrator);
+    const res = await app.request("/conversations/nope/messages", { method: "POST", headers: { "content-type": "application/json", cookie }, body: JSON.stringify({ taskInput: "hi" }) });
+    expect(res.status).toBe(404);
+    expect(((await res.json()) as { error: string }).error).toBe("That conversation doesn't exist.");
+  });
+
+  it("is session-guarded (401 without a cookie)", async () => {
+    const { app } = await appWithSession({ "agent-a": 1 });
+    expect((await app.request("/conversations/conv-1/messages", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
   });
 });

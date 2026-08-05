@@ -99,7 +99,6 @@ export function createApp(deps: AppDeps = {}) {
   app.route("/", memoryRoutes(memoryRepo, gateway)); // Epic 8 — memory settings/purge (8.2) + list/edit/forget (8.5); gateway re-embeds on edit
 
   const conversationsRepo = deps.conversationsRepo ?? memoryConversationsRepo(); // Epic 9 (Story 9.1) — chat threads
-  app.route("/", conversationRoutes(conversationsRepo, agentsRepo)); // Epic 9 — create (publish-first + version pin) / list / get
 
   const runsRepo = deps.runsRepo ?? memoryRunsRepo();
   // The hub is the live SSE relay; the orchestrator and the routes MUST share one instance.
@@ -108,8 +107,10 @@ export function createApp(deps: AppDeps = {}) {
   // Docker; server.ts injects the real Docker-backed orchestrator (built on the same hub).
   const orchestrator =
     deps.orchestrator ??
-    runOrchestrator({ runsRepo, agentsRepo, runtime: fakeSandboxRuntime(), guard: fakeRunGuard(), hub: runHub, dataConnectionsRepo, toolsRepo, memoryRepo, reflector, googleOAuth: google, modelGateway: gateway, image: "turanga/agent-harness:dev", sandboxVolume: "guard-run" });
+    runOrchestrator({ runsRepo, agentsRepo, runtime: fakeSandboxRuntime(), guard: fakeRunGuard(), hub: runHub, dataConnectionsRepo, toolsRepo, memoryRepo, conversationsRepo, reflector, googleOAuth: google, modelGateway: gateway, image: "turanga/agent-harness:dev", sandboxVolume: "guard-run" });
   app.route("/", runRoutes(runsRepo, orchestrator, runHub, deps.guardCallbackToken ?? "dev-guard-callback"));
+  // Epic 9 — create (publish-first + version pin) / list / get (9.1) + POST …/messages (9.2, needs the orchestrator).
+  app.route("/", conversationRoutes(conversationsRepo, agentsRepo, orchestrator));
 
   return app;
 }

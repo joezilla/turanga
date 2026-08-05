@@ -91,6 +91,7 @@ async function main() {
     dataConnectionsRepo, // Story 4.3 — resolve the run's Gmail connection + allowlist
     toolsRepo, // Story 6.3 — resolve granted-tool names for the sandbox-visible JobSpec.tools
     memoryRepo, // Story 8.1 — threaded for recall (8.3) / reflect (8.4)
+    conversationsRepo, // Story 9.2 — a chat turn resolves its conversation (pinned version + thread)
     reflector, // Story 8.4 — post-run transcript distillation (master key, unmetered)
     googleOAuth: google, // Story 4.3 — mint the short-lived access token handed to the Guard
     modelGateway, // Story 4.5 — mint the per-run cost key under the agent's daily-budget team

@@ -14,7 +14,7 @@ import type { AttachedSkill, AttachedTool, CostCap } from "@turanga/domain";
 
 type Agent = { id: string; model: string | null; instructions: string; state: "draft" | "active"; skills?: AttachedSkill[]; attachedTools?: AttachedTool[]; costCap?: CostCap };
 const agent = (over: Partial<Agent> = {}): Agent => ({ id: "a1", model: "openai/gpt-4o", instructions: "be nice", state: "draft", ...over });
-const agentsRepo = (a: Agent | null) => ({ get: async (id: string) => (a && a.id === id ? a : null) });
+const agentsRepo = (a: Agent | null) => ({ get: async (id: string) => (a && a.id === id ? a : null), listVersions: async () => [] });
 
 const nd = (m: ControlChannelMessage) => JSON.stringify(m);
 
@@ -520,6 +520,19 @@ describe("RunsRepo (memory)", () => {
     expect(await repo.get("turn")).toMatchObject({ conversationId: "conv-1", turnIndex: 2 });
     const summary = (await repo.listSummary("a1")).find((r) => r.id === "turn")!;
     expect(summary).toMatchObject({ conversationId: "conv-1", turnIndex: 2 }); // not dropped by the summary projection
+  });
+
+  it("listByConversation returns the conversation's turns in turnIndex ASC, with transcripts, scoped (Story 9.2)", async () => {
+    const repo = memoryRunsRepo();
+    // Insert out of turn order; listByConversation must sort by turnIndex ascending.
+    await repo.create({ id: "t1", agentId: "a1", status: "succeeded", taskInput: "second", transcript: [{ type: "turn", v: CONTRACT_VERSION, role: "agent", text: "reply-1" }], reason: null, createdAt: "2026-08-02T00:00:00.000Z", endedAt: null, conversationId: "conv-1", turnIndex: 1 });
+    await repo.create({ id: "t0", agentId: "a1", status: "succeeded", taskInput: "first", transcript: [{ type: "turn", v: CONTRACT_VERSION, role: "agent", text: "reply-0" }], reason: null, createdAt: "2026-08-01T00:00:00.000Z", endedAt: null, conversationId: "conv-1", turnIndex: 0 });
+    await repo.create({ id: "other", agentId: "a1", status: "succeeded", taskInput: "x", transcript: [], reason: null, createdAt: "2026-08-03T00:00:00.000Z", endedAt: null, conversationId: "conv-2", turnIndex: 0 });
+
+    const turns = await repo.listByConversation("conv-1");
+    expect(turns.map((r) => r.id)).toEqual(["t0", "t1"]); // turnIndex ASC, never conv-2's
+    expect(turns[0].transcript).toHaveLength(1); // full transcript (history needs the agent turn text)
+    expect(await repo.listByConversation("empty")).toEqual([]);
   });
 });
 

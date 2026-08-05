@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readJobSpec, opOutcome, toolRecord } from "./main.js";
+import { readJobSpec, opOutcome, toolRecord, buildMessages } from "./main.js";
 import { CONTRACT_VERSION, type GuardConnectionResponse, type ToolCallResponse } from "@turanga/contracts";
 
 describe("agent-harness", () => {
@@ -15,6 +15,42 @@ describe("agent-harness", () => {
     const spec = { v: CONTRACT_VERSION, runId: "r", agentId: "a", model: "m", instructions: "", skills: [], taskInput: "", memories: [{ id: "m1", kind: "semantic", summary: "the user prefers concise replies" }] };
     const parsed = readJobSpec(spec);
     expect(parsed.memories).toEqual([{ id: "m1", kind: "semantic", summary: "the user prefers concise replies" }]);
+  });
+
+  it("buildMessages folds prior conversation turns as user/assistant messages, before the current message (Story 9.2)", () => {
+    const spec = readJobSpec({
+      v: CONTRACT_VERSION,
+      runId: "r",
+      agentId: "a",
+      model: "m",
+      instructions: "be helpful",
+      skills: [],
+      memories: [{ id: "m1", kind: "semantic", summary: "prefers concise" }],
+      history: [
+        { role: "user", content: "what's the weather?" },
+        { role: "agent", content: "clear skies" },
+        { role: "user", content: "and tomorrow?" },
+        { role: "agent", content: "rain" },
+      ],
+      taskInput: "and the day after?",
+    });
+    const messages = buildMessages(spec);
+    // Order: system(instructions) → system(memories) → prior turns (agent→assistant) → current user turn.
+    expect(messages.map((m) => m.role)).toEqual(["system", "system", "user", "assistant", "user", "assistant", "user"]);
+    expect(messages[0]).toEqual({ role: "system", content: "be helpful" });
+    expect(messages[1].role).toBe("system");
+    expect(messages[1].content).toMatch(/prefers concise/); // the memories fold
+    expect(messages[2]).toEqual({ role: "user", content: "what's the weather?" });
+    expect(messages[3]).toEqual({ role: "assistant", content: "clear skies" }); // agent → assistant
+    expect(messages[6]).toEqual({ role: "user", content: "and the day after?" }); // the current message is last
+  });
+
+  it("buildMessages carries no history when the spec has none (a non-chat run is unchanged)", () => {
+    const spec = readJobSpec({ v: CONTRACT_VERSION, runId: "r", agentId: "a", model: "m", instructions: "hi", skills: [], taskInput: "go" });
+    expect(buildMessages(spec)).toEqual([
+      { role: "system", content: "hi" },
+      { role: "user", content: "go" },
+    ]);
   });
 
   it("opOutcome: a successful read folds a summary into the model context", () => {

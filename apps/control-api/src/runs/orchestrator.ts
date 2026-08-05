@@ -4,8 +4,10 @@
 // message is published to the RunHub so the SSE endpoint can stream it live (E4-AD-7). The per-run
 // cost key + kill-on-429 is Story 4.5.
 import { ulid, effectiveMemoryConfig, type LifecycleState, type AttachedSkill, type AttachedTool, type CostCap, type Money, type MemoryEventKind } from "@turanga/domain";
-import { CONTRACT_VERSION, ControlChannelMessageSchema, type JobSpec, type JobConnection, type JobTool, type JobMemory, type GuardRunEvent } from "@turanga/contracts";
+import { CONTRACT_VERSION, ControlChannelMessageSchema, type JobSpec, type JobConnection, type JobTool, type JobMemory, type JobHistoryTurn, type GuardRunEvent } from "@turanga/contracts";
 import type { RunsRepo, RunRow, RunStatus } from "./repo.js";
+import type { AgentVersionRow } from "../agents/repo.js";
+import type { ConversationsRepo } from "../conversations/repo.js";
 import type { SandboxRuntime, SandboxHandle } from "./runtime.js";
 import type { RunGuard, RunProvision, ProvisionConnection, ProvisionTool, SkillGrant } from "./guardClient.js";
 import type { RunHub } from "./hub.js";
@@ -27,6 +29,9 @@ interface AgentLike {
 }
 interface AgentsReader {
   get(id: string): Promise<AgentLike | null>;
+  // Story 9.2 — a chat turn resolves the PINNED published snapshot (not the draft) via this. The
+  // concrete agentsRepo is the full AgentsRepo, which has it; the narrowed reader just exposes it.
+  listVersions(id: string): Promise<AgentVersionRow[]>;
 }
 
 // Minimal reader over tools (Story 6.3/6.4). The `name` + `operations` resolve the sandbox-visible
@@ -75,6 +80,7 @@ export interface OrchestratorDeps {
   dataConnectionsRepo?: DataConnectionsReader; // Story 4.3 — absent ⇒ no connections (empty allowlist)
   toolsRepo?: ToolsReader; // Story 6.3 — resolve granted-tool names for JobSpec.tools; absent ⇒ no tools
   memoryRepo?: MemoryRepo; // Story 8.1 — recall (8.3) reads + reflect (8.4) writes it.
+  conversationsRepo?: ConversationsRepo; // Story 9.2 — a chat turn resolves its conversation (pinned version + thread) here.
   reflector?: Reflector; // Story 8.4 — distills a completed run's transcript into memories (post-run, master key)
   googleOAuth?: GoogleOAuth; // Story 4.3 — mints the short-lived access token handed to the Guard
   modelGateway?: ModelGateway; // Story 4.5 — mints the per-run cost key; absent ⇒ Guard uses the master key (unmetered)
@@ -94,7 +100,7 @@ function safeJson(line: string): unknown {
 }
 
 export function runOrchestrator(deps: OrchestratorDeps) {
-  const { runsRepo, agentsRepo, runtime, guard, hub, image, sandboxVolume, dataConnectionsRepo, toolsRepo, memoryRepo, reflector, googleOAuth, modelGateway } = deps;
+  const { runsRepo, agentsRepo, runtime, guard, hub, image, sandboxVolume, dataConnectionsRepo, toolsRepo, memoryRepo, conversationsRepo, reflector, googleOAuth, modelGateway } = deps;
   const maxConcurrent = deps.maxConcurrent ?? 5;
   const RECALL_TOP_K = 5; // Story 8.3 — how many memories recall injects at most
   const MAX_RECALL_SUMMARY_CHARS = 500; // bound each injected memory so an un-distilled row can't blow the token budget
@@ -321,19 +327,21 @@ export function runOrchestrator(deps: OrchestratorDeps) {
   type Created =
     | { ok: true; runId: string; jobSpec: JobSpec; row: RunRow; provision: RunProvision; costCap: CostCap | null }
     | { ok: false; error: string; status: 400 | 404 | 429 };
-  async function validateAndCreate(agentId: string, taskInput: string): Promise<Created> {
-    // INVARIANT (Story 5.2 AC2, NFR-1): the run path is state-agnostic — a Draft (Test) run and an
-    // Active run take the identical Sandbox + Guard + cost-cap establishment below; nothing here or in
-    // execute() branches on agent.state. Do NOT add a state condition — a run must always be sandboxed
-    // and guarded regardless of lifecycle. (Asserted by the "Active agent runs under the same
-    // Sandbox/Guard" test in runs.test.ts.)
-    //
-    // DECISION (draft/publish): a run resolves the WORKING DRAFT, not the published version. The
-    // test console exists precisely to try unsaved-since-publish edits, so pinning it to the
-    // published snapshot would defeat it. A future Chat surface — which talks to the published
-    // version — must resolve `agentsRepo.listVersions()` itself rather than assume this call site.
-    const agent = await agentsRepo.get(agentId);
-    if (!agent) return { ok: false, error: "That agent doesn't exist.", status: 404 };
+
+  // Story 9.2 — a chat turn's context: the conversation it belongs to, its 0-based position in the
+  // thread, and the prior turns folded into the model context. Null for a standalone/test-console run.
+  type ChatContext = { conversationId: string; turnIndex: number; history: JobHistoryTurn[] };
+
+  // The shared run-build path (Story 9.2 — "a turn is a normal run, parameterized by a DEFINITION").
+  // Both the test console (draft) and a chat turn (published snapshot) resolve an AgentLike + optional
+  // chat context, then take the IDENTICAL Sandbox + Guard + cost-cap machinery here.
+  //
+  // INVARIANT (Story 5.2 AC2, NFR-1): state-agnostic — a Draft (Test) run and an Active run take the
+  // identical establishment below; nothing here or in execute() branches on agent.state or on chat-vs-
+  // draft. Do NOT add a state or chat condition to the establishment — a run must always be sandboxed
+  // and guarded regardless of lifecycle. (Asserted by the "Active agent runs under the same
+  // Sandbox/Guard" test in runs.test.ts.)
+  async function assembleRun(agent: AgentLike, taskInput: string, chat: ChatContext | null): Promise<Created> {
     if (!agent.model) return { ok: false, error: "An agent needs a model to run.", status: 400 };
     if (active >= maxConcurrent) return { ok: false, error: "Too many runs in progress. Try again in a moment.", status: 429 };
     active++; // reserve the slot (released in execute's finally, OR here if we never reach execute)
@@ -344,26 +352,64 @@ export function runOrchestrator(deps: OrchestratorDeps) {
       const { jobTools, provisionTools } = await resolveRunTools(agent); // Story 6.3/6.4 — sandbox handles + Guard-held creds
       provision.tools = provisionTools; // Story 6.4 — the granted tools + decrypted credentials go to the Guard (never the jobSpec)
       // Story 8.3 — recall (embedding-only, gated, fail-open) runs HERE, before the cost key is minted
-      // in execute() — so it can never touch the run's cost cap.
+      // in execute() — so it can never touch the run's cost cap. Composes with a chat turn's short-term
+      // `history` (Story 9.2): long-term memory + the thread so far both fold into the model context.
       const { memories, recalledIds } = await resolveRecall(agent, taskInput);
-      // The job spec carries only LOGICAL handles + skill/tool IDs + secret-free recalled memories — the
-      // minted access token, the cost key, AND the authoritative scope/send grants + tool credentials
-      // live in `provision` and go to the Guard over the admin API, NEVER into the sandbox (AD-10).
-      // Story 9.1 — a standalone/test-console run carries no conversation history; a chat turn (9.2)
-      // populates `history` from the pinned conversation (and builds from the published snapshot).
-      const jobSpec: JobSpec = { v: CONTRACT_VERSION, runId, agentId, model: agent.model, instructions: agent.instructions, skills: jobSkills, connections: jobConnections, tools: jobTools, memories, history: [], taskInput };
+      // The job spec carries only LOGICAL handles + skill/tool IDs + secret-free recalled memories +
+      // secret-free prior turns — the minted access token, the cost key, AND the authoritative
+      // scope/send grants + tool credentials live in `provision` and go to the Guard over the admin
+      // API, NEVER into the sandbox (AD-10). `history` is [] for a standalone run; a chat turn (9.2)
+      // fills it from the pinned conversation.
+      const jobSpec: JobSpec = { v: CONTRACT_VERSION, runId, agentId: agent.id, model: agent.model, instructions: agent.instructions, skills: jobSkills, connections: jobConnections, tools: jobTools, memories, history: chat?.history ?? [], taskInput };
       // Auditable causality (NFR-4): record which memories this run recalled, as a transcript event on the
       // row at creation (orchestrator-authored, not a harness stream message), and bump their usage counters.
       const transcript = recalledIds.length > 0 ? [{ type: "recall" as const, v: CONTRACT_VERSION, memoryIds: recalledIds, count: recalledIds.length }] : [];
-      const row: RunRow = { id: runId, agentId, conversationId: null, turnIndex: null, status: "created", taskInput, transcript, reason: null, costMicros: 0, createdAt: now, endedAt: null };
+      const row: RunRow = { id: runId, agentId: agent.id, conversationId: chat?.conversationId ?? null, turnIndex: chat?.turnIndex ?? null, status: "created", taskInput, transcript, reason: null, costMicros: 0, createdAt: now, endedAt: null };
       await runsRepo.create(row);
-      if (recalledIds.length > 0 && memoryRepo) void memoryRepo.markRecalled(agentId, recalledIds).catch(() => {}); // best-effort; never blocks the run
+      if (recalledIds.length > 0 && memoryRepo) void memoryRepo.markRecalled(agent.id, recalledIds).catch(() => {}); // best-effort; never blocks the run
       hub.open(runId); // hub state exists before start() hands the run back — the SSE subscriber won't miss the opening
       return { ok: true, runId, jobSpec, row, provision, costCap: agent.costCap ?? null };
     } catch (e) {
       active--; // create() (or hub.open) threw — execute() will never run, so release the slot now
       throw e;
     }
+  }
+
+  // The test console (draft) path: resolves the WORKING DRAFT, not the published version — the test
+  // console exists precisely to try unsaved-since-publish edits (Story 5.2/publish decision).
+  async function validateAndCreate(agentId: string, taskInput: string): Promise<Created> {
+    const agent = await agentsRepo.get(agentId);
+    if (!agent) return { ok: false, error: "That agent doesn't exist.", status: 404 };
+    return assembleRun(agent, taskInput, null);
+  }
+
+  // Story 9.2 — the chat-turn path: resolves the conversation's PINNED published snapshot (not the
+  // draft), reconstructs the thread so far into `history`, and links the run to the conversation.
+  async function validateChatTurn(conversationId: string, taskInput: string): Promise<Created> {
+    if (!conversationsRepo) return { ok: false, error: "Chat isn't available.", status: 400 };
+    const conv = await conversationsRepo.get(conversationId);
+    if (!conv) return { ok: false, error: "That conversation doesn't exist.", status: 404 };
+    // Resolve the pinned snapshot (AC #3: a later publish never changes an in-flight conversation).
+    const pinned = (await agentsRepo.listVersions(conv.agentId)).find((v) => v.version === conv.publishedVersion);
+    if (!pinned) return { ok: false, error: "That published version is no longer available.", status: 404 };
+    const snap = pinned.snapshot;
+    const agent: AgentLike = {
+      id: conv.agentId,
+      model: snap.model,
+      instructions: snap.instructions,
+      state: "active", // unused — the run path is state-agnostic (see assembleRun's invariant note)
+      skills: snap.skills,
+      attachedTools: snap.attachedTools,
+      costCap: snap.costCap,
+    };
+    // Reconstruct the thread from the conversation's prior runs (each run's transcript already carries
+    // its user turn + the agent reply as `turn` messages). turnIndex = the next 0-based position.
+    const prior = await runsRepo.listByConversation(conv.id);
+    const turnIndex = prior.length;
+    const history: JobHistoryTurn[] = prior.flatMap((r) =>
+      r.transcript.filter((m): m is Extract<typeof m, { type: "turn" }> => m.type === "turn").map((m) => ({ role: m.role, content: m.text })),
+    );
+    return assembleRun(agent, taskInput, { conversationId: conv.id, turnIndex, history });
   }
 
   // Runs the sandbox to a terminal state, publishing every control message to the hub. ALWAYS
@@ -487,6 +533,17 @@ export function runOrchestrator(deps: OrchestratorDeps) {
       // Report `running` immediately from the row we just created (no redundant re-read) — execute()
       // flips the persisted status to running once the sandbox is established; the client watches
       // /events for the live transcript.
+      return { ok: true, run: { ...v.row, status: "running" } };
+    },
+    /** Story 9.2 — send a message to a conversation: build a run from the pinned published snapshot
+     *  with the thread so far as history, run it in the background, return the created (running) run
+     *  immediately. A chat turn is a normal run — same execute/reflect path as start(). */
+    async startChatTurn(conversationId: string, taskInput: string): Promise<LaunchResult> {
+      const v = await validateChatTurn(conversationId, taskInput);
+      if (!v.ok) return v;
+      void execute(v.runId, v.row.agentId, v.jobSpec, v.provision, v.costCap)
+        .then((run) => reflectRun(v.row.agentId, run))
+        .catch(() => {});
       return { ok: true, run: { ...v.row, status: "running" } };
     },
     /** The Guard→orchestrator control-plane callback (E4-AD-10). Cost `metrics` merge into the Run +
