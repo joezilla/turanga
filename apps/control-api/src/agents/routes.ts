@@ -151,11 +151,14 @@ function parseMemoryConfig(input: unknown): { ok: true; value: MemoryConfig } | 
   if (typeof m.reflect !== "boolean") return { ok: false, error: "reflect must be true or false." };
   if (!Array.isArray(m.kinds)) return { ok: false, error: "Memory kinds must be a list." };
   const allowed = new Set<string>(MEMORY_KINDS);
-  const kinds: MemoryKind[] = [];
+  const seen = new Set<MemoryKind>();
   for (const k of m.kinds) {
     if (typeof k !== "string" || !allowed.has(k)) return { ok: false, error: `Unknown memory kind "${String(k)}".` };
-    if (!kinds.includes(k as MemoryKind)) kinds.push(k as MemoryKind); // de-dupe
+    seen.add(k as MemoryKind);
   }
+  // Store in canonical MEMORY_KINDS order (kinds is a SET) — de-dupes AND keeps the stored order stable
+  // so the editor's dirty check doesn't flag a re-ordered-but-equal set as an unsaved change (52f1c84).
+  const kinds: MemoryKind[] = MEMORY_KINDS.filter((k) => seen.has(k));
   return { ok: true, value: { mode: m.mode as MemoryConfig["mode"], recall: m.recall, reflect: m.reflect, kinds } };
 }
 

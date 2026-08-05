@@ -599,4 +599,21 @@ describe("run orchestrator — recall (Story 8.3)", () => {
     // never for recall — recall runs before the mint. The embed was recorded; that's the only recall LLM touch.
     expect(gateway.embedded).toContain("the user loves cats");
   });
+
+  it("bounds an un-distilled memory summary so it can't blow the system-context budget (review P5)", async () => {
+    const runsRepo = memoryRunsRepo();
+    const memoryRepo = memoryMemoryRepo();
+    await memoryRepo.setGlobalConfig({ defaultEnabled: true });
+    await memoryRepo.setAgentMemoryConfig("a1", { mode: "on", recall: true, reflect: true, kinds: ["episodic", "semantic", "procedure"] });
+    const longContent = "x".repeat(5000); // empty summary → falls back to (long) content
+    await memoryRepo.createMemory(embeddedMemory({ id: "big", content: longContent, summary: "" }));
+    const runtime = fakeSandboxRuntime({ lines: [nd({ type: "done", v: CONTRACT_VERSION, status: "succeeded" })] });
+    const o = runOrchestrator({ runsRepo, agentsRepo: agentsRepo(agent()), runtime, guard: fakeRunGuard(), hub: createRunHub(), memoryRepo, modelGateway: fakeModelGateway(), image: "img", sandboxVolume: "vol" });
+
+    const r = await o.launch("a1", longContent);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const spec = JSON.parse(runtime.established[0].jobSpecJson) as { memories: { summary: string }[] };
+    expect(spec.memories[0].summary.length).toBe(500); // capped, not 5000
+  });
 });

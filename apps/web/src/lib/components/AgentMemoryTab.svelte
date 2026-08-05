@@ -38,9 +38,12 @@
     onchange({ ...value, [key]: on });
   }
   function toggleKind(kind: MemoryKind, on: boolean) {
-    const has = value.kinds.includes(kind);
-    if (on && !has) onchange({ ...value, kinds: [...value.kinds, kind] });
-    else if (!on && has) onchange({ ...value, kinds: value.kinds.filter((k) => k !== kind) });
+    const set = new Set(value.kinds);
+    if (on) set.add(kind);
+    else set.delete(kind);
+    // Rebuild in canonical MEMORY_KINDS order — kinds is a SET, so ordering must not matter. Keeping a
+    // stable order means toggling a kind off then on isn't read as an "unsaved change" (52f1c84 class).
+    onchange({ ...value, kinds: MEMORY_KINDS.filter((k) => set.has(k)) });
   }
 
   const inheritWord = $derived(global.killSwitch ? "off (kill switch)" : global.defaultEnabled ? "on" : "off");

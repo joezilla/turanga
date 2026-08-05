@@ -673,9 +673,10 @@ describe("PATCH /agents/:id memoryConfig (Story 8.2)", () => {
     // de-dupe within kinds
     const dup = await app.request(`/agents/${agent.id}`, {
       ...jsonPatch({ memoryConfig: { mode: "on", recall: true, reflect: true, kinds: ["semantic", "semantic", "episodic"] } }),
+      // (below) de-duped AND canonicalized to MEMORY_KINDS order (episodic before semantic).
       headers: { "content-type": "application/json", cookie },
     });
-    expect(((await dup.json()) as { agent: any }).agent.memoryConfig.kinds).toEqual(["semantic", "episodic"]);
+    expect(((await dup.json()) as { agent: any }).agent.memoryConfig.kinds).toEqual(["episodic", "semantic"]);
 
     for (const bad of [
       { mode: "sometimes", recall: true, reflect: true, kinds: [] },

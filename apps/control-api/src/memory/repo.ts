@@ -1,4 +1,4 @@
-import { and, cosineDistance, eq, gt, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { and, asc, cosineDistance, desc, eq, gt, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import {
   DEFAULT_MEMORY_CONFIG,
   DEFAULT_MEMORY_GLOBAL_CONFIG,
@@ -117,17 +117,22 @@ export function drizzleMemoryRepo(db: Db): MemoryRepo {
       await db.delete(agentMemories).where(and(eq(agentMemories.id, id), eq(agentMemories.agentId, agentId)));
     },
     async recall(agentId, queryEmbedding, k, opts) {
+      // Distinguish "no kinds filter" (undefined) from "an explicit empty set" — the latter means the
+      // agent enabled zero kinds, so recall NOTHING (an empty array must not be read as "no filter").
+      if (opts?.kinds && opts.kinds.length === 0) return [];
       const filters = [
         eq(agentMemories.agentId, agentId), // FR-7 — never crosses the agent boundary
         isNotNull(agentMemories.embedding), // un-embedded rows can't be compared
         or(isNull(agentMemories.validUntil), gt(agentMemories.validUntil, new Date())), // temporal validity
       ];
-      if (opts?.kinds && opts.kinds.length > 0) filters.push(inArray(agentMemories.kind, opts.kinds));
+      if (opts?.kinds) filters.push(inArray(agentMemories.kind, opts.kinds));
       const rows = await db
         .select()
         .from(agentMemories)
         .where(and(...filters))
-        .orderBy(cosineDistance(agentMemories.embedding, queryEmbedding)) // nearest-first (matches the HNSW cosine index)
+        // nearest-first (matches the HNSW cosine index); salience desc then id break distance ties so
+        // which top-k survive is DETERMINISTIC + matches the in-memory fake.
+        .orderBy(cosineDistance(agentMemories.embedding, queryEmbedding), desc(agentMemories.salience), asc(agentMemories.id))
         .limit(k);
       return rows.map(toRow);
     },
@@ -214,16 +219,23 @@ export function memoryMemoryRepo(): MemoryRepo {
       if (r && r.agentId === agentId) rows.delete(id);
     },
     async recall(agentId, queryEmbedding, k, opts) {
-      const now = Date.now();
       const kinds = opts?.kinds;
+      if (kinds && kinds.length === 0) return []; // explicit empty set → recall nothing (see drizzle impl)
+      const now = Date.now();
       const candidates = [...rows.values()].filter(
         (r) =>
           r.agentId === agentId &&
           r.embedding != null &&
           (r.validUntil == null || Date.parse(r.validUntil) > now) &&
-          (!kinds || kinds.length === 0 || kinds.includes(r.kind)),
+          (!kinds || kinds.includes(r.kind)),
       );
-      candidates.sort((a, b) => cosineDist(queryEmbedding, a.embedding!) - cosineDist(queryEmbedding, b.embedding!));
+      // distance asc, then salience desc, then id asc — deterministic, matching the drizzle order.
+      candidates.sort(
+        (a, b) =>
+          cosineDist(queryEmbedding, a.embedding!) - cosineDist(queryEmbedding, b.embedding!) ||
+          b.salience - a.salience ||
+          (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+      );
       return candidates.slice(0, k).map((r) => ({ ...r }));
     },
     async markRecalled(agentId, ids) {

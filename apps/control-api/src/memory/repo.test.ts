@@ -169,6 +169,26 @@ describe("memory repo — recall (Story 8.3)", () => {
     expect(only.map((h) => h.id)).toEqual(["sem"]);
   });
 
+  it("an EXPLICIT empty kinds set recalls NOTHING (not everything) — review P1", async () => {
+    const repo = memoryMemoryRepo();
+    await repo.createMemory(embedded({ id: "sem", agentId: "A", kind: "semantic", content: "x" }));
+    await repo.createMemory(embedded({ id: "proc", agentId: "A", kind: "procedure", content: "y" }));
+    // An agent enabled with zero kinds → recall must return [], not fall through to "all kinds".
+    expect(await repo.recall("A", fakeEmbed("z"), 10, { kinds: [] })).toEqual([]);
+    // Omitting kinds entirely (undefined) is "no filter" → all kinds.
+    expect((await repo.recall("A", fakeEmbed("z"), 10)).length).toBe(2);
+  });
+
+  it("breaks distance ties deterministically by salience desc then id (review P3)", async () => {
+    const repo = memoryMemoryRepo();
+    // Same content → identical embeddings → a distance tie; salience then id decide the order.
+    await repo.createMemory(embedded({ id: "zzz", agentId: "A", content: "same", salience: 5 }));
+    await repo.createMemory(embedded({ id: "aaa", agentId: "A", content: "same", salience: 5 }));
+    await repo.createMemory(embedded({ id: "mid", agentId: "A", content: "same", salience: 9 }));
+    const hits = await repo.recall("A", fakeEmbed("same"), 3);
+    expect(hits.map((h) => h.id)).toEqual(["mid", "aaa", "zzz"]); // salience 9 first, then id asc among the ties
+  });
+
   it("markRecalled bumps useCount/lastUsedAt only for the given agent's given ids", async () => {
     const repo = memoryMemoryRepo();
     await repo.createMemory(embedded({ id: "m1", agentId: "A", content: "a" }));

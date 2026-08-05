@@ -94,6 +94,7 @@ export function runOrchestrator(deps: OrchestratorDeps) {
   const { runsRepo, agentsRepo, runtime, guard, hub, image, sandboxVolume, dataConnectionsRepo, toolsRepo, memoryRepo, googleOAuth, modelGateway } = deps;
   const maxConcurrent = deps.maxConcurrent ?? 5;
   const RECALL_TOP_K = 5; // Story 8.3 — how many memories recall injects at most
+  const MAX_RECALL_SUMMARY_CHARS = 500; // bound each injected memory so an un-distilled row can't blow the token budget
   const runTimeoutMs = deps.runTimeoutMs ?? 120_000;
   let active = 0;
   const controllers = new Map<string, RunController>(); // live runs, for Guard→orchestrator callbacks (E4-AD-10)
@@ -181,12 +182,15 @@ export function runOrchestrator(deps: OrchestratorDeps) {
     const empty = { memories: [], recalledIds: [] };
     if (!memoryRepo || !modelGateway) return empty;
     try {
-      const eff = effectiveMemoryConfig(await memoryRepo.getGlobalConfig(), await memoryRepo.getAgentMemoryConfig(agent.id));
+      const global = await memoryRepo.getGlobalConfig();
+      const eff = effectiveMemoryConfig(global, await memoryRepo.getAgentMemoryConfig(agent.id));
       if (!eff.recall) return empty; // the gate: off / inherit-off / killSwitch all resolve here
-      const embedding = await modelGateway.embed(taskInput);
+      // Embed the query with the SAME model memories are written with (8.4), so the vector spaces match.
+      const embedding = await modelGateway.embed(taskInput, global.embeddingModel);
       const rows = await memoryRepo.recall(agent.id, embedding, RECALL_TOP_K, { kinds: eff.kinds });
-      // Secret-free projection (AD-10): id/kind + distilled text only. Prefer summary, fall back to content.
-      const memories: JobMemory[] = rows.map((r) => ({ id: r.id, kind: r.kind, summary: r.summary || r.content }));
+      // Secret-free projection (AD-10): id/kind + distilled text only. Prefer summary, fall back to
+      // content, and BOUND the length so an un-distilled row can't blow up the system-context token budget.
+      const memories: JobMemory[] = rows.map((r) => ({ id: r.id, kind: r.kind, summary: (r.summary || r.content).slice(0, MAX_RECALL_SUMMARY_CHARS) }));
       return { memories, recalledIds: rows.map((r) => r.id) };
     } catch {
       return empty; // fail-open — recall is additive, never a guardrail

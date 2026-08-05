@@ -169,3 +169,24 @@ claude-opus-4-8[1m] (Claude Code)
 | Date | Version | Description |
 |------|---------|-------------|
 | 2026-08-05 | 0.1 | Story 8.3 implemented — recall injects agent memories into the immutable JobSpec (CONTRACT_VERSION 6→7); embedding-only, gated, fail-open, auditable. Status → review. |
+
+## Review Findings (Epic 8.1–8.3 combined review, 2026-08-05)
+
+Adversarial review (Blind Hunter + Edge Case Hunter + Acceptance Auditor). Security invariants verified holding: AD-7 (sole writer), AD-9 (immutable spec), AD-10 (secret-free memories), FR-7 (agent-scoped, no cross-agent recall), off-by-default, the effectiveMemoryConfig gate, recall embedding-only/fail-open/off-the-cost-cap, and the memoryConfig operational-not-published split. No High-severity architecture violations.
+
+### Patch (fix now)
+- [x] [Review][Patch] Empty enabled-kinds recalls ALL kinds (Med) — `effectiveMemoryConfig` returns `kinds:[]` when an agent is recall-on with zero kinds checked; `recall`'s guard `if (opts?.kinds && opts.kinds.length>0)` skips the filter on `[]` → recalls every kind (the inverse of intent). [apps/control-api/src/memory/repo.ts recall (drizzle + fake)]
+- [x] [Review][Patch] Phantom-dirty when a kind is unchecked/re-checked or checked out of canonical order (Med, 52f1c84 class) — `toggleKind` appends, `parseMemoryConfig` de-dupes but preserves client order, `stable()` preserves array order → a set in a new order reads as an unsaved change. Canonicalize kinds to MEMORY_KINDS order in `toggleKind` + `parseMemoryConfig`. [apps/web/src/lib/components/AgentMemoryTab.svelte:40, apps/control-api/src/agents/routes.ts parseMemoryConfig]
+- [x] [Review][Patch] Recall ordering has no stable tiebreak (Low) — `.orderBy(cosineDistance(...))` only; equidistant memories are dropped nondeterministically by LIMIT k, and real vs fake can diverge. Add a secondary sort (salience desc, then id). [apps/control-api/src/memory/repo.ts recall (drizzle + fake)]
+- [x] [Review][Patch] Recall hardcodes the embedding model (Low) — `resolveRecall` calls `embed(taskInput)` (→ DEFAULT_EMBEDDING_MODEL), ignoring `global.embeddingModel` it already reads; risks a query/write model divergence once 8.4 embeds on write. Pass `global.embeddingModel` through. [apps/control-api/src/runs/orchestrator.ts resolveRecall]
+- [x] [Review][Patch] No length bound on the injected memory summary (Low-Med) — `summary: r.summary || r.content` can fold full verbatim `content` (empty-summary fallback) into the system context, unbounded, ×RECALL_TOP_K → token blowup. Cap the projected summary length. [apps/control-api/src/runs/orchestrator.ts resolveRecall]
+
+### Deferred (real, not actionable in 8.3)
+- [x] [Review][Defer] Recalled memory folded raw as a `role:"system"` block = cross-run prompt-injection / memory-poisoning surface (Med) — memory content originates from prior-run output; distilled safe-framing/delimiting belongs in 8.4 (reflect), and quarantine/oversight in 8.6 + Epic 10 (evals). Not fully mitigable in 8.3 (no writer yet). [apps/agent-harness/src/main.ts fold]
+- [x] [Review][Defer] HNSW is a table-global index; the per-agent `WHERE` post-filters pgvector's ef_search window → a sparse agent can under-return (< k) (Low-Med). Scale concern; recall is additive/graceful. Revisit with partial indexes / iterative scan as data grows. [apps/control-api/drizzle/0016 + repo.ts recall]
+- [x] [Review][Defer] Retention configured but not enforced; Settings copy "Forget memories older than N days" over-promises (Low) — enforcement is a later story (documented in 8.2). Consider a copy caveat. [settings/memory/+page.svelte]
+- [x] [Review][Defer] Embedding dimension mismatch → silent no-recall (real, fail-open swallows) / NaN sort (fake) (Low) — requires a misconfigured embed model. Add a length guard + operator log later. [apps/control-api/src/memory/repo.ts]
+- [x] [Review][Defer] Low-impact robustness cluster (Low, single-operator/sole-writer/no-data-yet): `setGlobalConfig` non-atomic read-modify-write (lost update on concurrent PATCH); purge is a non-atomic N+1 that mis-reports `purged` on mid-loop failure + the purge UI discards the Result (a failed purge shows no error); `getAgentMemoryConfig` blind-casts raw jsonb. [memory/repo.ts, memory/routes.ts, AgentMemoryTab.svelte]
+
+### Dismissed (4)
+CONTRACT_VERSION rejecting historical v6 transcripts (no stored-transcript re-parse path — the only live safeParse is on fresh harness stdout); `validUntil == now` exclusive boundary (both impls agree, negligible); fake `markRecalled` double-counting duplicate ids (recalledIds are distinct — not reachable); harness `spec.memories.length` assuming the schema default (guarded by `readJobSpec` parse).
