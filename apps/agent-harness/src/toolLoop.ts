@@ -5,7 +5,7 @@
 // AD-10) and each tool call via `guardToolCall` (the Guard enforces the per-op grant + injects the
 // credential — AD-10). No credential and no network ever enter the sandbox: the SDK's ONLY egress is
 // the socket, and `--network=none` (AD-1) fails closed anything that tries otherwise.
-import { generateText, stepCountIs, tool, jsonSchema, type ModelMessage, type ToolSet } from "ai";
+import { generateText, generateObject, stepCountIs, tool, jsonSchema, NoSuchToolError, type ModelMessage, type ToolSet } from "ai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { CONTRACT_VERSION, type JobSpec, type GuardModelRequest, type GuardModelToolCall, type ControlChannelMessage } from "@turanga/contracts";
 import { guardModelCall, guardToolCall, toolRecord } from "./main.js";
@@ -108,8 +108,13 @@ function sanitize(s: string): string {
 // and the model's call is silently brokered against the WRONG tool's id/credential/endpoint. We build a
 // unique exposed name per (tool, op) and the executor closes over the ORIGINAL toolId + op name, so a
 // collision can never cross tools.
-function buildTools(spec: JobSpec, socketPath: string, emit: (m: ControlChannelMessage) => void): ToolSet {
+// Maps an EXPOSED tool name (as the model sees it) back to the real (toolId, toolName, operation) so
+// the repair path (Story 12.5) can label a repair `tool` event for a malformed call before it executes.
+type ToolMeta = Map<string, { toolId: string; toolName: string; operation: string }>;
+
+function buildTools(spec: JobSpec, socketPath: string, emit: (m: ControlChannelMessage) => void): { tools: ToolSet; meta: ToolMeta } {
   const tools: ToolSet = {};
+  const meta: ToolMeta = new Map();
   const used = new Set<string>();
   for (const t of spec.tools) {
     for (const op of t.operations) {
@@ -121,6 +126,7 @@ function buildTools(spec: JobSpec, socketPath: string, emit: (m: ControlChannelM
       if (used.has(exposed)) exposed = sanitize(`${toolName}_${operation}`);
       if (used.has(exposed)) exposed = sanitize(`${operation}_${toolId.slice(-6)}`);
       used.add(exposed);
+      meta.set(exposed, { toolId, toolName, operation });
       tools[exposed] = tool({
         description: op.description || `Operation "${operation}" of the "${toolName}" tool.`,
         inputSchema: jsonSchema<Record<string, unknown>>(objectSchema(op.inputSchema)),
@@ -138,7 +144,7 @@ function buildTools(spec: JobSpec, socketPath: string, emit: (m: ControlChannelM
       });
     }
   }
-  return tools;
+  return { tools, meta };
 }
 
 // Run the model-driven tool loop for one run. ALWAYS resolves (never rejects): a mid-loop model/gateway
@@ -153,6 +159,7 @@ export async function runToolLoop(spec: JobSpec, socketPath: string, emit: (m: C
   });
 
   const { system, messages } = toPrompt(spec);
+  const { tools, meta } = buildTools(spec, socketPath, emit);
   // Accumulate the last assistant text + a step count as the loop runs, so a thrown mid-loop failure can
   // still surface the best-effort text + a real step count instead of a bare rejection.
   let lastText = "";
@@ -162,11 +169,47 @@ export async function runToolLoop(spec: JobSpec, socketPath: string, emit: (m: C
       model: provider(spec.model),
       system,
       messages,
-      tools: buildTools(spec, socketPath, emit),
+      tools,
       stopWhen: stepCountIs(MAX_STEPS),
       onStepFinish: (step) => {
         stepsSeen++;
         if (step.text) lastText = step.text;
+      },
+      // Story 12.5: repair a MALFORMED tool call (bad JSON args → InvalidToolInputError, or an unknown
+      // tool → NoSuchToolError) so a weak model self-corrects instead of the run dying on one flubbed
+      // call. Structured repair — regenerate valid arguments with `generateObject` against the tool's
+      // own schema (NO execution; re-asking with generateText + the live tools would double-execute).
+      // The re-ask routes through the Guard (metered). A NoSuchTool or a failed repair returns null →
+      // the SDK throws → the try/catch above ends the run gracefully (Story 12.4). Every attempt is
+      // recorded on the existing Story 6.5 `tool` event (no contract change).
+      repairToolCall: async ({ toolCall, error, inputSchema }) => {
+        const info = meta.get(toolCall.toolName);
+        const noSuchTool = NoSuchToolError.isInstance(error);
+        emit({
+          type: "tool",
+          v: CONTRACT_VERSION,
+          toolId: info?.toolId ?? "",
+          toolName: info?.toolName ?? toolCall.toolName,
+          operation: info?.operation ?? toolCall.toolName,
+          outcome: "error",
+          latencyMs: 0,
+          detail: noSuchTool ? "no such tool — cannot repair" : "malformed arguments — repairing",
+        });
+        if (noSuchTool) return null; // the model named a tool that doesn't exist — give up gracefully
+        try {
+          const rawSchema = (await inputSchema({ toolName: toolCall.toolName })) as Record<string, unknown>;
+          const schema = jsonSchema<Record<string, unknown>>(rawSchema);
+          const { object } = await generateObject({
+            model: provider(spec.model),
+            schema,
+            // Include the schema in the prompt: without provider structured-output enforcement the weak
+            // model relies on the prompt to know the shape (Story 12.5).
+            prompt: `A tool call to "${toolCall.toolName}" had invalid arguments: ${toolCall.input}\nError: ${error.message}\nThe arguments must match this JSON schema:\n${JSON.stringify(rawSchema)}\nProduce corrected arguments that match the tool's schema.`,
+          });
+          return { ...toolCall, input: JSON.stringify(object) };
+        } catch {
+          return null; // the repair itself failed — give up; the loop ends gracefully
+        }
       },
     });
     const steps = result.steps.length;

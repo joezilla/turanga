@@ -178,6 +178,46 @@ describe("tool loop (Story 12.4) — model-driven reason→act→observe over th
     expect(sawToolChoice).toBe(false); // empty tools ⇒ no tool_choice forwarded
   });
 
+  // Story 12.5: a MALFORMED tool call (args miss a required field → InvalidToolInputError) is REPAIRED
+  // (structured regenerate via generateObject) and then runs — the run finishes instead of dying.
+  it("repairs a malformed tool call (invalid args) then completes (Story 12.5)", async () => {
+    guard = await fakeGuard({
+      onModel: (_call, body) => {
+        const msgs = JSON.stringify(body.messages ?? []);
+        if (msgs.includes("Produce corrected arguments")) return { v: CONTRACT_VERSION, ok: true, text: '{"path":"/"}', finishReason: "stop", tokens: 2, latencyMs: 1 }; // the generateObject repair re-ask → valid args
+        if (msgs.includes("OK-DRIVES")) return { v: CONTRACT_VERSION, ok: true, text: "You have 2 drives.", finishReason: "stop", tokens: 3, latencyMs: 1 }; // after the repaired call ran
+        return { v: CONTRACT_VERSION, ok: true, text: "", toolCalls: [{ id: "c1", type: "function", function: { name: "list_drives", arguments: "{not valid json" } }], finishReason: "tool_calls", tokens: 5, latencyMs: 1 }; // UNPARSEABLE args → InvalidToolInputError
+      },
+      onTool: () => ({ v: CONTRACT_VERSION, ok: true, content: [{ type: "text", text: "OK-DRIVES" }], latencyMs: 1 }),
+    });
+
+    const emitted: ControlChannelMessage[] = [];
+    const s = spec({ tools: [{ id: "tool-bits", name: "BitsBy8", operations: [{ name: "list_drives", inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } }] }] });
+    const result = await runToolLoop(s, guard.socketPath, (m) => emitted.push(m));
+
+    const toolEvents = emitted.filter((m) => m.type === "tool");
+    // the repair attempt is recorded (outcome error + repair detail), and the retried call then succeeds
+    expect(toolEvents.some((e) => e.type === "tool" && e.outcome === "error" && /repair/i.test(e.detail ?? ""))).toBe(true);
+    expect(toolEvents.some((e) => e.type === "tool" && e.outcome === "ok")).toBe(true);
+    expect(result.stopReason).toBe("final");
+  });
+
+  // Story 12.5: a call to a tool that doesn't exist (NoSuchToolError) is recorded + gives up gracefully.
+  it("records a no-such-tool repair attempt then ends gracefully (Story 12.5)", async () => {
+    guard = await fakeGuard({
+      onModel: () => ({ v: CONTRACT_VERSION, ok: true, text: "", toolCalls: [{ id: "c1", type: "function", function: { name: "does_not_exist", arguments: "{}" } }], finishReason: "tool_calls", tokens: 5, latencyMs: 1 }),
+      onTool: () => ({ v: CONTRACT_VERSION, ok: true, content: [], latencyMs: 1 }),
+    });
+
+    const emitted: ControlChannelMessage[] = [];
+    const result = await runToolLoop(spec(), guard.socketPath, (m) => emitted.push(m));
+
+    expect(emitted.some((m) => m.type === "tool" && m.outcome === "error" && /no such tool/i.test(m.detail ?? ""))).toBe(true);
+    // gave up (null); the model keeps re-emitting the bad call → the loop ends cleanly at the ceiling
+    // (either a step-limit or an error stop — both graceful, never a crash).
+    expect(["step-limit", "error"]).toContain(result.stopReason);
+  });
+
   // review LOW: a non-object-typed inputSchema (a valid object, but not type:"object") must not crash
   // the loop — it falls back to a permissive object schema.
   it("falls back to a permissive schema for a non-object-typed inputSchema (review LOW)", async () => {
