@@ -23,6 +23,7 @@ import {
   type SkillScope,
   type GuardModelRequest,
   type GuardModelResponse,
+  type GuardModelToolCall,
   type GuardConnectionRequest,
   type GuardConnectionResponse,
   type ToolCallRequest,
@@ -233,19 +234,24 @@ export function createGuard(cfg: GuardConfig) {
       const r = await doFetch(`${cfg.litellmBaseUrl}/v1/chat/completions`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${costKey}` },
-        body: JSON.stringify({ model: req.model, messages: req.messages }),
+        // Story 12.3: forward `tools`/`tool_choice` when present so LiteLLM offers function-calling to
+        // the model (LiteLLM normalizes it across providers). Omitted entirely for a plain (draft/skill)
+        // call — the body is byte-identical to before, so the non-tool path is unchanged. Every call
+        // stays on the per-run cost key (metered), so N loop round-trips are N metered calls under one cap.
+        body: JSON.stringify({ model: req.model, messages: req.messages, ...(req.tools?.length ? { tools: req.tools, tool_choice: req.toolChoice ?? "auto" } : {}) }),
         signal: AbortSignal.timeout(modelTimeoutMs), // never let a stalled gateway hang the run
       });
       const latencyMs = Date.now() - started;
       const costMicros = Math.round((Number(r.headers.get("x-litellm-response-cost")) || 0) * MICROS_PER_USD);
       const body = (await r.json().catch(() => ({}))) as {
-        choices?: { message?: { content?: string } }[];
+        choices?: { message?: { content?: string; tool_calls?: GuardModelToolCall[] }; finish_reason?: string }[];
         usage?: { total_tokens?: number };
         error?: { message?: string };
       };
       const tokens = body?.usage?.total_tokens ?? 0;
       // Report cost/tokens for this call to the orchestrator (E4-AD-10) — this is the cost truth now,
-      // replacing the harness's metrics emit.
+      // replacing the harness's metrics emit. In a tool loop this fires once PER model round-trip, so a
+      // multi-step turn is simply N metered calls under the same per-run cap (kill-on-breach unchanged).
       void emitRunEvent(runId, { type: "metrics", v: CONTRACT_VERSION, latencyMs, tokens, costMicros });
       if (!r.ok) {
         const message = body?.error?.message ?? `The model gateway rejected the call (HTTP ${r.status}).`;
@@ -253,7 +259,12 @@ export function createGuard(cfg: GuardConfig) {
         if (breach) void emitRunEvent(runId, { type: "kill", v: CONTRACT_VERSION, scope: breach.scope }); // → orchestrator reaps
         return { v: CONTRACT_VERSION, ok: false, error: message, latencyMs };
       }
-      return { v: CONTRACT_VERSION, ok: true, text: body?.choices?.[0]?.message?.content ?? "", tokens, latencyMs };
+      // Story 12.3: pass the chosen tool calls + finish reason back to the harness (which runs the loop
+      // in Story 12.4). A plain text answer carries neither — the response shape is unchanged for the
+      // non-tool path (toolCalls/finishReason are only spread in when the model actually called a tool).
+      const choice = body?.choices?.[0];
+      const toolCalls = choice?.message?.tool_calls;
+      return { v: CONTRACT_VERSION, ok: true, text: choice?.message?.content ?? "", tokens, latencyMs, ...(toolCalls?.length ? { toolCalls, finishReason: choice?.finish_reason ?? "tool_calls" } : {}) };
     } catch (e) {
       const timedOut = e instanceof Error && e.name === "TimeoutError";
       void emitRunEvent(runId, { type: "metrics", v: CONTRACT_VERSION, latencyMs: Date.now() - started, tokens: 0, costMicros: 0 });

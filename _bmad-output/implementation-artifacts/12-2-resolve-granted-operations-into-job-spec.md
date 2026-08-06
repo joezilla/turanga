@@ -50,6 +50,12 @@ so that the model calls tools correctly — with the right arguments — instead
   - [ ] **e2e — DEFERRED (same rationale as 12.1):** control-plane spec-assembly only, no runtime path (the harness stub ignores the schema; the loop that consumes it is 12.4). Fold into 12.4's e2e where the loop actually reads the schema. Never `down -v` the dev stack. See [[turanga-e2e-clean-run]].
   - [x] Bookkeeping: boxes checked, Dev Agent Record / File List / Change Log filled, Status → review.
 
+## Review Findings (code review 2026-08-06)
+
+- [x] [Review][Patch] Guard `description` on bare truthiness while `inputSchema` is guarded — copy it only when `typeof === "string"` (defense-in-depth consistency with the inputSchema fail-safe, on the same untrusted stored source) [apps/control-api/src/runs/orchestrator.ts:188] — APPLIED
+- [x] [Review][Patch] The new 12.2 test omits the AD-10 negative assertion — add `expect(jobSpecJson).not.toContain("mcp.example")` so the description/inputSchema-copy path is guarded against endpoint leakage across the whole serialized spec [apps/control-api/src/runs/runs.test.ts] — APPLIED
+- [x] [Review][Defer] inputSchema fail-safe checks object-ness not JSON-Schema validity (non-object-typed schema → LiteLLM 400) [orchestrator.ts:185] — deferred to Story 12.4 (only bites when the loop drives it; mitigated by MCP-SDK validation at registration)
+
 ## Dev Notes
 
 **The data already exists — 12.2 just stops discarding it.** The Story 6.2 list-tools handshake populated each registered tool's `operations` as `ToolOperation` (`{ name, title?, description?, inputSchema? }`, `tools/repo.ts:16`, domain `:113-118`). `resolveRunTools` already fetches the full `ToolRow` via `toolsRepo.getTool` — but the orchestrator's local `ToolLike.operations` type narrows it to `{ name }[]` (`orchestrator.ts:45`), and 12.1 emitted name-only. 12.2 widens that one type and copies `description` + `inputSchema` onto the granted ops. There is **no new source, no new query, no contract change** — the contract shape (`JobToolOperationSchema` with optional `description`/`inputSchema`) already exists from 12.1.

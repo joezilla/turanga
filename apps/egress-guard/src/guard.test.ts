@@ -256,12 +256,15 @@ describe("guard filter hook seam (4.6)", () => {
 describe("guard cost metering + kill-on-breach (4.5)", () => {
   const modelReq = { v: CONTRACT_VERSION, runId: RUN, model: "openai/gpt-4o", messages: [{ role: "user" as const, content: "hi" }] };
 
-  function costFetch(status: number, message?: string, cost = "0.0041") {
-    const calls: { auth: string | undefined }[] = [];
+  // `modelOut` (Story 12.3) lets a 200 response carry the model's tool_calls + finish_reason so the
+  // forwarding/passthrough tests can exercise the tool path. Each call's request body is captured too.
+  function costFetch(status: number, message?: string, cost = "0.0041", modelOut?: { toolCalls?: unknown[]; finishReason?: string }) {
+    const calls: { auth: string | undefined; body: Record<string, unknown> }[] = [];
     const impl = (async (_url: string | URL | Request, init?: RequestInit) => {
       const headers = (init?.headers ?? {}) as Record<string, string>;
-      calls.push({ auth: headers.authorization });
-      const body = status === 200 ? { choices: [{ message: { content: "hi" } }], usage: { total_tokens: 10 } } : { error: { message } };
+      calls.push({ auth: headers.authorization, body: (init?.body ? JSON.parse(String(init.body)) : {}) as Record<string, unknown> });
+      const message2 = { content: "hi", ...(modelOut?.toolCalls ? { tool_calls: modelOut.toolCalls } : {}) };
+      const body = status === 200 ? { choices: [{ message: message2, finish_reason: modelOut?.finishReason ?? "stop" }], usage: { total_tokens: 10 } } : { error: { message } };
       return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", "x-litellm-response-cost": cost } });
     }) as unknown as typeof fetch;
     return { impl, calls };
@@ -326,6 +329,65 @@ describe("guard cost metering + kill-on-breach (4.5)", () => {
     expect(calls).toHaveLength(0); // never called LiteLLM (no unmetered master-key run)
     await guard.teardown(RUN);
     fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  // ── Story 12.3 — the Guard half of the tool loop ────────────────────────────────────────────────
+  const toolDef = { type: "function" as const, function: { name: "list_drives", description: "list drives", parameters: { type: "object", properties: {} } } };
+  const toolCall = { id: "c1", type: "function", function: { name: "list_drives", arguments: "{}" } };
+
+  it("forwards tools + tool_choice to LiteLLM and returns the model's tool_calls + finishReason (Story 12.3)", async () => {
+    const { impl, calls } = costFetch(200, undefined, "0.0041", { toolCalls: [toolCall], finishReason: "tool_calls" });
+    const { guard, cleanup } = await withCostKey(impl);
+    const res = await guard.proxyModel(RUN, { ...modelReq, tools: [toolDef], toolChoice: "auto" });
+    // the tools + tool_choice reached LiteLLM in the request body
+    expect(calls[0].body.tools).toEqual([toolDef]);
+    expect(calls[0].body.tool_choice).toBe("auto");
+    // the model's chosen calls + finish reason came back to the harness (which runs the loop in 12.4)
+    expect(res.ok).toBe(true);
+    expect(res.toolCalls).toEqual([toolCall]);
+    expect(res.finishReason).toBe("tool_calls");
+    await cleanup();
+  });
+
+  it("defaults tool_choice to \"auto\" when tools are present but toolChoice is omitted (Story 12.3)", async () => {
+    const { impl, calls } = costFetch(200);
+    const { guard, cleanup } = await withCostKey(impl);
+    await guard.proxyModel(RUN, { ...modelReq, tools: [toolDef] }); // tools present, NO toolChoice
+    expect(calls[0].body.tools).toEqual([toolDef]);
+    expect(calls[0].body.tool_choice).toBe("auto"); // the ?? "auto" default branch
+    await cleanup();
+  });
+
+  it("a call WITHOUT tools sends no tools/tool_choice and returns no toolCalls/finishReason — non-tool path byte-identical (Story 12.3)", async () => {
+    const { impl, calls } = costFetch(200);
+    const { guard, cleanup } = await withCostKey(impl);
+    const res = await guard.proxyModel(RUN, modelReq); // a plain (draft/skill) call
+    // assert by KEY ABSENCE — a refactor must never start sending tool_choice: undefined on plain calls
+    expect("tools" in calls[0].body).toBe(false);
+    expect("tool_choice" in calls[0].body).toBe(false);
+    expect(res.toolCalls).toBeUndefined();
+    expect(res.finishReason).toBeUndefined();
+    await cleanup();
+  });
+
+  it("meters EVERY round-trip on the per-run cost key — N loop calls are N metered calls (Story 12.3)", async () => {
+    const { impl, calls } = costFetch(200, undefined, "0.0041", { toolCalls: [toolCall], finishReason: "tool_calls" });
+    const { guard, events, cleanup } = await withCostKey(impl);
+    // two loop steps against the SAME registered run — the Guard holds no loop state between them
+    await guard.proxyModel(RUN, { ...modelReq, tools: [toolDef] });
+    await guard.proxyModel(RUN, { ...modelReq, tools: [toolDef] });
+    expect(events.filter((e) => e.event.type === "metrics")).toHaveLength(2); // two round-trips → two metered calls
+    expect(calls.every((c) => c.auth === "Bearer sk-run-costkey")).toBe(true); // never the master key
+    await cleanup();
+  });
+
+  it("a tool-carrying call that 400s on budget still emits a kill — the breach path is tools-agnostic (Story 12.3)", async () => {
+    const { impl } = costFetch(400, "Budget has been exceeded! Current cost: 0.6, Max budget: 0.5");
+    const { guard, events, cleanup } = await withCostKey(impl);
+    const res = await guard.proxyModel(RUN, { ...modelReq, tools: [toolDef] });
+    expect(res.ok).toBe(false);
+    expect(events.find((e) => e.event.type === "kill")?.event.scope).toBe("run"); // same kill path as a plain call
+    await cleanup();
   });
 });
 

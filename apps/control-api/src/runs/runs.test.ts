@@ -323,6 +323,8 @@ describe("run orchestrator — connections + credentialed provisioning (4.3)", (
     ]);
     // the ungranted op is never described to the model (least-privilege / bounded footprint)
     expect(runtime.established[0].jobSpecJson).not.toContain("ungranted_op");
+    // AD-10: the endpoint URL never rides the sandbox wire — even on the schema-copy path
+    expect(runtime.established[0].jobSpecJson).not.toContain("mcp.example");
     // the Guard allow-list stays string[] granted names — the 12.1 split holds
     expect(guard.registered[0].provision.tools).toEqual([{ toolId: "t-weather", url: "https://mcp.example/mcp", credential: "", operations: ["get_weather", "list_zones", "bad_op"] }]);
   });

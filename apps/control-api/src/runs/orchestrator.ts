@@ -185,7 +185,10 @@ export function runOrchestrator(deps: OrchestratorDeps) {
         const isSchemaObject = typeof s === "object" && s !== null && !Array.isArray(s);
         return {
           name,
-          ...(o.description ? { description: o.description } : {}),
+          // Guard description the same way as inputSchema below: the registered value is untrusted
+          // stored data (a jsonb column), and JobSpec is not validated control-side — a non-string
+          // description would fail the harness-side JobSpecSchema.parse and poison the whole spec.
+          ...(typeof o.description === "string" && o.description ? { description: o.description } : {}),
           ...(isSchemaObject ? { inputSchema: s as Record<string, unknown> } : {}),
         };
       });
