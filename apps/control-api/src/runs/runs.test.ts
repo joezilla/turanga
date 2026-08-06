@@ -246,7 +246,7 @@ describe("run orchestrator — connections + credentialed provisioning (4.3)", (
   });
 
   // Story 6.3 — granted tools land on the sandbox-visible JobSpec.tools as logical handles.
-  type ToolRec = { id: string; name: string; url: string | null; encCredential: string | null; operations: { name: string }[] };
+  type ToolRec = { id: string; name: string; url: string | null; encCredential: string | null; operations: { name: string; description?: string; inputSchema?: unknown }[] };
   function toolOrch(opts: { attachedTools?: AttachedTool[]; tools?: ToolRec[] }) {
     const runsRepo = memoryRunsRepo();
     const guard = fakeRunGuard();
@@ -286,6 +286,45 @@ describe("run orchestrator — connections + credentialed provisioning (4.3)", (
     // AD-10: the endpoint URL + the encrypted credential are NEVER on the sandbox wire.
     expect(jobSpecJson).not.toContain("mcp.example");
     expect(jobSpecJson).not.toContain("enc-secret-blob");
+  });
+
+  it("resolves each granted op's real description + inputSchema onto the JobTool; omits a non-object schema (Story 12.2)", async () => {
+    const schema = { type: "object", properties: { city: { type: "string" } }, required: ["city"] };
+    const { o, guard, runtime } = toolOrch({
+      attachedTools: [{ toolId: "t-weather", operations: ["get_weather", "list_zones", "bad_op"] }],
+      tools: [
+        {
+          id: "t-weather",
+          name: "Weather",
+          url: "https://mcp.example/mcp",
+          encCredential: null,
+          operations: [
+            { name: "get_weather", description: "look up weather", inputSchema: schema }, // full registration → flows through
+            { name: "list_zones" }, // name-only registration → name-only op
+            { name: "bad_op", description: "odd", inputSchema: "not-an-object" }, // non-object schema → omitted (fail-safe)
+            { name: "ungranted_op", description: "should not appear", inputSchema: schema }, // not granted → never manifested
+          ],
+        },
+      ],
+    });
+    const r = await o.launch("a1", "weather?");
+    expect(r.ok).toBe(true);
+    const spec = JSON.parse(runtime.established[0].jobSpecJson) as { tools: { id: string; name: string; operations: { name: string; description?: string; inputSchema?: unknown }[] }[] };
+    expect(spec.tools).toEqual([
+      {
+        id: "t-weather",
+        name: "Weather",
+        operations: [
+          { name: "get_weather", description: "look up weather", inputSchema: schema }, // real description + schema
+          { name: "list_zones" }, // name-only (no description/schema on the registration)
+          { name: "bad_op", description: "odd" }, // description kept; the non-object inputSchema dropped
+        ],
+      },
+    ]);
+    // the ungranted op is never described to the model (least-privilege / bounded footprint)
+    expect(runtime.established[0].jobSpecJson).not.toContain("ungranted_op");
+    // the Guard allow-list stays string[] granted names — the 12.1 split holds
+    expect(guard.registered[0].provision.tools).toEqual([{ toolId: "t-weather", url: "https://mcp.example/mcp", credential: "", operations: ["get_weather", "list_zones", "bad_op"] }]);
   });
 
   it("skips a grant whose tool was deleted rather than failing the run", async () => {

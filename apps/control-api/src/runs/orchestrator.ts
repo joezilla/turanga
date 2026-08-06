@@ -42,7 +42,10 @@ interface ToolLike {
   name: string;
   url: string | null;
   encCredential: string | null;
-  operations: { name: string }[];
+  // Mirrors domain ToolOperation (name + optional description + opaque JSON-Schema). getTool already
+  // returns the full shape; Story 12.2 stops discarding description/inputSchema so the model gets each
+  // granted op's argument schema on the JobTool.
+  operations: { name: string; description?: string; inputSchema?: unknown }[];
 }
 interface ToolsReader {
   getTool(id: string): Promise<ToolLike | null>;
@@ -167,13 +170,26 @@ export function runOrchestrator(deps: OrchestratorDeps) {
       const tool = await toolsRepo.getTool(g.toolId);
       if (!tool) continue; // deleted tool — skip, don't fail the run
       // Grants were validated at save-time against the tool's operations; re-narrow to what it still offers.
-      const offered = new Set(tool.operations.map((o) => o.name));
-      const operations = g.operations.filter((op) => offered.has(op));
+      const byName = new Map(tool.operations.map((o) => [o.name, o]));
+      const operations = g.operations.filter((op) => byName.has(op));
       if (operations.length === 0) continue;
-      // Sandbox-visible JobTool — no secret. Story 12.1: operations carry per-op argument schemas so
-      // the model can call with structured args; emit NAME-ONLY here (Story 12.2 fills real
-      // description + inputSchema from the registered tool.operations, already {name,…,inputSchema?}[]).
-      jobTools.push({ id: tool.id, name: tool.name, operations: operations.map((name) => ({ name })) });
+      // Sandbox-visible JobTool — no secret (AD-10). Story 12.2: carry each granted op's REAL
+      // description + argument schema (resolved from the registered tool) so the model calls with
+      // correct structured args. `inputSchema` is copied ONLY when it is a plain JSON-Schema object —
+      // the spec is NOT validated control-side (it's JSON.stringify'd and parsed harness-side via
+      // JobSpecSchema), so a malformed (non-object) schema must be dropped, never propagated, or it
+      // would make the whole immutable spec unparseable and fail an unrelated run.
+      const jobOps = operations.map((name) => {
+        const o = byName.get(name)!; // guaranteed present — `operations` was filtered by byName.has
+        const s = o.inputSchema;
+        const isSchemaObject = typeof s === "object" && s !== null && !Array.isArray(s);
+        return {
+          name,
+          ...(o.description ? { description: o.description } : {}),
+          ...(isSchemaObject ? { inputSchema: s as Record<string, unknown> } : {}),
+        };
+      });
+      jobTools.push({ id: tool.id, name: tool.name, operations: jobOps });
       if (tool.url) {
         // Decrypt the held bearer token control-side; it goes ONLY into the provision (→ the Guard),
         // never the jobSpec (AD-10). A decrypt failure → an empty credential (the call refuses, not grants).
