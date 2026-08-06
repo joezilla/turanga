@@ -213,31 +213,34 @@ export async function runHarness(): Promise<void> {
   // Phase 1 — read ops gather context for the model.
   for (const op of ops.filter(isReadOp)) await runOp(op);
 
-  // Phase 1b — tool calls (Story 6.4). Deterministic stub: for each granted tool, invoke its FIRST
-  // granted operation through the Guard (a real model-driven tool loop is a later concern). The Guard
-  // enforces the per-op grant + attaches the held credential; a refusal is relayed (recorded on the
-  // Run), a success folds a note into context. A blocked/errored tool call is NOT a run failure.
-  for (const tool of spec.tools) {
-    const operation = tool.operations[0]?.name; // Story 12.1: operations are now {name,…} objects
-    if (!operation) continue; // an attached-but-ungranted tool has nothing to call
-    const tr = await guardToolCall(socketPath, { v: CONTRACT_VERSION, runId: spec.runId, toolId: tool.id, operation, arguments: {} });
-    const rec = toolRecord(tool.id, tool.name, operation, tr);
-    emit(rec.message); // a RECORDED tool event for EVERY call (Story 6.5) — success is no longer invisible
-    if (rec.system) messages.push({ role: "system", content: rec.system });
+  // Phase 2 — the agent turn. Story 12.4: an agent with granted tools runs the MODEL-DRIVEN TOOL LOOP
+  // (the AI SDK reason→act→observe loop in toolLoop.ts, every model + tool call brokered through the
+  // Guard). An agent with NO tools takes the single model call — the draft/test-console/chat + skills-
+  // draft path, unchanged. The Phase-1b blind-operations[0] stub is gone. Skills read/write ops
+  // (Phase 1/3) still bracket BOTH paths. The harness emits ONLY turn + done + relayed refusals
+  // (E4-AD-10); cost/tokens `metrics` are the Guard's out-of-band truth (Story 4.5).
+  let agentText: string;
+  let ok: boolean;
+  if (spec.tools.length > 0) {
+    // Lazy import — the Vercel AI SDK loads only for a tools run (keeps the no-tools/skills path light
+    // and avoids a main↔toolLoop module cycle at load time).
+    const { runToolLoop } = await import("./toolLoop.js");
+    const loop = await runToolLoop(spec, socketPath, emit);
+    agentText = loop.text;
+    ok = loop.stopReason !== "error"; // a mid-loop model failure / cost-cap kill ended the loop
+  } else {
+    const res = await guardModelCall(socketPath, { v: CONTRACT_VERSION, runId: spec.runId, model: spec.model, messages });
+    agentText = res.ok ? (res.text ?? "") : `[model error] ${res.error ?? "unknown error"}`;
+    ok = res.ok;
   }
 
-  // Phase 2 — the model call → the agent turn (the response / the draft artifact for draft-reply).
-  const res = await guardModelCall(socketPath, { v: CONTRACT_VERSION, runId: spec.runId, model: spec.model, messages });
-
-  // The harness emits ONLY turn + done + relayed refusals (E4-AD-10). Cost/tokens `metrics` are the
-  // Guard's out-of-band truth (Story 4.5) — reported Guard→orchestrator, not through this sandbox.
-  emit({ type: "turn", v: CONTRACT_VERSION, role: "agent", text: res.ok ? (res.text ?? "") : `[model error] ${res.error ?? "unknown error"}` });
+  emit({ type: "turn", v: CONTRACT_VERSION, role: "agent", text: agentText });
 
   // Phase 3 — outbound/write ops (label, send). A blocked send is a refusal, NOT a run failure — the
   // draft (Phase 2) stands and the run completes (AC3, AD-8).
   for (const op of ops.filter((op) => !isReadOp(op))) await runOp(op);
 
-  emit({ type: "done", v: CONTRACT_VERSION, status: res.ok ? "succeeded" : "failed" });
+  emit({ type: "done", v: CONTRACT_VERSION, status: ok ? "succeeded" : "failed" });
 }
 
 // Run the loop only when executed as the entrypoint (not when imported by the unit test).
