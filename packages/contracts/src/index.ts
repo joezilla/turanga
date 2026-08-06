@@ -3,6 +3,10 @@
 // they harden in Epic 4. The `v` field is the contract version — bump on any change.
 import { z } from "zod";
 
+// v9 (Story 12.1): tool loop — GuardModelRequest.tools/toolChoice + tool-role messages + tool_calls;
+// GuardModelResponse.toolCalls/finishReason; JobTool.operations gains per-op argument schemas so the
+// model can call with structured args. Secret-free — names + arg schemas only, no endpoint/credential
+// (AD-10). The model-driven loop that consumes this lands in Story 12.4.
 // v8 (Story 9.1): history — a sandbox-visible `JobSpec.history` of prior conversation turns (chat =
 // threaded runs; each turn is a fresh run carrying the thread so far). Secret-free turn content like
 // taskInput (AD-10); default [] keeps every non-chat spec valid. The harness folds it into the model
@@ -18,7 +22,7 @@ import { z } from "zod";
 // channel (metrics + kill) is defined here (E4-AD-10, out-of-band control-plane).
 // v3 (Story 4.4): provider-agnostic connection ops (read | label | send), refusal `kind`, skill policy.
 // v2 (Story 4.3): connection-read entries + logical connection handles.
-export const CONTRACT_VERSION = 8 as const;
+export const CONTRACT_VERSION = 9 as const;
 
 /** A logical connection handle the agent is configured to use. NO token, URL, or destination —
  *  the Guard holds the credential + allowlist per-run (AD-10); the sandbox names only the handle. */
@@ -29,11 +33,22 @@ export const JobConnectionSchema = z.object({
 export type JobConnection = z.infer<typeof JobConnectionSchema>;
 
 /** A logical tool handle the agent may invoke (Story 6.1). Names the tool + the operations granted —
- *  NO endpoint URL, NO credential (AD-10); the Guard resolves the endpoint + holds the credential. */
+ *  NO endpoint URL, NO credential (AD-10); the Guard resolves the endpoint + holds the credential.
+ *  Story 12.1: each granted operation carries its ARGUMENT SCHEMA (`{ name, description?, inputSchema }`)
+ *  so the model can call it with structured args. `inputSchema` is an opaque JSON-Schema record (no
+ *  dialect hard-coded). 12.1 emits name-only; Story 12.2 fills real description + inputSchema from the
+ *  registered tool. Still secret-free — a name + a schema, never an endpoint/credential (AD-10). */
+export const JobToolOperationSchema = z.object({
+  name: z.string(),
+  description: z.string().optional(),
+  inputSchema: z.record(z.string(), z.unknown()).optional(),
+});
+export type JobToolOperation = z.infer<typeof JobToolOperationSchema>;
+
 export const JobToolSchema = z.object({
   id: z.string(),
   name: z.string(),
-  operations: z.array(z.string()),
+  operations: z.array(JobToolOperationSchema),
 });
 export type JobTool = z.infer<typeof JobToolSchema>;
 
@@ -119,14 +134,52 @@ export const ControlChannelMessageSchema = z.discriminatedUnion("type", [
 ]);
 export type ControlChannelMessage = z.infer<typeof ControlChannelMessageSchema>;
 
+/** A tool the model may call, in OpenAI function-calling shape (Story 12.1). The Guard proxies it
+ *  to LiteLLM, which normalizes function-calling across every provider. Secret-free: a name + a
+ *  JSON-schema for the arguments — NO endpoint, NO credential (AD-10). `parameters` is a JSON Schema
+ *  object; kept as an opaque record so the contract doesn't hard-code a schema dialect. */
+export const GuardModelToolSchema = z.object({
+  type: z.literal("function"),
+  function: z.object({
+    name: z.string(),
+    description: z.string().optional(),
+    parameters: z.record(z.string(), z.unknown()).optional(),
+  }),
+});
+export type GuardModelTool = z.infer<typeof GuardModelToolSchema>;
+
+/** A tool call the model chose to make (OpenAI shape). `arguments` is a JSON STRING (the provider
+ *  serializes the args) — the harness parses it before brokering the call through the Guard. */
+export const GuardModelToolCallSchema = z.object({
+  id: z.string(),
+  type: z.literal("function"),
+  function: z.object({ name: z.string(), arguments: z.string() }),
+});
+export type GuardModelToolCall = z.infer<typeof GuardModelToolCallSchema>;
+
+/** One chat message on the model call. Widened for the tool loop: adds the `tool` role and the
+ *  `tool_calls`/`tool_call_id` that carry the reason→act→observe thread across iterations. `content`
+ *  is nullable (an assistant turn that ONLY calls tools carries null content). A plain string message
+ *  (system/user/assistant) — every pre-tool-loop caller — still satisfies this schema unchanged. */
+export const GuardModelMessageSchema = z.object({
+  role: z.enum(["system", "user", "assistant", "tool"]),
+  content: z.string().nullable().optional(),
+  tool_calls: z.array(GuardModelToolCallSchema).optional(),
+  tool_call_id: z.string().optional(),
+});
+export type GuardModelMessage = z.infer<typeof GuardModelMessageSchema>;
+
 /** The harness↔Guard logical-request protocol (E4-AD-9). A model call is the chat-completions
  *  shape the Guard proxies to LiteLLM. The harness never sees a URL, key, or token (AD-5/AD-10).
- *  Connection reads + plain egress are added in Story 4.3. */
+ *  Connection reads + plain egress are added in Story 4.3. `tools`/`toolChoice` (Story 12.1) are
+ *  optional — a plain draft/skill model call omits them and behaves exactly as before. */
 export const GuardModelRequestSchema = z.object({
   v: z.literal(CONTRACT_VERSION),
   runId: z.string(),
   model: z.string(),
-  messages: z.array(z.object({ role: z.enum(["system", "user", "assistant"]), content: z.string() })),
+  messages: z.array(GuardModelMessageSchema),
+  tools: z.array(GuardModelToolSchema).optional(),
+  toolChoice: z.unknown().optional(),
 });
 export type GuardModelRequest = z.infer<typeof GuardModelRequestSchema>;
 
@@ -137,6 +190,10 @@ export const GuardModelResponseSchema = z.object({
   error: z.string().optional(),
   tokens: z.number().optional(),
   latencyMs: z.number().optional(),
+  // Tool loop: the assistant's chosen tool calls + why the provider stopped. Absent on a plain text
+  // answer; present (with finishReason "tool_calls") when the model wants to act before answering.
+  toolCalls: z.array(GuardModelToolCallSchema).optional(),
+  finishReason: z.string().optional(),
 });
 export type GuardModelResponse = z.infer<typeof GuardModelResponseSchema>;
 

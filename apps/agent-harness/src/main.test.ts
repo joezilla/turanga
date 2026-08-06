@@ -74,8 +74,8 @@ describe("agent-harness", () => {
   });
 
   it("parses a job spec with granted tools (Story 6.4)", () => {
-    const spec = { v: CONTRACT_VERSION, runId: "r", agentId: "a", model: "m", instructions: "", skills: [], tools: [{ id: "t1", name: "Weather", operations: ["get_time"] }], taskInput: "" };
-    expect(readJobSpec(spec).tools).toEqual([{ id: "t1", name: "Weather", operations: ["get_time"] }]);
+    const spec = { v: CONTRACT_VERSION, runId: "r", agentId: "a", model: "m", instructions: "", skills: [], tools: [{ id: "t1", name: "Weather", operations: [{ name: "get_time" }] }], taskInput: "" };
+    expect(readJobSpec(spec).tools).toEqual([{ id: "t1", name: "Weather", operations: [{ name: "get_time" }] }]);
   });
 
   it("toolRecord: a successful call emits a `tool` record (outcome ok) + a context note (Story 6.5)", () => {

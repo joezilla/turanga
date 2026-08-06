@@ -280,8 +280,9 @@ describe("run orchestrator — connections + credentialed provisioning (4.3)", (
     const r = await o.launch("a1", "weather?");
     expect(r.ok).toBe(true);
     const jobSpecJson = runtime.established[0].jobSpecJson;
-    const spec = JSON.parse(jobSpecJson) as { tools: { id: string; name: string; operations: string[] }[] };
-    expect(spec.tools).toEqual([{ id: "t-weather", name: "Weather", operations: ["get_weather"] }]);
+    const spec = JSON.parse(jobSpecJson) as { tools: { id: string; name: string; operations: { name: string }[] }[] };
+    // Story 12.1: sandbox-visible JobTool.operations are now {name,…} objects (name-only until 12.2).
+    expect(spec.tools).toEqual([{ id: "t-weather", name: "Weather", operations: [{ name: "get_weather" }] }]);
     // AD-10: the endpoint URL + the encrypted credential are NEVER on the sandbox wire.
     expect(jobSpecJson).not.toContain("mcp.example");
     expect(jobSpecJson).not.toContain("enc-secret-blob");

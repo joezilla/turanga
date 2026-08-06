@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { JobSpecSchema, JobToolSchema, JobMemorySchema, JobHistoryTurnSchema, ToolCallRequestSchema, ToolCallResponseSchema, ControlChannelMessageSchema, GuardConnectionRequestSchema, GuardConnectionResponseSchema, GuardRunEventSchema, authorizes, SKILL_OPS, OP_REQUIREMENTS, CONTRACT_VERSION } from "./index.js";
+import { JobSpecSchema, JobToolSchema, JobMemorySchema, JobHistoryTurnSchema, ToolCallRequestSchema, ToolCallResponseSchema, ControlChannelMessageSchema, GuardConnectionRequestSchema, GuardConnectionResponseSchema, GuardModelRequestSchema, GuardModelResponseSchema, GuardRunEventSchema, authorizes, SKILL_OPS, OP_REQUIREMENTS, CONTRACT_VERSION } from "./index.js";
 
 describe("contracts", () => {
-  it("contract version is 8 (Story 9.1 — chat / JobSpec.history)", () => {
-    expect(CONTRACT_VERSION).toBe(8);
+  it("contract version is 9 (Story 12.1 — tool loop / model tool-calling)", () => {
+    expect(CONTRACT_VERSION).toBe(9);
   });
 
   it("job spec round-trips (with logical connection + tool handles + recalled memories + chat history)", () => {
@@ -15,7 +15,7 @@ describe("contracts", () => {
       instructions: "hi",
       skills: ["read-search"],
       connections: [{ id: "gmail", provider: "gmail" as const }],
-      tools: [{ id: "t1", name: "weather", operations: ["get_weather"] }],
+      tools: [{ id: "t1", name: "weather", operations: [{ name: "get_weather" }] }],
       memories: [{ id: "m1", kind: "semantic" as const, summary: "the user prefers concise replies" }],
       history: [
         { role: "user" as const, content: "what's the weather?" },
@@ -66,12 +66,54 @@ describe("contracts", () => {
   });
 
   it("JobTool: a logical handle carries only id/name/operations — no endpoint URL or credential (AD-10)", () => {
-    const t = JobToolSchema.parse({ id: "t1", name: "weather", operations: ["get_weather"] });
+    // Story 12.1: operations are {name, description?, inputSchema?} objects carrying the arg schema.
+    const t = JobToolSchema.parse({ id: "t1", name: "weather", operations: [{ name: "get_weather", description: "look up weather", inputSchema: { type: "object", properties: { city: { type: "string" } } } }] });
     expect(Object.keys(t).sort()).toEqual(["id", "name", "operations"]);
+    expect(t.operations[0]).toEqual({ name: "get_weather", description: "look up weather", inputSchema: { type: "object", properties: { city: { type: "string" } } } });
+    // a name-only op is valid (Story 12.1 emits this; 12.2 fills description/inputSchema)
+    expect(JobToolSchema.parse({ id: "t1", name: "w", operations: [{ name: "op" }] }).operations[0]).toEqual({ name: "op" });
+    // an op with no name is rejected — the model must have something to call
+    expect(JobToolSchema.safeParse({ id: "t1", name: "w", operations: [{ description: "no name" }] }).success).toBe(false);
     // extra endpoint/secret keys are stripped by the schema (never reach the sandbox)
-    const stripped = JobToolSchema.parse({ id: "t1", name: "w", operations: [], url: "https://x", token: "secret" } as unknown as { id: string; name: string; operations: string[] });
+    const stripped = JobToolSchema.parse({ id: "t1", name: "w", operations: [], url: "https://x", token: "secret" } as unknown as { id: string; name: string; operations: { name: string }[] });
     expect(JSON.stringify(stripped)).not.toContain("secret");
     expect(JSON.stringify(stripped)).not.toContain("https://x");
+  });
+
+  it("GuardModelRequest carries optional tools + tool-role messages; omitting tools stays valid (Story 12.1, AD-10)", () => {
+    // With tools: the model is told what it may call, and a tool-role message carries the thread.
+    const withTools = GuardModelRequestSchema.parse({
+      v: CONTRACT_VERSION,
+      runId: "r1",
+      model: "openai/gpt-4o",
+      messages: [
+        { role: "user", content: "how many drives?" },
+        { role: "assistant", content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "list_drives", arguments: "{}" } }] },
+        { role: "tool", content: "Drive A\nDrive B", tool_call_id: "c1" },
+      ],
+      tools: [{ type: "function", function: { name: "list_drives", description: "list drives", parameters: { type: "object", properties: {} } } }],
+      toolChoice: "auto",
+    });
+    expect(withTools.tools?.[0].function.name).toBe("list_drives");
+    expect(withTools.messages[1].tool_calls?.[0].id).toBe("c1");
+    expect(withTools.messages[2].role).toBe("tool");
+    // a tool def is secret-free — a name + arg schema, never an endpoint/credential (AD-10)
+    const t = GuardModelRequestSchema.parse({ v: CONTRACT_VERSION, runId: "r", model: "m", messages: [], tools: [{ type: "function", function: { name: "x", url: "https://x", token: "secret" } }] } as unknown as { v: number; runId: string; model: string; messages: []; tools: unknown[] });
+    expect(JSON.stringify(t)).not.toContain("secret");
+    expect(JSON.stringify(t)).not.toContain("https://x");
+    // Backward-compat: a plain call omitting tools/toolChoice still parses and behaves as before.
+    const plain = GuardModelRequestSchema.parse({ v: CONTRACT_VERSION, runId: "r1", model: "m", messages: [{ role: "user", content: "hi" }] });
+    expect(plain.tools).toBeUndefined();
+    expect(plain.messages[0].content).toBe("hi");
+  });
+
+  it("GuardModelResponse carries optional toolCalls + finishReason; a plain text answer omits both (Story 12.1)", () => {
+    const acting = GuardModelResponseSchema.parse({ v: CONTRACT_VERSION, ok: true, text: "", toolCalls: [{ id: "c1", type: "function", function: { name: "list_drives", arguments: "{}" } }], finishReason: "tool_calls" });
+    expect(acting.toolCalls?.[0].function.name).toBe("list_drives");
+    expect(acting.finishReason).toBe("tool_calls");
+    const answered = GuardModelResponseSchema.parse({ v: CONTRACT_VERSION, ok: true, text: "you have 2 drives" });
+    expect(answered.toolCalls).toBeUndefined();
+    expect(answered.finishReason).toBeUndefined();
   });
 
   it("tool call request/response round-trip (maps to MCP tools/call; refusal + isError distinct)", () => {
@@ -106,7 +148,7 @@ describe("contracts", () => {
         expect(msg).not.toHaveProperty("costMicros");
       }
     }
-    // a v5 tool message is rejected by the current (v7) schema — mixed-version guard.
+    // a v5 tool message is rejected by the current (v9) schema — mixed-version guard.
     expect(ControlChannelMessageSchema.safeParse({ type: "tool", v: 5, toolId: "t1", toolName: "W", operation: "x", outcome: "ok", latencyMs: 1 }).success).toBe(false);
   });
 

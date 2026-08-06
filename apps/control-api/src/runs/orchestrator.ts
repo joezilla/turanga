@@ -170,7 +170,10 @@ export function runOrchestrator(deps: OrchestratorDeps) {
       const offered = new Set(tool.operations.map((o) => o.name));
       const operations = g.operations.filter((op) => offered.has(op));
       if (operations.length === 0) continue;
-      jobTools.push({ id: tool.id, name: tool.name, operations }); // sandbox-visible — no secret
+      // Sandbox-visible JobTool — no secret. Story 12.1: operations carry per-op argument schemas so
+      // the model can call with structured args; emit NAME-ONLY here (Story 12.2 fills real
+      // description + inputSchema from the registered tool.operations, already {name,…,inputSchema?}[]).
+      jobTools.push({ id: tool.id, name: tool.name, operations: operations.map((name) => ({ name })) });
       if (tool.url) {
         // Decrypt the held bearer token control-side; it goes ONLY into the provision (→ the Guard),
         // never the jobSpec (AD-10). A decrypt failure → an empty credential (the call refuses, not grants).

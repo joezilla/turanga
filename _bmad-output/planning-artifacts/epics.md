@@ -155,6 +155,9 @@ A repeatable way to **grade an agent** so quality is a tracked number, not a vib
 ### Epic 11: Agent data & artifacts — an agent-scoped store
 A first-class, **agent-scoped, authoritative data store** for the structured/exact data an agent owns (the stock-advisor's **portfolio**), distinct from learned memory: a **structured store** (CRUD records), **artifacts/blobs** (files the agent reads/writes), and **reference knowledge** (user-authored authoritative docs). Runtime read/write means it is **Guard-brokered** (the Epic 6 tool path, not job-spec injection), agent-isolated (enforced control-plane), quota'd, credential Guard-held — effectively a first-party "the agent's own store" tool. Inherits **Epic 8's foundations**: the agent-scoped control-plane store + isolation pattern, the generalized "first-party store exposed as a Guard tool" seam, and the embedding/recall infra (for reference-knowledge RAG). *(Post-MVP; captured 2026-08-05. Builds on Epic 6 broker + Epic 8 store patterns. AD-1, AD-5, AD-7, AD-10.)*
 
+### Epic 12: Model-driven tool loop — the agent actually decides
+The **Epic 6 follow-on that makes tools real.** Epic 6 shipped the tool *contract*, the Guard *broker*, per-operation *grants*, and *observability* — but the harness never tells the model its tools exist and never lets the model choose to call one. Instead a deterministic stub (Story 6.4) blindly fires each tool's *first* operation once, folds a bare "Called X." note into context, and asks for text — so agents on capable models still confabulate a fake toolkit and deny the tools they were just handed. This epic replaces that stub with a real **reason→act→observe loop** built on the **Vercel AI SDK**: the model is told its granted tools (a function-calling manifest), *chooses* which to call with what arguments, the Guard brokers each call, the result folds back into context, and it iterates until a final answer or a bounded stop. A **Phase-0 seam spike is done and proven** (branch `spike/agent-tool-loop`, offline + deterministic): the SDK routes both model and tool calls entirely through the per-run Guard socket with **no credential and no network in the sandbox**. The architecture principle: the **SDK owns cognition** (the loop, step-counting, tool-call parsing, result fold-back, malformed-call repair); **turanga keeps owning transport + enforcement** (the Guard socket, no secrets, no network, cost metering, kill-on-breach). *(Post-MVP; captured 2026-08-05. Completes Epic 6. AD-1, AD-7, AD-9, AD-10; cost cap Story 4.5.)*
+
 > **Cross-cutting UX conventions** (applied as ACs across all UI stories, not standalone): UX-DR14 interaction primitives, UX-DR15 accessibility floor, UX-DR16 voice/microcopy, UX-DR19 Lucide icons. Established as project conventions in Story 1.2 and re-asserted per surface.
 
 ## Epic 1: Foundation & Access
@@ -989,3 +992,183 @@ So that chat is organized and safe to leave running.
 - The run path refactor: how cleanly can "run this definition" be parameterized so the test console (draft) and chat (published snapshot) share one orchestrator path without a fork.
 - Relationship to the test console: coexist (test = draft iteration, chat = published use) vs eventually fold the test console into chat-against-draft.
 - e2e/testability: a threaded-run test (turn N sees turns 1..N-1 in its `JobSpec.history`) without a live model.
+
+---
+
+## Epic 12: Model-driven tool loop — the agent actually decides
+
+The **Epic 6 follow-on that makes tools real.** Epic 6 built the tool *contract*, the Guard *broker*, per-operation *grants*, and *observability* — everything except the one thing that makes an agent an agent: the model deciding, mid-run, which tool to call and acting on the result. Today `apps/agent-harness/src/main.ts` (Phase-1b, Story 6.4) never puts the tools in front of the model — `buildMessages` folds only instructions + memories + history + the task, and `GuardModelRequest` carries no `tools`. The harness blindly fires each attached tool's *first* granted operation once, with empty arguments, folds a bare "Called X." note into context, and does a single text-only model call. So a capable model (e.g. `gpt-oss-20b` — tool-trained, 131K window) reports it "cannot access" its tools and invents a fake toolkit, even as the real call returns `ok`. This epic replaces the stub with a real loop.
+
+**The keystone (party-mode brainstorm → seam spike, 2026-08-05):** *adopt the loop engine, keep the boundary.* We don't hand-roll the agentic loop and we don't let a framework own the network. The **Vercel AI SDK owns cognition**; **turanga owns transport + enforcement.** The seam is two injection points, both proven in the Phase-0 spike (branch `spike/agent-tool-loop`, offline + deterministic, harness 14/14 + guard 31/31 green): a **custom `fetch` → `guardModelCall`** (the SDK's model calls leave only via the Guard socket, holding no key) and a **custom tool executor → `guardToolCall`** (the SDK decides *which* tool; the Guard enforces *whether* and injects the credential). LiteLLM, already in the stack, normalizes function-calling across every provider — a capability we have today and were discarding by stripping the request to `{ messages }`.
+
+### Architecture & scope decisions (binding constraints)
+- **The SDK owns cognition; turanga owns transport + enforcement.** The AI SDK runs *inside* the sandbox and owns the loop, step-counting, tool-call parsing, result fold-back, and repair. It holds **no credential** and touches **no network** — its only egress is the per-run Guard socket, and `--network=none` (AD-1) fails closed anything that tries otherwise. The Guard remains the sole holder of the LiteLLM key and every tool's endpoint + credential (AD-10).
+- **Two injection points, nothing else crosses the boundary.** (a) a custom `fetch` that translates the SDK's OpenAI-shaped model request into a typed `GuardModelRequest` over the UDS and back; (b) a custom tool executor that maps each granted operation to `guardToolCall`. No third channel; the JobSpec stays immutable at run start (AD-9) — the loop *consumes* the spec, it never mutates policy or reaches a side-channel.
+- **Two independent backstops bound the loop.** The **per-run cost cap** (Story 4.5, Guard-side, kill-on-breach) is the **financial** backstop — a multi-call turn is simply *N* metered model round-trips under one run's cap, needing no new budget machinery. A **max-step ceiling** (harness-side, default ~10, configurable) is the **control** backstop — a model that loops on the same call dies on logic before it burns the budget. Both stops, and a natural final answer, are **recorded distinctly** — never a silent truncation.
+- **Tool calls stay observed-not-metered** (Story 6.5 posture, unchanged): each brokered call is recorded on the Run (count/latency/outcome/refusal), carries no cost, and never touches the breach/kill path. Only model round-trips are metered.
+- **The Skills path (Story 4.4) is untouched.** The deterministic, policy-gated Gmail skills pipeline (read→draft→send with the Guard send-gate) runs alongside the loop as a separate path. Only the blind `operations[0]` **stub** dies.
+- **Capability is a signal, not a gate.** A model's tool-calling reliability is surfaced at attach-time (a warning + a verified-models list we actually run the loop against); no model config is *forbidden*. `gpt-oss-20b` is tool-trained and stays usable — the signal communicates reliability, not permission.
+- **AD-7:** control-api / the orchestrator remain the sole writers of run state; the harness decides nothing about policy.
+
+### Story 12.1: The tool-calling contract and version bump
+
+As a platform maintainer,
+I want the harness↔Guard contract to carry tools and tool calls,
+So that the model can be told what it may call and can express a call, with no secret ever crossing the sandbox boundary.
+
+**Acceptance Criteria:**
+
+**Given** the contracts package
+**When** the model-call contract is extended for tool use
+**Then** `GuardModelRequest` gains an optional `tools` (OpenAI function-calling shape: name + description + JSON-schema parameters) and `toolChoice`; the message schema gains the `tool` role and `tool_calls`/`tool_call_id`; `GuardModelResponse` gains `toolCalls` + `finishReason` — and every field is **secret-free** (a logical tool name + argument schema, never an endpoint or credential — AD-10).
+
+**Given** `JobTool`
+**When** a tool's granted operations are described to the model
+**Then** `operations` carries each op's **argument schema** (`{ name, description, inputSchema }`), not a bare string, so the model can call an operation with structured arguments — still no endpoint/credential in the spec (AD-10).
+
+**Given** a breaking shape change to the agent↔harness↔Guard contract
+**When** the contract is published
+**Then** `CONTRACT_VERSION` is **bumped** and every producer/consumer (contracts, orchestrator, Guard, harness) is updated in lockstep; a plain (draft/skill) model call that omits `tools` remains valid and behaves exactly as before (backward-compatible default).
+
+### Story 12.2: Resolve granted operations into the job spec
+
+As the builder,
+I want each of my agent's granted tool operations described to the model with its real argument schema,
+So that the model calls tools correctly and sees only what I granted — nothing more.
+
+**Acceptance Criteria:**
+
+**Given** an agent with attached tools and per-operation grants
+**When** the orchestrator assembles a run (`resolveRunTools`)
+**Then** it resolves each **granted** operation's real input JSON schema from the tool registration (the `list-tools` handshake data, Story 6.2) into `JobSpec.tools` — replacing the spike's placeholder open-object schema.
+
+**Given** a tool with many operations of which only some are granted
+**When** the spec is built
+**Then** **only granted operations** are manifested (least-privilege *and* a bounded context/token footprint — the ~90-op tool contributes only its 12 granted ops), and the manifest carries no endpoint or credential (AD-10).
+
+**Given** the immutable job spec (AD-9)
+**When** it is injected at run start
+**Then** the resolved tool manifest is fixed for the run — the harness never augments or re-resolves it mid-loop.
+
+### Story 12.3: The Guard forwards tools and meters the multi-call loop
+
+As a platform maintainer,
+I want the Guard to offer the model its tools and stay the cost authority across every round-trip,
+So that a multi-step loop is bounded and killed on breach exactly like a single call.
+
+**Acceptance Criteria:**
+
+**Given** a model call that carries `tools`
+**When** the Guard proxies it to LiteLLM
+**Then** it forwards `tools`/`tool_choice` and returns the model's `tool_calls` + `finishReason` to the harness; a call **without** `tools` is forwarded byte-identically to before (the non-tool path is unchanged).
+
+**Given** a loop of *N* model round-trips within one run
+**When** each round-trip executes
+**Then** **every** call is metered on the run's per-run cost key and reported to the orchestrator out-of-band (E4-AD-10) — the loop is *N* metered calls under one per-run cap, with no new budget machinery.
+
+**Given** the per-run or per-day budget is exceeded mid-loop
+**When** LiteLLM 400s the call
+**Then** kill-on-breach fires (Story 4.5): the run is reaped, the loop ends cleanly with the **last text that stood**, and the outcome is recorded as a cost-cap kill — not a crash (NFR-2).
+
+### Story 12.4: The model-driven loop replaces the stub
+
+As the builder,
+I want my agent to reason, call a tool, see the result, and continue until it answers,
+So that it actually *uses* the tools I granted instead of denying them.
+
+**Acceptance Criteria:**
+
+**Given** a sandboxed run whose agent has granted tools
+**When** the harness runs the turn
+**Then** the **Vercel AI SDK loop** (`runToolLoop`) replaces the Phase-1b stub: the model is given the tool manifest, chooses calls, each is brokered via `guardToolCall` (the Guard enforcing the grant + injecting the credential — AD-10), the **real result** (not a "Called X." note) folds back into context, and it iterates to a final answer.
+
+**Given** the loop
+**When** it runs
+**Then** it is bounded by `stopWhen: stepCountIs(N)` (configurable, default ~10) — the control backstop — and every model call leaves the sandbox **only** via the Guard socket, holding no credential and reaching no network (AD-1, AD-10).
+
+**Given** an agent with attached **skills** (Story 4.4)
+**When** its run executes
+**Then** the deterministic skill pipeline (read→draft→send, Guard send-gate) runs **unchanged** alongside the loop; only the blind `operations[0]` stub is removed — no skill behavior regresses.
+
+**Given** a run with **no** granted tools
+**When** the turn runs
+**Then** it produces a normal text answer (the loop degenerates to a single model call) — no regression to the existing draft/test-console or chat text path.
+
+### Story 12.5: Tool-call repair — weak models self-correct
+
+As the builder running a smaller local model,
+I want a malformed or failed tool call to be corrected rather than fatal,
+So that a capable-but-streaky model reliably completes a multi-step task.
+
+**Acceptance Criteria:**
+
+**Given** the model emits a malformed tool call (bad JSON arguments, unknown operation) or a call returns a tool error
+**When** the loop processes it
+**Then** the **error is fed back** into the model context (the SDK's repair path) and the model may retry within the step budget — a single flubbed call is not a run failure.
+
+**Given** repair attempts
+**When** they occur
+**Then** they are **visible in the transcript** (each attempt recorded as a `tool` event with its outcome), so a human can see the model recovered rather than the recovery being invisible.
+
+**Given** a call that cannot be repaired within the step ceiling
+**When** the ceiling is reached
+**Then** the run ends cleanly with the last text that stood and a recorded **step-limit** stop — never a crash and never a silent stop (NFR-2).
+
+### Story 12.6: Multi-step observability — every step and every stop on the record
+
+As the builder,
+I want to see the agent's whole reasoning trail and exactly why it stopped,
+So that I can trust a multi-step run — "what did it call, what came back, and why did it end."
+
+**Acceptance Criteria:**
+
+**Given** a multi-step loop
+**When** each step executes
+**Then** it emits its `tool` transcript event (count/latency/outcome/refusal — Story 6.5 reused), preserving **order** across the loop so the reason→act→observe trail is legible.
+
+**Given** a completed turn
+**When** its stop reason is recorded
+**Then** it is one of **final answer / step-limit / cost-cap-kill**, each distinct and explicit — a truncation is **never** presented as a clean finish (the Story 6.5 lesson).
+
+**Given** the web completed-turn view
+**When** a builder inspects a turn that used tools
+**Then** the steps render **legibly** (recorded *and* readable, not buried) — status stated with a word, mono numerals for latency, per project UI conventions (NFR-6, UX-DR15/16).
+
+### Story 12.7: Model capability signal (not a gate)
+
+As the builder,
+I want turanga to tell me how reliable a model is at tool use when I attach it,
+So that I can choose with eyes open — without being blocked from a config I want to run.
+
+**Acceptance Criteria:**
+
+**Given** a **verified-models list** — models we actually run the tool loop against
+**When** it is maintained
+**Then** it records which models emit well-formed tool calls reliably (evidence-based, not vibes), and is the source for the signal below.
+
+**Given** the agent-definition surface where a model is selected and tools are attached
+**When** the chosen model has limited or unverified tool-calling reliability
+**Then** a **non-blocking signal** is shown ("limited tool-calling reliability; verified models: …") — stated plainly, never celebratory, and it **does not prevent** attaching or running (a signal, not a gate). `gpt-oss-20b` is tool-trained and stays fully usable.
+
+**Given** the signal
+**When** it renders
+**Then** it follows project UI conventions — status stated with a word (never colour-only), verb-first actions, sentence case, mono model IDs (UX-DR15/16, NFR-6).
+
+### Acceptance demo (the Stage-2 product proof)
+Point the finished loop at **Mortimer's unchanged config** (`gpt-oss-20b` + the BitsBy8 tool, 12 granted ops incl. `list_drives`) on the dev stack and ask for a real multi-step task. The model **selects** tools, the Guard **brokers** each call, the **result** folds back, a flubbed call is **repaired**, the run **completes**, and the transcript shows **every step and its stop reason**. Invariants verified live: no credential in the sandbox, `--network=none` holds, the per-run cost cap bounds the loop, and kill-on-breach fires mid-loop with the last text standing. "We didn't move your goalposts — we fixed our bug."
+
+### Explicitly deferred (out of this epic)
+- **Parallel / concurrent tool calls** — v1 is serial, one call per step (simpler to bound and reason about).
+- **Live streaming of intermediate steps** over the chat SSE — the loop records every step for post-turn inspection; token/step-level live streaming is a later harness + control-channel change.
+- **Mid-loop human-in-the-loop** — the agent pausing to ask and resuming (needs a suspend/resume run model; shared with the Epic 9 deferral).
+- **Sub-agents** — an agent spawning agents.
+- **Automatic tool-result summarization/truncation** — a large tool result folds back raw in v1; smart compaction is a later refinement.
+- **A hard capability gate** — blocking weak models outright (we ship a signal instead).
+
+### Open questions (resolve at story time)
+- AI SDK version/adapter specifics: `createOpenAICompatible` + custom `fetch` (spike path) vs a bespoke `LanguageModelV2` provider — the spike chose the former; confirm at Story 12.4.
+- Guard model endpoint: keep the typed `GuardModelRequest` + translate OpenAI↔Guard in the shim (spike/chosen) vs an OpenAI-passthrough branch — chosen keeps the typed boundary.
+- Abort/kill propagation into the SDK loop (`abortSignal`) vs the Guard staying the sole kill authority (leans: Guard stays authoritative; the shim surfaces a kill as a non-ok model response that ends the loop).
+- Default step ceiling `N` and whether it is per-agent configurable or a global default.
+- AI SDK dependency/bundle audit for the sandbox image (tolerable **because** the box has no network and no secret — the isolation is what lets us accept a fat dependency here).
+- Where the verified-models list lives (control-plane config vs a checked-in reference) and how the signal is computed.

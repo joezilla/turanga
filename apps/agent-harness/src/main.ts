@@ -77,7 +77,7 @@ function guardTransport(socketPath: string, req: unknown): Promise<{ raw: string
   });
 }
 
-async function guardModelCall(socketPath: string, req: GuardModelRequest): Promise<GuardModelResponse> {
+export async function guardModelCall(socketPath: string, req: GuardModelRequest): Promise<GuardModelResponse> {
   const t = await guardTransport(socketPath, req);
   if ("error" in t) return { v: CONTRACT_VERSION, ok: false, error: t.error };
   try {
@@ -117,7 +117,7 @@ export function opOutcome(op: ConnectionOp, res: GuardConnectionResponse): { sys
 // operation + arguments; the Guard resolves the endpoint, enforces the per-op grant, attaches the held
 // credential, performs the MCP `tools/call`, and returns the result — the harness never sees the URL
 // or the token (AD-10).
-async function guardToolCall(socketPath: string, req: ToolCallRequest): Promise<ToolCallResponse> {
+export async function guardToolCall(socketPath: string, req: ToolCallRequest): Promise<ToolCallResponse> {
   const t = await guardTransport(socketPath, req);
   if ("error" in t) return { v: CONTRACT_VERSION, ok: false, error: t.error };
   try {
@@ -218,7 +218,7 @@ export async function runHarness(): Promise<void> {
   // enforces the per-op grant + attaches the held credential; a refusal is relayed (recorded on the
   // Run), a success folds a note into context. A blocked/errored tool call is NOT a run failure.
   for (const tool of spec.tools) {
-    const operation = tool.operations[0];
+    const operation = tool.operations[0]?.name; // Story 12.1: operations are now {name,…} objects
     if (!operation) continue; // an attached-but-ungranted tool has nothing to call
     const tr = await guardToolCall(socketPath, { v: CONTRACT_VERSION, runId: spec.runId, toolId: tool.id, operation, arguments: {} });
     const rec = toolRecord(tool.id, tool.name, operation, tr);
