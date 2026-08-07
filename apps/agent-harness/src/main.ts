@@ -177,6 +177,21 @@ export function buildMessages(spec: JobSpec): GuardModelRequest["messages"] {
   return messages;
 }
 
+// Story 12.6: the loop's terminal stop reason → a human string for `done.reason`, recorded on the
+// transcript so a step-limit truncation is NEVER a silent clean finish. A clean `final` returns
+// undefined (the transcript stays uncluttered). Pure + exported for unit testing (the literal union
+// mirrors ToolLoopResult["stopReason"] without importing toolLoop — keeps the AI SDK out of this module).
+export function stopReasonText(stopReason: "final" | "step-limit" | "error", steps: number): string | undefined {
+  switch (stopReason) {
+    case "step-limit":
+      return `Reached the step limit (${steps} steps) — the answer may be incomplete.`;
+    case "error":
+      return "The run ended before a final answer.";
+    default:
+      return undefined; // a clean final — no reason
+  }
+}
+
 export async function runHarness(): Promise<void> {
   let spec: JobSpec;
   try {
@@ -221,6 +236,7 @@ export async function runHarness(): Promise<void> {
   // (E4-AD-10); cost/tokens `metrics` are the Guard's out-of-band truth (Story 4.5).
   let agentText: string;
   let ok: boolean;
+  let doneReason: string | undefined; // Story 12.6 — the loop's stop reason (step-limit / error), if any
   if (spec.tools.length > 0) {
     // Lazy import — the Vercel AI SDK loads only for a tools run (keeps the no-tools/skills path light
     // and avoids a main↔toolLoop module cycle at load time).
@@ -228,10 +244,11 @@ export async function runHarness(): Promise<void> {
     const loop = await runToolLoop(spec, socketPath, emit);
     agentText = loop.text;
     ok = loop.stopReason !== "error"; // a mid-loop model failure / cost-cap kill ended the loop
+    doneReason = stopReasonText(loop.stopReason, loop.steps); // undefined on a clean final
   } else {
     const res = await guardModelCall(socketPath, { v: CONTRACT_VERSION, runId: spec.runId, model: spec.model, messages });
     agentText = res.ok ? (res.text ?? "") : `[model error] ${res.error ?? "unknown error"}`;
-    ok = res.ok;
+    ok = res.ok; // the single-call path has no loop stop reason
   }
 
   emit({ type: "turn", v: CONTRACT_VERSION, role: "agent", text: agentText });
@@ -240,7 +257,9 @@ export async function runHarness(): Promise<void> {
   // draft (Phase 2) stands and the run completes (AC3, AD-8).
   for (const op of ops.filter((op) => !isReadOp(op))) await runOp(op);
 
-  emit({ type: "done", v: CONTRACT_VERSION, status: ok ? "succeeded" : "failed" });
+  // Story 12.6: carry the stop reason on `done` (only when a run did NOT end on a clean final) so the
+  // orchestrator persists it to run.reason and a truncation is never a silent clean finish.
+  emit({ type: "done", v: CONTRACT_VERSION, status: ok ? "succeeded" : "failed", ...(doneReason ? { reason: doneReason } : {}) });
 }
 
 // Run the loop only when executed as the entrypoint (not when imported by the unit test).

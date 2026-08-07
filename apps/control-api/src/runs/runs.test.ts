@@ -45,6 +45,16 @@ describe("run orchestrator", () => {
     expect(r.run.endedAt).toBeTruthy();
   });
 
+  it("persists a done.reason (step-limit) to run.reason — a truncation is never a silent clean finish (Story 12.6)", async () => {
+    const reason = "Reached the step limit (10 steps) — the answer may be incomplete.";
+    const { o } = orch({ runtime: fakeSandboxRuntime({ lines: [nd({ type: "turn", v: CONTRACT_VERSION, role: "agent", text: "partial" }), nd({ type: "done", v: CONTRACT_VERSION, status: "succeeded", reason })] }) });
+    const r = await o.launch("a1", "do it");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.run.status).toBe("succeeded"); // an answer stands…
+    expect(r.run.reason).toBe(reason); // …but the truncation is recorded, not hidden
+  });
+
   it("fails closed when the sandbox can't be established — no unsandboxed fallback", async () => {
     const { o, guard } = orch({ runtime: fakeSandboxRuntime({ failEstablish: "unknown runtime specified runsc" }) });
     const r = await o.launch("a1", "x");

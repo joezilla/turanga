@@ -218,6 +218,27 @@ describe("tool loop (Story 12.4) — model-driven reason→act→observe over th
     expect(["step-limit", "error"]).toContain(result.stopReason);
   });
 
+  // Story 12.6 AC1: a multi-step run emits its per-step `tool` events IN ORDER (the reason→act→observe
+  // trail is legible). Two tool-calling steps → two tool events, in call order.
+  it("emits per-step tool events in order across a multi-step loop (Story 12.6)", async () => {
+    let step = 0;
+    guard = await fakeGuard({
+      onModel: (call) => {
+        if (call <= 2) return { v: CONTRACT_VERSION, ok: true, text: "", toolCalls: [{ id: `c${call}`, type: "function", function: { name: "list_drives", arguments: "{}" } }], finishReason: "tool_calls", tokens: 3, latencyMs: 1 };
+        return { v: CONTRACT_VERSION, ok: true, text: "done", finishReason: "stop", tokens: 2, latencyMs: 1 };
+      },
+      onTool: () => ({ v: CONTRACT_VERSION, ok: true, content: [{ type: "text", text: `step-${++step}` }], latencyMs: step }),
+    });
+
+    const emitted: ControlChannelMessage[] = [];
+    await runToolLoop(spec(), guard.socketPath, (m) => emitted.push(m));
+
+    const toolEvents = emitted.filter((m) => m.type === "tool");
+    expect(toolEvents).toHaveLength(2);
+    // recorded in emission order (step 1 before step 2) — the trail is legible, not reordered
+    expect(toolEvents.map((e) => (e.type === "tool" ? e.latencyMs : -1))).toEqual([1, 2]);
+  });
+
   // review LOW: a non-object-typed inputSchema (a valid object, but not type:"object") must not crash
   // the loop — it falls back to a permissive object schema.
   it("falls back to a permissive schema for a non-object-typed inputSchema (review LOW)", async () => {

@@ -7,14 +7,14 @@ const base = import.meta.env.VITE_CONTROL_API_URL ?? "http://localhost:8080";
 export type RunStatus = "created" | "running" | "succeeded" | "failed" | "killed";
 
 // One control-channel message — the discriminated union the harness/Guard emit (E4-AD-9/10).
-// Mirrors @turanga/contracts CONTRACT_VERSION (currently 9). Kept local so the web has no server dep.
+// Mirrors @turanga/contracts CONTRACT_VERSION (currently 10). Kept local so the web has no server dep.
 export type RunMessage =
-  | { type: "turn"; v: 9; role: "user" | "agent"; text: string }
-  | { type: "metrics"; v: 9; latencyMs: number; tokens: number; costMicros: number }
-  | { type: "refusal"; v: 9; kind: "egress" | "permission"; detail: string }
-  | { type: "tool"; v: 9; toolId: string; toolName: string; operation: string; outcome: "ok" | "error" | "refused"; latencyMs: number; detail?: string } // Story 6.5
-  | { type: "recall"; v: 9; memoryIds: string[]; count: number } // Story 8.3 — orchestrator-authored recall event
-  | { type: "done"; v: 9; status: "succeeded" | "failed" | "killed" };
+  | { type: "turn"; v: 10; role: "user" | "agent"; text: string }
+  | { type: "metrics"; v: 10; latencyMs: number; tokens: number; costMicros: number }
+  | { type: "refusal"; v: 10; kind: "egress" | "permission"; detail: string }
+  | { type: "tool"; v: 10; toolId: string; toolName: string; operation: string; outcome: "ok" | "error" | "refused"; latencyMs: number; detail?: string } // Story 6.5
+  | { type: "recall"; v: 10; memoryIds: string[]; count: number } // Story 8.3 — orchestrator-authored recall event
+  | { type: "done"; v: 10; status: "succeeded" | "failed" | "killed"; reason?: string }; // Story 12.6 — stop reason
 
 /** Per-tool invocation statistics for an agent (Story 6.5) — observed only, no cost. Mirrors the
  *  control-api ToolStat. */

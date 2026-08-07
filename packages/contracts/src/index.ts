@@ -3,6 +3,9 @@
 // they harden in Epic 4. The `v` field is the contract version — bump on any change.
 import { z } from "zod";
 
+// v10 (Story 12.6): done.reason — the model-driven loop's terminal stop reason (final / step-limit /
+// error) recorded on the `done` control message, so a step-limit truncation is never a silent clean
+// finish. Optional + secret-free human string; the orchestrator persists it to run.reason.
 // v9 (Story 12.1): tool loop — GuardModelRequest.tools/toolChoice + tool-role messages + tool_calls;
 // GuardModelResponse.toolCalls/finishReason; JobTool.operations gains per-op argument schemas so the
 // model can call with structured args. Secret-free — names + arg schemas only, no endpoint/credential
@@ -22,7 +25,7 @@ import { z } from "zod";
 // channel (metrics + kill) is defined here (E4-AD-10, out-of-band control-plane).
 // v3 (Story 4.4): provider-agnostic connection ops (read | label | send), refusal `kind`, skill policy.
 // v2 (Story 4.3): connection-read entries + logical connection handles.
-export const CONTRACT_VERSION = 9 as const;
+export const CONTRACT_VERSION = 10 as const;
 
 /** A logical connection handle the agent is configured to use. NO token, URL, or destination —
  *  the Guard holds the credential + allowlist per-run (AD-10); the sandbox names only the handle. */
@@ -130,7 +133,10 @@ export const ControlChannelMessageSchema = z.discriminatedUnion("type", [
     memoryIds: z.array(z.string()),
     count: z.number(),
   }),
-  z.object({ type: z.literal("done"), v: z.literal(CONTRACT_VERSION), status: z.enum(["succeeded", "failed", "killed"]) }),
+  // `reason` (Story 12.6) — the loop's terminal stop reason, present when a run did NOT end on a clean
+  // final answer (step-limit / error). Optional + secret-free; the orchestrator persists it to run.reason
+  // so a truncation is never a silent clean finish. A clean final and every pre-loop run omit it.
+  z.object({ type: z.literal("done"), v: z.literal(CONTRACT_VERSION), status: z.enum(["succeeded", "failed", "killed"]), reason: z.string().optional() }),
 ]);
 export type ControlChannelMessage = z.infer<typeof ControlChannelMessageSchema>;
 

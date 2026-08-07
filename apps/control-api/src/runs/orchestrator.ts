@@ -502,6 +502,7 @@ export function runOrchestrator(deps: OrchestratorDeps) {
       }, runTimeoutMs);
 
       let seen: RunStatus | null = null;
+      let doneReason: string | undefined; // Story 12.6 — the harness's loop stop reason, if any
       for await (const line of handle.lines) {
         const parsed = ControlChannelMessageSchema.safeParse(safeJson(line));
         if (!parsed.success) continue;
@@ -509,6 +510,7 @@ export function runOrchestrator(deps: OrchestratorDeps) {
         hub.publish(runId, parsed.data); // live relay to the SSE endpoint
         if (parsed.data.type === "done") {
           seen = parsed.data.status;
+          doneReason = parsed.data.reason; // step-limit / error — persist it to run.reason
           break;
         }
       }
@@ -529,7 +531,10 @@ export function runOrchestrator(deps: OrchestratorDeps) {
       if (breached) return await finish(runId, (terminal = "killed"), killReason(), costMicros);
       if (timedOut) return await finish(runId, (terminal = "killed"), `Run exceeded the ${Math.round(runTimeoutMs / 1000)}s time limit.`, costMicros);
       terminal = seen ?? (exitCode === 0 ? "succeeded" : "failed");
-      return await finish(runId, terminal, !seen && exitCode !== 0 ? `Sandbox exited ${exitCode} without a done message.` : undefined, costMicros);
+      // Story 12.6: persist the harness's stop reason (step-limit / error) to run.reason so a truncation
+      // is never a silent clean finish. The kill/timeout paths above already returned with their own
+      // reason (they win the terminal); this is only the normal succeeded/failed terminal.
+      return await finish(runId, terminal, doneReason ?? (!seen && exitCode !== 0 ? `Sandbox exited ${exitCode} without a done message.` : undefined), costMicros);
     } catch (e) {
       terminal = breached ? "killed" : timedOut ? "killed" : "failed";
       return await finish(runId, terminal, breached ? "Killed — cost cap reached." : timedOut ? "Run exceeded the time limit." : `Run stream error: ${msg(e)}`, costMicros);

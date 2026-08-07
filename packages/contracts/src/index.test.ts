@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import { JobSpecSchema, JobToolSchema, JobMemorySchema, JobHistoryTurnSchema, ToolCallRequestSchema, ToolCallResponseSchema, ControlChannelMessageSchema, GuardConnectionRequestSchema, GuardConnectionResponseSchema, GuardModelRequestSchema, GuardModelResponseSchema, GuardRunEventSchema, authorizes, SKILL_OPS, OP_REQUIREMENTS, CONTRACT_VERSION } from "./index.js";
 
 describe("contracts", () => {
-  it("contract version is 9 (Story 12.1 — tool loop / model tool-calling)", () => {
-    expect(CONTRACT_VERSION).toBe(9);
+  it("contract version is 10 (Story 12.6 — done.reason / multi-step observability)", () => {
+    expect(CONTRACT_VERSION).toBe(10);
   });
 
   it("job spec round-trips (with logical connection + tool handles + recalled memories + chat history)", () => {
@@ -132,9 +132,14 @@ describe("contracts", () => {
     expect(JobSpecSchema.safeParse(bad).success).toBe(false);
   });
 
-  it("parses a control-channel done message", () => {
-    const msg = ControlChannelMessageSchema.parse({ type: "done", v: CONTRACT_VERSION, status: "succeeded" });
-    expect(msg.type).toBe("done");
+  it("parses a control-channel done message — with and without a reason (Story 12.6)", () => {
+    // a clean final omits reason (backward-compat: every pre-v10 done parses)
+    const clean = ControlChannelMessageSchema.parse({ type: "done", v: CONTRACT_VERSION, status: "succeeded" });
+    expect(clean.type).toBe("done");
+    expect(clean.type === "done" && clean.reason).toBeUndefined();
+    // a step-limit / error run carries the stop reason so a truncation is never a silent clean finish
+    const truncated = ControlChannelMessageSchema.parse({ type: "done", v: CONTRACT_VERSION, status: "succeeded", reason: "Reached the step limit (10 steps) — the answer may be incomplete." });
+    expect(truncated.type === "done" && truncated.reason).toContain("step limit");
   });
 
   it("parses a structured `tool` invocation record (Story 6.5) — all three outcomes, no cost field", () => {

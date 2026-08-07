@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readJobSpec, opOutcome, toolRecord, buildMessages } from "./main.js";
+import { readJobSpec, opOutcome, toolRecord, buildMessages, stopReasonText } from "./main.js";
 import { CONTRACT_VERSION, type GuardConnectionResponse, type ToolCallResponse } from "@turanga/contracts";
 
 describe("agent-harness", () => {
@@ -104,5 +104,14 @@ describe("agent-harness", () => {
     const rec = toolRecord("t1", "Weather", "get_time", res);
     expect(rec.message).toMatchObject({ type: "tool", outcome: "error", latencyMs: 0, detail: "Can't reach the guard." });
     expect(rec.system).toBeUndefined();
+  });
+
+  it("stopReasonText: a clean final has NO reason; step-limit + error are distinct (Story 12.6)", () => {
+    // a clean final stays clean — the `done` transcript row renders nothing, never a silent truncation
+    expect(stopReasonText("final", 3)).toBeUndefined();
+    // a step-limit truncation is explicit + names the step count
+    expect(stopReasonText("step-limit", 10)).toBe("Reached the step limit (10 steps) — the answer may be incomplete.");
+    // a mid-loop error is distinct from a clean finish
+    expect(stopReasonText("error", 2)).toBe("The run ended before a final answer.");
   });
 });

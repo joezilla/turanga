@@ -2,7 +2,10 @@
   // Shared run-transcript rows (Story 5.3): the control-channel messages the live test pane and the
   // run-history review both render — `turn` (role + text), `refusal` (caution dot + kind label +
   // detail — "the guard, made legible", NFR-4/UX-DR23), and optionally per-call `metrics` rows.
-  // `done` renders nothing (the terminal outcome is shown by the caller's RunStatusDot).
+  // `done` renders nothing on a clean final (the terminal outcome is shown by the caller's
+  // RunStatusDot); Story 12.6: when it carries a `reason` (a step-limit truncation / error) it renders
+  // a small terminal line so a truncation is never a silent clean finish — even on a succeeded run,
+  // where `runCause` (status-gated) stays quiet.
   import { Circle } from "@lucide/svelte";
   import { formatMicros } from "$lib/money";
   import type { RunMessage } from "$lib/runs";
@@ -70,6 +73,10 @@
     </div>
   {:else if msg.type === "metrics" && showMetrics}
     <p class="metrics mono-num">{fmtNum(msg.latencyMs)} ms · {fmtNum(msg.tokens)} tokens · {formatMicros(msg.costMicros)}</p>
+  {:else if msg.type === "done" && msg.reason}
+    <!-- Story 12.6: the loop's stop reason (step-limit / error) — stated plainly so a truncation is
+         never a silent clean finish. A clean final carries no reason and renders nothing. -->
+    <p class="ended">Ended — {msg.reason}</p>
   {/if}
 {/each}
 
@@ -111,6 +118,12 @@
     margin: 0;
     font-size: var(--text-sm);
     color: var(--text-secondary);
+  }
+  .ended {
+    margin: 0;
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    font-style: italic;
   }
   .recall {
     display: flex;
