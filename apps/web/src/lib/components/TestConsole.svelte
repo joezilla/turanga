@@ -12,6 +12,7 @@
   import RunTranscript from "$lib/components/RunTranscript.svelte";
   import RunStatusDot from "$lib/components/RunStatusDot.svelte";
   import { startRun, runEventsUrl, getAgentCost, getRun, type RunMessage } from "$lib/runs";
+  import { stickToBottom } from "$lib/stickToBottom";
   import { formatMinor, formatMicros } from "$lib/money";
   import type { CostCap } from "$lib/agents";
 
@@ -97,6 +98,17 @@
     })();
   }
 
+  // Enter runs, Shift+Enter is a newline — same composer convention as the chat thread. The page-wide
+  // Cmd/Ctrl+Enter (EXPERIENCE.md#Interaction) still runs the test from anywhere in the editor; this
+  // only makes the bare Enter work while the caret is in this input.
+  function onComposerKeydown(e: KeyboardEvent) {
+    if (e.key !== "Enter" || e.isComposing || e.shiftKey || e.altKey) return;
+    if (e.metaKey || e.ctrlKey) return; // the page-wide handler owns ⌘↵ — don't run it twice
+    if (runState === "running") return;
+    e.preventDefault();
+    runTest();
+  }
+
   export function clearTest() {
     runGen++; // discard any in-flight start that resolves after this reset
     closeStream();
@@ -128,7 +140,7 @@
     </div>
   </header>
 
-  <div class="transcript" role="log" aria-live="polite">
+  <div class="transcript" role="log" aria-live="polite" use:stickToBottom={{ key: agentId }}>
     {#if transcript.length === 0 && runState === "empty"}
       <p class="muted">No test runs.</p>
     {:else}
@@ -165,10 +177,10 @@
 
   <div class="composer">
     <label class="visually-hidden" for="task-input">Task for this test run</label>
-    <textarea id="task-input" rows="3" placeholder="What should it do?" bind:value={taskInput}></textarea>
+    <textarea id="task-input" rows="3" placeholder="What should it do?" bind:value={taskInput} onkeydown={onComposerKeydown}></textarea>
     <div class="composer-actions">
       <span class="foot" class:caution={dirty}>
-        {dirty ? "unsaved edits are not included" : "runs the saved draft"}
+        {dirty ? "unsaved edits are not included" : "runs the saved draft"} · ↵ to run
       </span>
       <button type="button" class="primary" onclick={runTest} disabled={runState === "running"}>Run test</button>
     </div>

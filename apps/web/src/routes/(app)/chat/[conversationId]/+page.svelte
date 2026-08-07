@@ -13,6 +13,7 @@
   import { getConversation, listConversationRuns, sendMessage, renameConversation, deleteConversation, runEventsUrl, getRun, runCause, type Conversation, type Run, type RunMessage } from "$lib/conversations";
   import { getAgent } from "$lib/agents";
   import { conversationsChanged } from "$lib/chatBus.svelte";
+  import { stickToBottom } from "$lib/stickToBottom";
   import { formatMicros } from "$lib/money";
 
   const conversationId = $derived(page.params.conversationId ?? "");
@@ -162,11 +163,14 @@
     })();
   }
 
+  // Enter sends, Shift+Enter is a newline — the chat convention. `isComposing` keeps an IME's
+  // candidate-confirming Enter from sending a half-typed message; Cmd/Ctrl+Enter still sends, since
+  // that's the muscle memory this composer shipped with.
   function onComposerKeydown(e: KeyboardEvent) {
-    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-      e.preventDefault();
-      send();
-    }
+    if (e.key !== "Enter" || e.isComposing || e.shiftKey) return;
+    if (e.altKey) return; // Alt+Enter is a newline in several editors — don't hijack it
+    e.preventDefault();
+    send();
   }
 
   // The persisted cost of a completed turn (summed metrics = the run's costMicros summary).
@@ -251,7 +255,8 @@
       </div>
     </header>
 
-    <div class="thread" role="log" aria-live="polite">
+    <!-- Follows the streaming reply, and yields the moment the reader scrolls up (stickToBottom). -->
+    <div class="thread" role="log" aria-live="polite" use:stickToBottom={{ key: conversationId }}>
       {#if runs.length === 0 && !showStreaming}
         <p class="muted">No messages yet. Send one to start the conversation.</p>
       {:else}
@@ -295,7 +300,7 @@
       <label class="visually-hidden" for="chat-message">Message</label>
       <textarea id="chat-message" rows="3" placeholder="Send a message…" bind:value={draft} onkeydown={onComposerKeydown}></textarea>
       <div class="composer-actions">
-        <span class="foot">runs the pinned published version · ⌘↵ to send</span>
+        <span class="foot">runs the pinned published version · ↵ to send · ⇧↵ for a newline</span>
         <button type="button" class="primary" onclick={send} disabled={streamState === "running" || !draft.trim()}>Send</button>
       </div>
     </div>
