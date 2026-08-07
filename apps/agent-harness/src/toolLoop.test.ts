@@ -3,7 +3,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
-import { CONTRACT_VERSION, type JobSpec, type ControlChannelMessage } from "@turanga/contracts";
+import { CONTRACT_VERSION, GuardModelRequestSchema, type JobSpec, type ControlChannelMessage } from "@turanga/contracts";
 import { runToolLoop } from "./toolLoop.js";
 
 // A fake Guard on a real per-run Unix socket. It plays the Guard's role over the SAME HTTP-over-UDS
@@ -178,6 +178,30 @@ describe("tool loop (Story 12.4) — model-driven reason→act→observe over th
     expect(sawToolChoice).toBe(false); // empty tools ⇒ no tool_choice forwarded
   });
 
+  // Review (wire-compat): the fakeGuard receives the ACTUAL GuardModelRequest that guardModelCall sent
+  // over the socket. Validate every model-call body across a MULTI-STEP loop (assistant tool_calls +
+  // tool-result folded back — the shapes most likely to serialize as content-parts) against the REAL
+  // GuardModelRequestSchema, so the AI SDK ↔ Guard wire form can't silently drift (content is string|null).
+  it("the SDK-emitted request body validates against the real GuardModelRequestSchema across a multi-step loop", async () => {
+    const bodies: unknown[] = [];
+    guard = await fakeGuard({
+      onModel: (call, body) => {
+        bodies.push(body);
+        return call === 1
+          ? { v: CONTRACT_VERSION, ok: true, text: "", toolCalls: [{ id: "c1", type: "function", function: { name: "list_drives", arguments: "{}" } }], finishReason: "tool_calls", tokens: 5, latencyMs: 1 }
+          : { v: CONTRACT_VERSION, ok: true, text: "2 drives", finishReason: "stop", tokens: 3, latencyMs: 1 };
+      },
+      onTool: () => ({ v: CONTRACT_VERSION, ok: true, content: [{ type: "text", text: "Drive A\nDrive B" }], latencyMs: 1 }),
+    });
+
+    await runToolLoop(spec(), guard.socketPath, () => {});
+    expect(bodies.length).toBeGreaterThanOrEqual(2); // reason → act → observe → answer
+    for (const b of bodies) {
+      const parsed = GuardModelRequestSchema.safeParse(b);
+      expect(parsed.success, `body did not match GuardModelRequestSchema: ${JSON.stringify(b)}`).toBe(true);
+    }
+  });
+
   // Story 12.5: a MALFORMED tool call (args miss a required field → InvalidToolInputError) is REPAIRED
   // (structured regenerate via generateObject) and then runs — the run finishes instead of dying.
   it("repairs a malformed tool call (invalid args) then completes (Story 12.5)", async () => {
@@ -216,6 +240,26 @@ describe("tool loop (Story 12.4) — model-driven reason→act→observe over th
     // gave up (null); the model keeps re-emitting the bad call → the loop ends cleanly at the ceiling
     // (either a step-limit or an error stop — both graceful, never a crash).
     expect(["step-limit", "error"]).toContain(result.stopReason);
+  });
+
+  // Story 12.4 AC3(e): a Guard REFUSAL is surfaced to the model distinctly from a tool execution error,
+  // and recorded as a `refused` tool event (Story 6.5) — so a permanently-denied op isn't retried blindly.
+  it("surfaces a Guard refusal distinctly and records it as a refused tool event (Story 12.4 AC3e)", async () => {
+    guard = await fakeGuard({
+      onModel: (call) =>
+        call === 1
+          ? { v: CONTRACT_VERSION, ok: true, text: "", toolCalls: [{ id: "c1", type: "function", function: { name: "list_drives", arguments: "{}" } }], finishReason: "tool_calls", tokens: 5, latencyMs: 1 }
+          : { v: CONTRACT_VERSION, ok: true, text: "I can't — that operation isn't permitted.", finishReason: "stop", tokens: 4, latencyMs: 1 },
+      onTool: () => ({ v: CONTRACT_VERSION, ok: false, refusal: { kind: "permission", detail: "operation not granted" }, latencyMs: 1 }),
+    });
+
+    const emitted: ControlChannelMessage[] = [];
+    const result = await runToolLoop(spec(), guard.socketPath, (m) => emitted.push(m));
+
+    // recorded as a `refused` tool event (distinct from an `error`) — the Guard's decision, made legible
+    expect(emitted.some((m) => m.type === "tool" && m.outcome === "refused")).toBe(true);
+    // the loop ends cleanly (the model saw the "Not permitted" result and answered) — no crash, no retry storm
+    expect(result.stopReason).toBe("final");
   });
 
   // Story 12.6 AC1: a multi-step run emits its per-step `tool` events IN ORDER (the reason→act→observe

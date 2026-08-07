@@ -125,6 +125,18 @@ function buildTools(spec: JobSpec, socketPath: string, emit: (m: ControlChannelM
       let exposed = sanitize(operation);
       if (used.has(exposed)) exposed = sanitize(`${toolName}_${operation}`);
       if (used.has(exposed)) exposed = sanitize(`${operation}_${toolId.slice(-6)}`);
+      // GUARANTEE uniqueness (review): the tiers above are readability-preferred, but they can still
+      // collide (two long op names sharing a 48-char prefix under the same tool, empty names, etc.) —
+      // `sanitize` truncates to 48 and a suffix can be lost. A residual collision would silently
+      // OVERWRITE another entry, misrouting the model to the wrong tool. Fall through to a counter on a
+      // room-reserved base so an entry can NEVER clobber another.
+      if (used.has(exposed)) {
+        const base = exposed.slice(0, 44);
+        let n = 2;
+        do {
+          exposed = `${base}_${n++}`;
+        } while (used.has(exposed));
+      }
       used.add(exposed);
       meta.set(exposed, { toolId, toolName, operation });
       tools[exposed] = tool({

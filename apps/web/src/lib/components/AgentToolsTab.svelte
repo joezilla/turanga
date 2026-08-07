@@ -13,11 +13,20 @@
   // from the operation name would render a guess as fact next to a permission checkbox, which is
   // exactly where a wrong label does the most damage. If risk lands in the contract, this file
   // and the filter bar below are where it goes.
-  import { ChevronRight } from "@lucide/svelte";
+  import { ChevronRight, Circle } from "@lucide/svelte";
   import type { AttachedTool } from "$lib/agents";
   import type { Tool } from "$lib/tools";
+  import { isToolVerified, VERIFIED_TOOL_MODELS_LABEL } from "$lib/toolModels";
 
-  let { value, tools, onchange }: { value: AttachedTool[]; tools: Tool[]; onchange: (attached: AttachedTool[]) => void } = $props();
+  let { value, tools, model = null, onchange }: { value: AttachedTool[]; tools: Tool[]; model?: string | null; onchange: (attached: AttachedTool[]) => void } = $props();
+
+  // Story 12.7: a non-blocking capability SIGNAL — show a plain note when a model IS selected, at least
+  // one operation is actually granted, AND the chosen model isn't on the verified-tool-calling reference.
+  // It disables NOTHING (a signal, not a gate); an unverified model stays fully usable. Gating on a
+  // truthy model (no false alarm before a model is chosen) + a real grant (an attached-but-ungranted
+  // tool makes no tool call, so no reliability concern) — review fixes.
+  const hasGrant = $derived(value.some((t) => t.operations.length > 0));
+  const showSignal = $derived(!!model && hasGrant && !isToolVerified(model));
 
   let search = $state("");
   let enabledOnly = $state(false);
@@ -108,6 +117,15 @@
     <a class="link" href="/settings/tools">Open Tools settings</a>
   </div>
 {:else}
+  {#if showSignal}
+    <!-- Story 12.7: a non-blocking capability note. Status stated with a word ("Limited"), dot paired
+         with the word (never colour-only), model id in mono. Nothing is disabled — a signal, not a gate. -->
+    <p class="signal" role="note">
+      <Circle size={7} fill="var(--state-killed)" color="var(--state-killed)" aria-hidden="true" />
+      <span class="signal-word">Limited tool-calling reliability</span>
+      — <span class="mono-num">{model}</span> isn't on the verified list, so it may not call tools reliably. It stays usable. Verified models: {VERIFIED_TOOL_MODELS_LABEL}.
+    </p>
+  {/if}
   <div class="bar">
     <div class="bar-row">
       <div class="field">
@@ -410,6 +428,18 @@
     margin: 0;
     font-size: var(--text-sm);
     color: var(--text-secondary);
+  }
+  /* Story 12.7 — the capability note reads caution (dot + word), never a red banner; advisory only. */
+  .signal {
+    margin: 0;
+    padding: var(--space-3) var(--space-5);
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    line-height: 1.5;
+  }
+  .signal-word {
+    font-weight: 600;
+    color: var(--text-primary);
   }
   .link {
     font-size: var(--text-sm);

@@ -181,6 +181,24 @@ function budgetBreach(status: number, message: string): { scope: "run" | "day" }
   return { scope: /team|crossed spend/i.test(message) ? "day" : "run" };
 }
 
+// Normalize a provider's raw `tool_calls` into the contract shape (Story 12.3 + review): `arguments`
+// MUST be a JSON string (the harness parses it), so a call whose `arguments` is an object is stringified
+// rather than passed through — a non-string would make the harness's strict response parse reject the
+// WHOLE response. A structurally-invalid entry (no id/function/name) is dropped, not forwarded.
+function normalizeToolCalls(raw: unknown[] | undefined): GuardModelToolCall[] {
+  if (!Array.isArray(raw)) return [];
+  const out: GuardModelToolCall[] = [];
+  for (const c of raw) {
+    const call = c as { id?: unknown; type?: unknown; function?: { name?: unknown; arguments?: unknown } };
+    const name = call?.function?.name;
+    if (typeof call?.id !== "string" || typeof name !== "string") continue; // drop a malformed call
+    const args = call.function?.arguments;
+    const argStr = typeof args === "string" ? args : JSON.stringify(args ?? {});
+    out.push({ id: call.id, type: "function", function: { name, arguments: argStr } });
+  }
+  return out;
+}
+
 function safeJson(raw: string): unknown {
   try {
     return JSON.parse(raw);
@@ -244,7 +262,7 @@ export function createGuard(cfg: GuardConfig) {
       const latencyMs = Date.now() - started;
       const costMicros = Math.round((Number(r.headers.get("x-litellm-response-cost")) || 0) * MICROS_PER_USD);
       const body = (await r.json().catch(() => ({}))) as {
-        choices?: { message?: { content?: string; tool_calls?: GuardModelToolCall[] }; finish_reason?: string }[];
+        choices?: { message?: { content?: string; tool_calls?: unknown[] }; finish_reason?: string }[];
         usage?: { total_tokens?: number };
         error?: { message?: string };
       };
@@ -262,9 +280,13 @@ export function createGuard(cfg: GuardConfig) {
       // Story 12.3: pass the chosen tool calls + finish reason back to the harness (which runs the loop
       // in Story 12.4). A plain text answer carries neither — the response shape is unchanged for the
       // non-tool path (toolCalls/finishReason are only spread in when the model actually called a tool).
+      // The Guard is the normalization boundary (LiteLLM speaks many providers): NORMALIZE each tool
+      // call's `arguments` to a JSON STRING before returning, so a provider/mode that surfaces it as a
+      // parsed object can't make the harness's strict GuardModelResponseSchema.parse reject the whole
+      // response (contract: `function.arguments` is a string). Drop any structurally-invalid call.
       const choice = body?.choices?.[0];
-      const toolCalls = choice?.message?.tool_calls;
-      return { v: CONTRACT_VERSION, ok: true, text: choice?.message?.content ?? "", tokens, latencyMs, ...(toolCalls?.length ? { toolCalls, finishReason: choice?.finish_reason ?? "tool_calls" } : {}) };
+      const toolCalls = normalizeToolCalls(choice?.message?.tool_calls);
+      return { v: CONTRACT_VERSION, ok: true, text: choice?.message?.content ?? "", tokens, latencyMs, ...(toolCalls.length ? { toolCalls, finishReason: choice?.finish_reason ?? "tool_calls" } : {}) };
     } catch (e) {
       const timedOut = e instanceof Error && e.name === "TimeoutError";
       void emitRunEvent(runId, { type: "metrics", v: CONTRACT_VERSION, latencyMs: Date.now() - started, tokens: 0, costMicros: 0 });

@@ -510,7 +510,7 @@ export function runOrchestrator(deps: OrchestratorDeps) {
         hub.publish(runId, parsed.data); // live relay to the SSE endpoint
         if (parsed.data.type === "done") {
           seen = parsed.data.status;
-          doneReason = parsed.data.reason; // step-limit / error — persist it to run.reason
+          doneReason = parsed.data.reason || undefined; // step-limit / error — treat "" as absent (untrusted input) so it can't blank the exit-code fallback
           break;
         }
       }

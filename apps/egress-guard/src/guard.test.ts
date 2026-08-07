@@ -349,6 +349,18 @@ describe("guard cost metering + kill-on-breach (4.5)", () => {
     await cleanup();
   });
 
+  it("normalizes a tool call whose `arguments` is an OBJECT to a JSON string; drops a malformed call (review)", async () => {
+    // a provider/mode that surfaces `arguments` as a parsed object (not a string) — the Guard is the
+    // normalization boundary, so the harness's strict response parse never chokes on it.
+    const objArgs = { id: "c1", type: "function", function: { name: "list_drives", arguments: { path: "/" } } };
+    const malformed = { type: "function", function: {} }; // no id/name → dropped, not forwarded
+    const { impl } = costFetch(200, undefined, "0.0041", { toolCalls: [objArgs, malformed] as unknown[], finishReason: "tool_calls" });
+    const { guard, cleanup } = await withCostKey(impl);
+    const res = await guard.proxyModel(RUN, { ...modelReq, tools: [toolDef] });
+    expect(res.toolCalls).toEqual([{ id: "c1", type: "function", function: { name: "list_drives", arguments: '{"path":"/"}' } }]); // stringified + malformed dropped
+    await cleanup();
+  });
+
   it("defaults tool_choice to \"auto\" when tools are present but toolChoice is omitted (Story 12.3)", async () => {
     const { impl, calls } = costFetch(200);
     const { guard, cleanup } = await withCostKey(impl);

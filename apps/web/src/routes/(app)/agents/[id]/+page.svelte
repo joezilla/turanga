@@ -594,7 +594,7 @@
             </div>
           </div>
         {:else if tab === "tools"}
-          <AgentToolsTab value={attachedTools} tools={connectedTools} onchange={(next) => (attachedTools = next)} />
+          <AgentToolsTab value={attachedTools} tools={connectedTools} {model} onchange={(next) => (attachedTools = next)} />
           {#if toolStats.length > 0}
             <div class="stats">
               <div class="micro">Observed across this agent's runs</div>
